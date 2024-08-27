@@ -1,0 +1,3 @@
+﻿<Solution>
+  <Project Path="api/WebApi.csproj" Type="Classic C#" />
+</Solution>
