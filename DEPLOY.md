@@ -8,8 +8,8 @@ GitHub Pages until cutover.
 | App | Where | Workflow |
 |-----|-------|----------|
 | Legacy CRA app (`web/`) | GitHub Pages at `verygoodwallet.com` | `.github/workflows/deploy.yml` (push to `main`) — **stays live until M6 cutover** |
-| New wallet (`apps/wallet/`) | Cloudflare Worker `vgw-wallet` at `vgw-wallet.<account>.workers.dev` | `.github/workflows/deploy-wallet.yml` (manual `workflow_dispatch`) |
-| Utopia DMV issuer (`apps/dmv/`) | Cloudflare Worker `vgw-dmv` at `vgw-dmv.<account>.workers.dev` | `.github/workflows/deploy-dmv.yml` (manual `workflow_dispatch`) |
+| New wallet (`apps/wallet/`) | Cloudflare Worker `vgw-wallet` at `vgw-wallet.<account>.workers.dev` | `.github/workflows/deploy-wallet.yml` (push to `main`, or manual `workflow_dispatch`) |
+| Utopia DMV issuer (`apps/dmv/`) | Cloudflare Worker `vgw-dmv` at `vgw-dmv.<account>.workers.dev` | `.github/workflows/deploy-dmv.yml` (push to `main`, or manual `workflow_dispatch`) |
 
 Until DNS moves and M6 cutover happens, the new wallet is only reachable on its
 `workers.dev` URL. The apex domain keeps pointing at GitHub Pages.
@@ -35,8 +35,9 @@ Until DNS moves and M6 cutover happens, the new wallet is only reachable on its
 
 ## Deploying the wallet
 
-Run the **Deploy wallet** workflow: Repo → Actions → *Deploy wallet* →
-*Run workflow* (branch `main`), or:
+Every push to `main` deploys automatically (so the live Worker never lags
+the repo). To redeploy without a commit, run the **Deploy wallet** workflow:
+Repo → Actions → *Deploy wallet* → *Run workflow* (branch `main`), or:
 
 ```sh
 gh workflow run deploy-wallet.yml
@@ -79,15 +80,17 @@ At M6 cutover (not before — the apex still serves the legacy app):
    records).
 2. Delete `.github/workflows/deploy.yml`, the root `CNAME` file, and the
    GitHub Pages site settings; `web/` and `api/` are deleted per PLAN.md M6.
-3. Optionally add a push trigger to `deploy-wallet.yml` now that secrets exist.
+3. Flip the `wallet_origin` default in `deploy-dmv.yml` (and its job-level
+   fallback) to `https://verygoodwallet.com` so DMV offer links target the
+   apex.
 
 ## Deploying the Utopia DMV issuer
 
-Run the **Deploy DMV** workflow: Repo → Actions → *Deploy DMV* →
-*Run workflow* (branch `main`). It requires a `wallet_origin` input — the
-origin issued offer links and QR codes target. Until the M6 apex cutover
-that is the wallet Worker's `workers.dev` URL (the apex still serves the
-legacy app, which cannot handle offers):
+Every push to `main` deploys automatically using the workflow's default
+`wallet_origin` — the live wallet Worker URL (until the M6 apex cutover, the
+apex still serves the legacy app, which cannot handle offers). To deploy
+with a different wallet origin, run the **Deploy DMV** workflow manually:
+Repo → Actions → *Deploy DMV* → *Run workflow* (branch `main`), or:
 
 ```sh
 gh workflow run deploy-dmv.yml -f wallet_origin=https://vgw-wallet.<account>.workers.dev

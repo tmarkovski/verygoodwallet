@@ -1,11 +1,14 @@
 # Deploys the wallet SPA (apps/wallet) to Cloudflare Workers (static assets).
 #
-# Manual trigger only for now: the CLOUDFLARE_* secrets must be configured
-# first (see DEPLOY.md). A push trigger can be added once secrets are in
-# place and the M6 cutover retires the legacy GitHub Pages deploy.
+# Deploys on every push to main so the live Worker never lags the repo (a
+# stale wallet once shipped dead offer links because deploys were manual);
+# workflow_dispatch stays for redeploying without a commit.
 name: Deploy wallet
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:

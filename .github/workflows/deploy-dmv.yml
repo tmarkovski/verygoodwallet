@@ -10,15 +10,21 @@
 # after the first deploy (see DEPLOY.md) — without them the Worker falls back
 # to public dev constants.
 #
+# Deploys on every push to main so the live Worker never lags the repo;
+# workflow_dispatch stays for redeploying with a different wallet_origin.
+#
 # wallet_origin must NEVER default to the apex domain: until the M6 cutover
 # it serves the legacy GitHub Pages app, which cannot handle credential
 # offers — that would bake dead-end, PII-leaking links and QR codes into
-# every offer this deploy issues. The prefilled default below is the KNOWN
-# deployed wallet Worker URL (verified live 2026-07-13); flip it to
-# https://verygoodwallet.com at the M6 apex cutover.
+# every offer this deploy issues. The default (used by push deploys and
+# prefilled on dispatch) is the KNOWN deployed wallet Worker URL (verified
+# live 2026-07-13); flip it to https://verygoodwallet.com at the M6 cutover.
 name: Deploy DMV
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       wallet_origin:
@@ -37,6 +43,9 @@ jobs:
   deploy:
     name: Build and deploy to Cloudflare Workers
     runs-on: ubuntu-latest
+    env:
+      # Push events carry no inputs; fall back to the live wallet Worker.
+      WALLET_ORIGIN: ${{ inputs.wallet_origin || 'https://vgw-wallet.t7m8.workers.dev' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -61,7 +70,7 @@ jobs:
         # (a bare origin has no path — no shell metacharacters possible).
         run: |
           node -e '
-            const value = process.env.WALLET_ORIGIN_INPUT;
+            const value = process.env.WALLET_ORIGIN;
             let url;
             try { url = new URL(value); } catch {
               console.error(`wallet_origin is not a URL: ${value}`);
@@ -78,8 +87,6 @@ jobs:
               process.exit(1);
             }
           '
-        env:
-          WALLET_ORIGIN_INPUT: ${{ inputs.wallet_origin }}
 
       - name: Build DMV
         run: pnpm --filter @vgw/dmv build
@@ -87,7 +94,7 @@ jobs:
           # Bakes the wallet origin into the client bundle: the UI builds the
           # visible link and QR code client-side, so the Worker var alone is
           # not enough (it only covers the server's wallet_link fallback).
-          VITE_WALLET_ORIGIN: ${{ inputs.wallet_origin }}
+          VITE_WALLET_ORIGIN: ${{ env.WALLET_ORIGIN }}
 
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
@@ -105,4 +112,4 @@ jobs:
           wranglerVersion: "4.110.0"
           # WALLET_ORIGIN covers the server-built wallet_link for API-only
           # consumers; the client bundle got the same origin at build time.
-          command: deploy --var WALLET_ORIGIN:${{ inputs.wallet_origin }}
+          command: deploy --var WALLET_ORIGIN:${{ env.WALLET_ORIGIN }}
