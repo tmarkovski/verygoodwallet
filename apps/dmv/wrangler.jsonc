@@ -1,0 +1,24 @@
+// Cloudflare Workers configuration for the Utopia DMV issuer.
+//
+// One deployable: the Hono Worker (OID4VCI + /api endpoints) plus the static
+// DMV UI. @cloudflare/vite-plugin reads this file — `main` is the Worker
+// entry vite builds, and the assets directory is filled in automatically at
+// build time (the plugin snapshots this config into dist/, pointing at the
+// client build; `wrangler deploy` picks that snapshot up).
+//
+// run_worker_first keeps the protocol + API routes on the Worker even if a
+// static asset path ever shadowed them; everything else is served from
+// assets, with SPA fallback for the single-page UI.
+//
+// Secrets (production): ISSUER_SEED, TOKEN_SECRET — see DEPLOY.md. Local dev
+// falls back to hardcoded dev constants in worker/env.ts.
+{
+  "name": "vgw-dmv",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./worker/index.ts",
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/oid4vci/*", "/.well-known/*", "/api/*"]
+  }
+}

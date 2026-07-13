@@ -1,0 +1,58 @@
+# Deploys the Utopia DMV issuer (apps/dmv) to Cloudflare Workers.
+#
+# One deployable: the Hono Worker (OID4VCI endpoints) plus the static DMV UI,
+# built by @cloudflare/vite-plugin. `vite build` writes a snapshot config to
+# dist/vgw_dmv/wrangler.json (plus a .wrangler/deploy redirect), which
+# `wrangler deploy` picks up automatically when run from apps/dmv.
+#
+# Manual trigger only for now: the CLOUDFLARE_* secrets must be configured
+# first, and the Worker secrets ISSUER_SEED / TOKEN_SECRET should be set
+# after the first deploy (see DEPLOY.md) — without them the Worker falls back
+# to public dev constants.
+name: Deploy DMV
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-dmv
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy to Cloudflare Workers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        # Version comes from the "packageManager" field in the root package.json.
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build DMV
+        run: pnpm --filter @vgw/dmv build
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/dmv
+          # Must be explicit: the action's package-manager detection only looks
+          # for a lockfile inside workingDirectory, finds none (pnpm-lock.yaml
+          # lives at the repo root), and falls back to npm — which cannot
+          # resolve the workspace:* deps in apps/dmv/package.json.
+          packageManager: pnpm
+          # Pin wrangler; the action's built-in default (3.90.0, Nov 2024) is
+          # stale and predates the compatibility_date in wrangler.jsonc.
+          wranglerVersion: "4.110.0"

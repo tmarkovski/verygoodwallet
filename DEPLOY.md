@@ -9,6 +9,7 @@ GitHub Pages until cutover.
 |-----|-------|----------|
 | Legacy CRA app (`web/`) | GitHub Pages at `verygoodwallet.com` | `.github/workflows/deploy.yml` (push to `main`) — **stays live until M6 cutover** |
 | New wallet (`apps/wallet/`) | Cloudflare Worker `vgw-wallet` at `vgw-wallet.<account>.workers.dev` | `.github/workflows/deploy-wallet.yml` (manual `workflow_dispatch`) |
+| Utopia DMV issuer (`apps/dmv/`) | Cloudflare Worker `vgw-dmv` at `vgw-dmv.<account>.workers.dev` | `.github/workflows/deploy-dmv.yml` (manual `workflow_dispatch`) |
 
 Until DNS moves and M6 cutover happens, the new wallet is only reachable on its
 `workers.dev` URL. The apex domain keeps pointing at GitHub Pages.
@@ -80,18 +81,72 @@ At M6 cutover (not before — the apex still serves the legacy app):
    GitHub Pages site settings; `web/` and `api/` are deleted per PLAN.md M6.
 3. Optionally add a push trigger to `deploy-wallet.yml` now that secrets exist.
 
+## Deploying the Utopia DMV issuer
+
+Run the **Deploy DMV** workflow: Repo → Actions → *Deploy DMV* →
+*Run workflow* (branch `main`), or:
+
+```sh
+gh workflow run deploy-dmv.yml
+```
+
+Unlike the assets-only wallet, the DMV is a full Worker (Hono OID4VCI
+endpoints) plus static UI, built as one deployable by `@cloudflare/vite-plugin`:
+`pnpm --filter @vgw/dmv build` emits `apps/dmv/dist/` including a snapshot
+`wrangler.json`, and `wrangler deploy` run in `apps/dmv/` picks that snapshot
+up automatically. The first deploy creates the `vgw-dmv` Worker and prints its
+`workers.dev` URL.
+
+Local alternative from `apps/dmv/`:
+
+```sh
+pnpm --filter @vgw/dmv build
+pnpm exec wrangler deploy   # picks up dist/vgw_dmv/wrangler.json; `wrangler login` first
+```
+
+(`wrangler` is a devDependency of `apps/dmv`, so `pnpm exec` uses the pinned
+version — no `dlx` download needed.)
+
+### Worker secrets (set after the first deploy)
+
+The issuer signs credentials with a BBS key derived from `ISSUER_SEED` and
+signs its stateless OAuth codes/tokens with `TOKEN_SECRET`. Both have
+hardcoded dev fallbacks (public in the repo) so local dev needs zero setup —
+the Worker logs a `console.warn` whenever a fallback is in use. **Production
+must not rely on them**: anything signed under the dev seed is worthless.
+
+From `apps/dmv/` (or via Dashboard → `vgw-dmv` → Settings → Variables):
+
+```sh
+openssl rand -hex 32 | pnpm exec wrangler secret put ISSUER_SEED
+openssl rand -hex 32 | pnpm exec wrangler secret put TOKEN_SECRET
+```
+
+Note: rotating `ISSUER_SEED` changes the issuer DID, invalidating previously
+issued credentials for verifiers pinned to the old DID.
+
+Optional: set a `WALLET_ORIGIN` var (plaintext, not a secret) to control the
+wallet origin in server-built `wallet_link`s. Without it the Worker defaults
+to `https://verygoodwallet.com` (or a localhost caller's own origin in dev);
+the DMV UI also supports a `?wallet=<origin>` override client-side.
+
+### Custom domain
+
+`dmv.verygoodwallet.com` can be attached once DNS is on Cloudflare — this
+works **before** the apex cutover, since a subdomain doesn't collide with the
+legacy GitHub Pages site: Dashboard → Workers & Pages → `vgw-dmv` → Settings →
+Domains & Routes → *Add* → **Custom domain**.
+
 ## Future apps (per PLAN.md)
 
-The issuer and verifier apps deploy the same way — one Worker each, mapped to a
+The verifier apps deploy the same way — one Worker each, mapped to a
 subdomain custom domain once DNS is on Cloudflare (subdomains can be mapped
 before the apex cutover, since they don't collide with GitHub Pages):
 
 | App | Worker (suggested) | Custom domain |
 |-----|--------------------|---------------|
-| Utopia DMV (issuer) | `vgw-dmv` | `dmv.verygoodwallet.com` |
 | The Nightcap (verifier) | `vgw-shop` | `shop.verygoodwallet.com` |
 | Utopia Wheels (verifier) | `vgw-rentals` | `rentals.verygoodwallet.com` |
 
-These carry OID4VCI/OID4VP Worker endpoints (not assets-only), so their
-`wrangler.jsonc` will add a `main` script entry and secrets (e.g. the DMV
-issuer BBS key via `wrangler secret put`).
+These carry OID4VP Worker endpoints (not assets-only), so they will follow
+the DMV's Worker + assets shape rather than the wallet's assets-only one.
