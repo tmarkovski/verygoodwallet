@@ -188,8 +188,12 @@ async function makeFakeIssuer(config: FakeIssuerConfig): Promise<FakeIssuer> {
 
       const days = daysSinceEpoch(SUBJECT.birthDate);
       const opening = createCommitment(days);
+      // Like the real DMV: no subjectId by default (unlinkability — node ids
+      // are structurally revealed by every derived proof).
       const unsigned = buildUtopiaDriversLicense({
-        subjectId: config.subjectIdOverride ?? verified.holderDid,
+        ...(config.subjectIdOverride !== undefined
+          ? { subjectId: config.subjectIdOverride }
+          : {}),
         ...SUBJECT,
         birthDateCommitment: opening.commitment,
         issuer: { id: keyPair.controller, name: "Utopia DMV" },
@@ -288,12 +292,13 @@ describe("acceptCredentialOffer", () => {
       true,
     );
 
-    // Subject binding: the stored VC names the wallet's pairwise DID for
-    // this issuer origin — the same DID the issuer saw in the PoP JWT.
+    // Holder binding happens in the PoP JWT (the issuer saw the wallet's
+    // pairwise DID there); the stored VC itself deliberately names no
+    // subject id — every derived proof would reveal it structurally.
     const holderSeed = await deriveHolderSeed(masterSecret, issuer.origin);
     const holder = ed25519KeyPairFromSeed(holderSeed);
     const subject = envelope.vc.credentialSubject as Record<string, unknown>;
-    expect(subject["id"]).toBe(holder.did);
+    expect(subject["id"]).toBeUndefined();
     expect(issuer.captured.holderDid).toBe(holder.did);
   }, 60_000);
 
@@ -328,14 +333,15 @@ describe("acceptCredentialOffer", () => {
       vaultKey,
     });
 
-    const envelopeA = await decryptJson<CredentialPayload>(vaultKey, recordA.payload);
-    const envelopeB = await decryptJson<CredentialPayload>(vaultKey, recordB.payload);
-    const subjectA = envelopeA.vc.credentialSubject as Record<string, unknown>;
-    const subjectB = envelopeB.vc.credentialSubject as Record<string, unknown>;
-    expect(typeof subjectA["id"]).toBe("string");
-    expect(typeof subjectB["id"]).toBe("string");
-    // Pairwise property: same master secret, different issuer, different DID.
-    expect(subjectA["id"]).not.toBe(subjectB["id"]);
+    // Both issuances stored successfully…
+    expect(recordA.id).not.toBe(recordB.id);
+    // …and the pairwise property shows in the PoP DIDs each issuer observed:
+    // same master secret, different issuer origin, different DID. (The
+    // stored VCs deliberately carry no subject id — the binding lives in
+    // the PoP JWT.)
+    expect(typeof issuerA.captured.holderDid).toBe("string");
+    expect(typeof issuerB.captured.holderDid).toBe("string");
+    expect(issuerA.captured.holderDid).not.toBe(issuerB.captured.holderDid);
   }, 90_000);
 
   it("surfaces token endpoint errors with the endpoint and OAuth detail", async () => {
@@ -382,11 +388,12 @@ describe("acceptCredentialOffer", () => {
     expect(db.stored).toHaveLength(0);
   }, 60_000);
 
-  it("binds to the real pairwise DID even if the session zeroes the secret mid-flight", async () => {
+  it("proves the real pairwise DID even if the session zeroes the secret mid-flight", async () => {
     // What logout() does during the token round-trip: the session's buffer
     // is zeroed IN PLACE while the flow still holds a reference to it. The
-    // credential must never end up bound to the publicly-derivable
-    // all-zero-master key.
+    // PoP JWT must never end up proving the publicly-derivable
+    // all-zero-master key. (The VC carries no subject id, so the PoP DID the
+    // issuer observed is where the binding lives.)
     const liveSecret = masterSecret.slice();
     const issuer = await makeFakeIssuer({
       origin: "https://dmv.utopia.example",
@@ -395,7 +402,7 @@ describe("acceptCredentialOffer", () => {
     });
     routeFetchTo(issuer);
 
-    const record = await acceptCredentialOffer({
+    await acceptCredentialOffer({
       offerUri: issuer.offerUri,
       accountId: 1,
       masterSecret: liveSecret,
@@ -408,10 +415,8 @@ describe("acceptCredentialOffer", () => {
     const zeroHolder = ed25519KeyPairFromSeed(
       await deriveHolderSeed(new Uint8Array(32), issuer.origin),
     );
-    const envelope = await decryptJson<CredentialPayload>(vaultKey, record.payload);
-    const subject = envelope.vc.credentialSubject as Record<string, unknown>;
-    expect(subject["id"]).toBe(realHolder.did);
-    expect(subject["id"]).not.toBe(zeroHolder.did);
+    expect(issuer.captured.holderDid).toBe(realHolder.did);
+    expect(issuer.captured.holderDid).not.toBe(zeroHolder.did);
   }, 60_000);
 
   it("stops at the next phase boundary when the session locks mid-flight", async () => {

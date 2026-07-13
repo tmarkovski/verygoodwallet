@@ -66,3 +66,63 @@ export interface VerifyCredentialResult {
   verified: boolean;
   error?: string;
 }
+
+/**
+ * A W3C VC Data Model 2.0 presentation (unsigned or signed). Open-world like
+ * {@link VerifiableCredential}.
+ */
+export interface VerifiablePresentation {
+  '@context': JsonLdContextEntry | JsonLdContextEntry[];
+  type: string | string[];
+  /** The presenter's DID — the VP proof's verification method must belong to it. */
+  holder?: string;
+  verifiableCredential?: VerifiableCredential | VerifiableCredential[];
+  proof?: Record<string, unknown> | Record<string, unknown>[];
+  [key: string]: unknown;
+}
+
+/** Signer interface exposed by an Ed25519 key pair (consumed by DataIntegrityProof). */
+export interface Ed25519Signer {
+  algorithm: string;
+  id?: string;
+  sign(options: { data: Uint8Array }): Promise<Uint8Array>;
+}
+
+/**
+ * An Ed25519 Multikey pair with `did:key` identifiers, as produced by
+ * {@link generateEd25519KeyPair}. Wraps a `@digitalbazaar/ed25519-multikey`
+ * key pair interface.
+ */
+export interface Ed25519KeyPair {
+  /** Multikey context URL. */
+  '@context': string;
+  /** Verification method id: `did:key:<mb>#<mb>`. */
+  id: string;
+  /** Controller DID: `did:key:<mb>`. */
+  controller: string;
+  /** Multibase-encoded (z6Mk…) Ed25519 public key. */
+  publicKeyMultibase: string;
+  /** Multibase-encoded secret key (present for locally generated keys). */
+  secretKeyMultibase?: string;
+  /** Returns a signer usable with DataIntegrityProof (eddsa-rdfc-2022). */
+  signer(): Ed25519Signer;
+  [key: string]: unknown;
+}
+
+/** Per-credential outcome inside {@link VerifyPresentationResult}. */
+export interface PresentedCredentialResult {
+  credential: VerifiableCredential;
+  verified: boolean;
+  error?: string;
+}
+
+/** Result of {@link verifyPresentation}. */
+export interface VerifyPresentationResult {
+  /** True only when the VP proof AND every embedded credential verified. */
+  verified: boolean;
+  /** The presenter DID the VP proof is bound to (present when the VP proof verified). */
+  holder?: string;
+  /** One entry per embedded credential, in presentation order. */
+  credentials: PresentedCredentialResult[];
+  error?: string;
+}

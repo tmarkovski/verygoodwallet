@@ -20,6 +20,7 @@ import {
 } from '@digitalbazaar/bbs-2023-cryptosuite';
 import { DataIntegrityProof } from '@digitalbazaar/data-integrity';
 import jsigs from 'jsonld-signatures';
+import { extractErrorMessage, toMessage } from './jsigsErrors.js';
 import { documentLoader } from './loader.js';
 import type { BbsKeyPair, VerifiableCredential, VerifyCredentialResult } from './types.js';
 
@@ -248,36 +249,3 @@ function checkValidityPeriod(
   return undefined;
 }
 
-function extractErrorMessage(result: {
-  error?: { errors?: unknown[]; message?: string } | Error;
-  results?: { error?: unknown }[];
-}): string {
-  const topLevel = result.error;
-  if (topLevel) {
-    // jsonld-signatures aggregates per-proof errors into `error.errors`.
-    const nested =
-      !(topLevel instanceof Error) && Array.isArray(topLevel.errors)
-        ? topLevel.errors.map(toMessage).join('; ')
-        : '';
-    return nested || toMessage(topLevel);
-  }
-  const perProof = (result.results ?? [])
-    .map((r) => r.error)
-    .filter((e) => e !== undefined)
-    .map(toMessage)
-    .join('; ');
-  return perProof || 'Credential verification failed.';
-}
-
-function toMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (
-    typeof error === 'object' &&
-    error !== null &&
-    'message' in error &&
-    typeof (error as { message: unknown }).message === 'string'
-  ) {
-    return (error as { message: string }).message;
-  }
-  return String(error);
-}

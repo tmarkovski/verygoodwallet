@@ -69,6 +69,67 @@ importers:
         specifier: ^4.110.0
         version: 4.110.0
 
+  apps/shop:
+    dependencies:
+      '@vgw/keys':
+        specifier: workspace:*
+        version: link:../../packages/keys
+      '@vgw/protocols':
+        specifier: workspace:*
+        version: link:../../packages/protocols
+      '@vgw/vc-kit':
+        specifier: workspace:*
+        version: link:../../packages/vc-kit
+      hono:
+        specifier: ^4.12.30
+        version: 4.12.30
+      qrcode:
+        specifier: ^1.5.4
+        version: 1.5.4
+      react:
+        specifier: ^19.2.0
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.0
+        version: 19.2.7(react@19.2.7)
+    devDependencies:
+      '@cloudflare/vite-plugin':
+        specifier: ^1.44.0
+        version: 1.44.0(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0))(workerd@1.20260708.1)(wrangler@4.110.0)
+      '@tailwindcss/vite':
+        specifier: ^4.3.0
+        version: 4.3.2(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0))
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      '@types/qrcode':
+        specifier: ^1.5.6
+        version: 1.5.6
+      '@types/react':
+        specifier: ^19.2.0
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.2.0
+        version: 19.2.3(@types/react@19.2.17)
+      '@vitejs/plugin-react':
+        specifier: ^6.0.0
+        version: 6.0.3(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0))
+      tailwindcss:
+        specifier: ^4.3.0
+        version: 4.3.2
+      typescript:
+        specifier: ~5.9.0
+        version: 5.9.3
+      vite:
+        specifier: ^8.1.0
+        version: 8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0))
+      wrangler:
+        specifier: ^4.110.0
+        version: 4.110.0
+
   apps/wallet:
     dependencies:
       '@vgw/keys':
@@ -176,6 +237,12 @@ importers:
       '@digitalbazaar/did-method-key':
         specifier: ^5.3.0
         version: 5.3.0
+      '@digitalbazaar/ed25519-multikey':
+        specifier: ^1.3.1
+        version: 1.3.1
+      '@digitalbazaar/eddsa-rdfc-2022-cryptosuite':
+        specifier: ^1.3.0
+        version: 1.3.0
       '@digitalbazaar/security-document-loader':
         specifier: ^3.2.0
         version: 3.2.0
@@ -287,6 +354,10 @@ packages:
   '@digitalbazaar/ed25519-verification-key-2020@4.2.0':
     resolution: {integrity: sha512-urEVTYkt+uYD8GjdoS6gkm2sKBich1hqx42b6vvUOmNgF0agZ95JlUjiJXEx+VOwu7WSjJSnEBph2Qatkrk1CA==}
     engines: {node: '>=14'}
+
+  '@digitalbazaar/eddsa-rdfc-2022-cryptosuite@1.3.0':
+    resolution: {integrity: sha512-IcxYKnxYEaJ1xLEcsddIYb+ooQPQ8pM54NKDDH5eDpF8pEY5E/dqrkJv+o6yHUuoXDjwjhvPQSj6nE0rF32Q/w==}
+    engines: {node: '>=18'}
 
   '@digitalbazaar/http-client@4.3.0':
     resolution: {integrity: sha512-6lMpxpt9BOmqHKGs9Xm6DP4LlZTBFer/ZjHvP3FcW3IaUWYIWC7dw5RFZnvw4fP57kAVcm1dp3IF+Y50qhBvAw==}
@@ -1625,6 +1696,12 @@ snapshots:
       base58-universal: 2.0.0
       base64url-universal: 2.0.0
       crypto-ld: 7.0.0
+
+  '@digitalbazaar/eddsa-rdfc-2022-cryptosuite@1.3.0':
+    dependencies:
+      '@digitalbazaar/ed25519-multikey': 1.3.1
+      jsonld: 9.0.0
+      rdf-canonize: 5.0.0
 
   '@digitalbazaar/http-client@4.3.0':
     dependencies:

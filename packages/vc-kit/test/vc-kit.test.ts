@@ -321,6 +321,57 @@ describe('@vgw/vc-kit', () => {
       expect(subject.driversLicense['birthDateCommitment']).toBeUndefined();
     });
 
+    it('stamps mdoc-style age_over flags computed at issuance (validFrom)', () => {
+      // Born 1988-04-19, issued 2026-01-01 → 37 years old: all flags true.
+      const license = subjectOf(credential).driversLicense;
+      expect(license['age_over_18']).toBe(true);
+      expect(license['age_over_21']).toBe(true);
+      expect(license['age_over_25']).toBe(true);
+
+      // Born 2009-11-02 (the under-18 demo persona), issued 2026-01-01 → 16.
+      const minor = buildUtopiaDriversLicense({
+        givenName: 'NOA',
+        familyName: 'LINDQVIST',
+        birthDate: '2009-11-02',
+        documentNumber: 'X2',
+        issuer: { id: 'did:key:zExample' },
+        validFrom: '2026-01-01T00:00:00Z',
+      });
+      const minorLicense = subjectOf(minor).driversLicense;
+      expect(minorLicense['age_over_18']).toBe(false);
+      expect(minorLicense['age_over_21']).toBe(false);
+      expect(minorLicense['age_over_25']).toBe(false);
+    });
+
+    it('flips age_over flags exactly on the birthday, not a day-count approximation', () => {
+      const build = (validFrom: string) =>
+        subjectOf(
+          buildUtopiaDriversLicense({
+            givenName: 'A',
+            familyName: 'B',
+            birthDate: '2008-01-02',
+            documentNumber: 'X3',
+            issuer: { id: 'did:key:zExample' },
+            validFrom,
+          })
+        ).driversLicense;
+      // 18th birthday is 2026-01-02: false the day before, true on the day.
+      expect(build('2026-01-01T00:00:00Z')['age_over_18']).toBe(false);
+      expect(build('2026-01-02T00:00:00Z')['age_over_18']).toBe(true);
+    });
+
+    it('rejects a malformed birthDate instead of stamping wrong flags', () => {
+      expect(() =>
+        buildUtopiaDriversLicense({
+          givenName: 'A',
+          familyName: 'B',
+          birthDate: '02/01/2008',
+          documentNumber: 'X4',
+          issuer: { id: 'did:key:zExample' },
+        })
+      ).toThrow(/birthDate must be 'YYYY-MM-DD'/);
+    });
+
     it('defaults validity to midnight UTC so it is not a per-credential fingerprint', () => {
       // validFrom/validUntil are mandatory-disclosed in every derived proof;
       // millisecond-precision defaults would correlate presentations of the

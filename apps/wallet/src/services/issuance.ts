@@ -469,9 +469,11 @@ async function verifyReceivedCredential(
   holderDid: string,
   opening: CommitmentOpeningLike | undefined,
 ): Promise<void> {
-  // Subject binding: the credential must be issued to THIS wallet's pairwise
-  // DID (the one proven in the PoP JWT), or someone else's credential could
-  // be planted in the vault.
+  // Subject binding: an ABSENT subject id is the expected shape — bbs-2023
+  // derivation reveals node ids structurally, so the issuer deliberately
+  // omits the holder DID (issuance is holder-bound by the PoP JWT instead).
+  // But if a credential DOES name a subject, it must be this wallet's
+  // pairwise DID, or someone else's credential could be planted in the vault.
   const subject = vc.credentialSubject;
   if (subject === undefined || Array.isArray(subject)) {
     throw new Error(
@@ -479,7 +481,7 @@ async function verifyReceivedCredential(
     );
   }
   const subjectId = subject["id"];
-  if (subjectId !== holderDid) {
+  if (subjectId !== undefined && subjectId !== holderDid) {
     throw new Error(
       `The received credential is bound to "${String(subjectId)}" instead of this wallet's holder DID "${holderDid}" — refusing to store it`,
     );
@@ -540,14 +542,15 @@ async function verifyReceivedCredential(
     });
   }
 
-  // Cryptographic roundtrip: derive a minimal disclosure and verify it
-  // against the issuer DID, so the wallet has actually checked the BBS
-  // signature (not just the JSON shape) before trusting the credential.
+  // Cryptographic roundtrip: derive a disclosure and verify it against the
+  // issuer DID, so the wallet has actually checked the BBS signature (not
+  // just the JSON shape) before trusting the credential. The commitment
+  // pointer when present, else the whole subject — this derivation never
+  // leaves the device, so its breadth costs no privacy.
   const pointers = [
-    "/credentialSubject/id",
-    ...(signedCommitment !== undefined
-      ? ["/credentialSubject/driversLicense/birthDateCommitment"]
-      : []),
+    signedCommitment !== undefined
+      ? "/credentialSubject/driversLicense/birthDateCommitment"
+      : "/credentialSubject",
   ];
   const derived = await deriveCredential({
     verifiableCredential: vc,

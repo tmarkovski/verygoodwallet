@@ -154,12 +154,16 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
   app.use("/oid4vci/*", publicCors);
   app.use("/api/*", publicCors);
 
-  app.get("/.well-known/openid-credential-issuer", (c) => {
+  app.get("/.well-known/openid-credential-issuer", async (c) => {
     const origin = new URL(c.req.url).origin;
+    // vgw_issuer_did lets verifiers pin this issuer's signing DID by fetching
+    // it over our TLS origin (stand-in for a future did:web DID document).
+    const keyPair = await getIssuerKeyPair(c.env);
     const metadata: IssuerMetadata = {
       credential_issuer: origin,
       credential_endpoint: `${origin}/oid4vci/credential`,
       token_endpoint: `${origin}/oid4vci/token`,
+      vgw_issuer_did: keyPair.controller,
       display: [{ name: ISSUER_DISPLAY_NAME, locale: "en-US" }],
       credential_configurations_supported: {
         [CREDENTIAL_CONFIGURATION_ID]: {
@@ -409,13 +413,12 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
     // The proof must be addressed to THIS issuer (aud = our origin) and echo
     // the c_nonce carried in the verified access token.
     const origin = new URL(c.req.url).origin;
-    let holderDid: string;
     try {
-      ({ holderDid } = verifyProofJwt({
+      verifyProofJwt({
         jwt: request.proof.jwt,
         audience: origin,
         nonce: access.c_nonce,
-      }));
+      });
     } catch (error) {
       return c.json(
         ...oauthError(
@@ -432,9 +435,14 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
     const birthDays = daysSinceEpoch(access.birthDate);
     const opening = createCommitment(birthDays);
 
+    // Deliberately NO subjectId: bbs-2023 selective disclosure structurally
+    // reveals a node's `id` whenever any claim under it is selected, so an
+    // embedded holder DID would ride along in EVERY derived proof — one
+    // correlation handle shared by all verifiers, defeating unlinkability.
+    // Issuance is holder-bound by the PoP JWT (verified above) and by
+    // possession of the base proof; that caveat is documented, not faked.
     const keyPair = await getIssuerKeyPair(c.env);
     const unsigned = buildUtopiaDriversLicense({
-      subjectId: holderDid,
       givenName: access.givenName,
       familyName: access.familyName,
       birthDate: access.birthDate,

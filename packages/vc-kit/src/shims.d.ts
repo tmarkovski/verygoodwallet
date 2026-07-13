@@ -81,6 +81,55 @@ declare module '@digitalbazaar/bls12-381-multikey' {
   ): Promise<Bls12381MultikeyPair>;
 }
 
+declare module '@digitalbazaar/ed25519-multikey' {
+  /**
+   * Raw key pair interface returned by this package. Fields are mutable;
+   * callers may assign `id`, `controller` and `@context` after generation.
+   */
+  export interface Ed25519MultikeyPair {
+    id?: string;
+    controller?: string;
+    publicKeyMultibase: string;
+    secretKeyMultibase?: string;
+    signer(): {
+      algorithm: string;
+      id?: string;
+      sign(options: { data: Uint8Array }): Promise<Uint8Array>;
+    };
+    verifier(): {
+      algorithm: string;
+      id?: string;
+      verify(options: unknown): Promise<boolean>;
+    };
+    export(options?: {
+      publicKey?: boolean;
+      secretKey?: boolean;
+      includeContext?: boolean;
+    }): Promise<Record<string, unknown>>;
+    [key: string]: unknown;
+  }
+
+  export function generate(options?: {
+    id?: string;
+    controller?: string;
+    seed?: Uint8Array;
+  }): Promise<Ed25519MultikeyPair>;
+
+  export function from(
+    multikeyLike: unknown,
+    options?: unknown
+  ): Promise<Ed25519MultikeyPair>;
+}
+
+declare module '@digitalbazaar/eddsa-rdfc-2022-cryptosuite' {
+  /** Opaque cryptosuite object consumed by DataIntegrityProof. */
+  export const cryptosuite: {
+    name: string;
+    requiredAlgorithm: string;
+    [key: string]: unknown;
+  };
+}
+
 declare module '@digitalbazaar/data-integrity' {
   export class DataIntegrityProof {
     constructor(options: {
@@ -167,6 +216,11 @@ declare module 'jsonld-signatures' {
     ): Promise<VerifyResult>;
     purposes: {
       AssertionProofPurpose: new (options?: Record<string, unknown>) => unknown;
+      AuthenticationProofPurpose: new (options: {
+        challenge: string;
+        domain?: string;
+        [key: string]: unknown;
+      }) => unknown;
       [key: string]: unknown;
     };
     [key: string]: unknown;

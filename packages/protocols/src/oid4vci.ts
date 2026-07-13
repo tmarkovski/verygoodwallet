@@ -59,6 +59,13 @@ export interface IssuerMetadata {
   token_endpoint: string;
   display?: LocalizedDisplay[];
   credential_configurations_supported: Record<string, CredentialConfiguration>;
+  /**
+   * VGW extension: the DID this issuer signs credentials under. Verifiers
+   * fetch it over the issuer's TLS origin to pin `expectedIssuer` without
+   * out-of-band configuration — the same trust model a did:web DID document
+   * would formalize (planned follow-up; this field is its stand-in).
+   */
+  vgw_issuer_did?: string;
 }
 
 /**

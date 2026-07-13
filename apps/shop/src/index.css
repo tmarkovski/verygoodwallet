@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+/*
+ * The Nightcap design tokens — "LAST LIGHT ON".
+ *
+ * Deliberately NOT Intaglio (see DESIGN.md: verifier demo sites are third
+ * parties in the story and must not reuse the wallet's civic identity).
+ * Concept: an after-hours bottle shop — espresso-black backbar, one warm
+ * amber bulb still burning, chalk-cream lettering, and the green neon of an
+ * OPEN sign for the single "verified" moment.
+ *
+ * The Tailwind utility NAMES mirror the other apps (bg-canvas, text-ink,
+ * bg-accent, text-ok…) so components read identically across the monorepo —
+ * only the values differ. Here accent = amber (CTA), ok = neon green.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --nc-canvas: #14100b;
+  --nc-surface: #1c1611;
+  --nc-raised: #251d15;
+  --nc-overlay: rgb(8 6 4 / 0.74);
+  --nc-line: rgb(229 161 63 / 0.16);
+  --nc-line-strong: rgb(229 161 63 / 0.32);
+  --nc-ink: #f1e8d6;
+  --nc-ink-dim: #cabfa8;
+  --nc-muted: #92876f;
+  /* The amber bulb — brand + call to action. Dark text on it clears 7:1. */
+  --nc-accent: #e5a13f;
+  --nc-accent-soft: rgb(229 161 63 / 0.13);
+  --nc-accent-contrast: #1c1310;
+  --nc-danger: #e06060;
+  --nc-danger-soft: rgb(224 96 96 / 0.13);
+  /* OPEN-sign neon green — reserved for the verified moment. */
+  --nc-ok: #46d69a;
+  --nc-ok-soft: rgb(70 214 154 / 0.12);
+}
+
+@theme {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+  /* Labeled-bottle serif for the wordmark and headlines. */
+  --font-display:
+    "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+
+  --animate-rise: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade: fade 0.3s ease both;
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--nc-canvas);
+  --color-surface: var(--nc-surface);
+  --color-raised: var(--nc-raised);
+  --color-overlay: var(--nc-overlay);
+  --color-line: var(--nc-line);
+  --color-line-strong: var(--nc-line-strong);
+  --color-ink: var(--nc-ink);
+  --color-ink-dim: var(--nc-ink-dim);
+  --color-muted: var(--nc-muted);
+  --color-accent: var(--nc-accent);
+  --color-accent-soft: var(--nc-accent-soft);
+  --color-accent-contrast: var(--nc-accent-contrast);
+  --color-danger: var(--nc-danger);
+  --color-danger-soft: var(--nc-danger-soft);
+  --color-ok: var(--nc-ok);
+  --color-ok-soft: var(--nc-ok-soft);
+}
+
+body {
+  background-color: var(--nc-canvas);
+  color: var(--nc-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+}
+
+::selection {
+  background-color: var(--nc-accent);
+  color: var(--nc-accent-contrast);
+}
+
+:focus-visible {
+  outline: 2px solid var(--nc-accent);
+  outline-offset: 2px;
+}
+
+/*
+ * .bulb-glow — the one warm light still on: a soft radial amber wash behind
+ * the hero. Pure background, no motion (a flickering sign would be cute and
+ * unkind in equal measure).
+ */
+.bulb-glow {
+  background:
+    radial-gradient(
+      42rem 26rem at 72% -8rem,
+      rgb(229 161 63 / 0.14),
+      transparent 65%
+    );
+}
+
+/*
+ * .neon — the OPEN-sign treatment for the verified moment only: neon green
+ * with a faint halo. Static; reduced-motion users see exactly the same thing.
+ */
+.neon {
+  color: var(--nc-ok);
+  text-shadow:
+    0 0 6px rgb(70 214 154 / 0.55),
+    0 0 18px rgb(70 214 154 / 0.3);
+}
+
+/* Keep the rise/fade system, but stand still for reduced-motion users. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-fade {
+    animation: none;
+  }
+}

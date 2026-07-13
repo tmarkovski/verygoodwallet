@@ -11,7 +11,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { useSession } from "../session";
-import type { AccountRecord } from "../services/db";
 import {
   ISSUANCE_STEPS,
   acceptCredentialOffer,
@@ -21,137 +20,9 @@ import {
   type IssuanceStep,
   type OfferPreview,
 } from "../services/issuance";
-import {
-  Button,
-  ErrorNote,
-  PrfBadge,
-  SectionTitle,
-  Spinner,
-  describeError,
-} from "../components/ui";
-
-/**
- * Inline passkey unlock — same session `login` the Home lock screen uses,
- * but rendered in place so the offer's search params are never lost to a
- * redirect. When `login` resolves, the session context re-renders this page
- * straight into the consent state.
- */
-function InlineUnlock({ accounts }: { accounts: AccountRecord[] }) {
-  const { login, lastAccountId } = useSession();
-  const [selectedId, setSelectedId] = useState<number>(() => {
-    const preferred = accounts.find((a) => a.id === lastAccountId) ?? accounts[0];
-    return preferred?.id ?? -1;
-  });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const selected = accounts.find((a) => a.id === selectedId) ?? accounts[0];
-
-  const unlock = async () => {
-    if (selected === undefined || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await login(selected);
-    } catch (err) {
-      setError(describeError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="mt-6 rounded-3xl border border-line bg-surface p-5">
-      <SectionTitle>Unlock to continue</SectionTitle>
-      <p className="mt-2 text-[13px] leading-relaxed text-ink-dim">
-        Your wallet is locked. Unlock with your passkey — you'll stay right
-        here, and the offer will still be waiting.
-      </p>
-
-      {accounts.length > 1 ? (
-        <ul className="mt-4 space-y-2">
-          {accounts.map((account) => (
-            <li key={account.id}>
-              <button
-                type="button"
-                onClick={() => setSelectedId(account.id)}
-                className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm transition-colors ${
-                  account.id === selected?.id
-                    ? "border-accent bg-accent-soft"
-                    : "border-line bg-canvas hover:border-line-strong"
-                }`}
-              >
-                <span className="font-medium">{account.name}</span>
-                <PrfBadge prfSupported={account.prfSupported} />
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : selected !== undefined ? (
-        <div className="mt-4 flex items-center justify-between rounded-2xl border border-line bg-canvas px-4 py-3 text-sm">
-          <span className="font-medium">{selected.name}</span>
-          <PrfBadge prfSupported={selected.prfSupported} />
-        </div>
-      ) : null}
-
-      <Button onClick={() => void unlock()} busy={busy} className="mt-4 w-full">
-        {busy ? "Waiting for passkey…" : "Unlock with passkey"}
-      </Button>
-      {error !== null && <div className="mt-3"><ErrorNote>{error}</ErrorNote></div>}
-    </div>
-  );
-}
-
-/** In-flight protocol progress, driven by `acceptCredentialOffer`'s onStep. */
-function StepList({ current }: { current: IssuanceStep | null }) {
-  const activeIndex =
-    current === null ? -1 : ISSUANCE_STEPS.findIndex((s) => s.id === current);
-  return (
-    <div className="mt-6 animate-fade rounded-3xl border border-line bg-surface p-5">
-      <SectionTitle>Issuing</SectionTitle>
-      <ol className="mt-3 space-y-2.5">
-        {ISSUANCE_STEPS.map((s, index) => {
-          const state =
-            index < activeIndex ? "done" : index === activeIndex ? "active" : "pending";
-          return (
-            <li
-              key={s.id}
-              className={`flex items-center gap-2.5 text-[13px] ${
-                state === "pending" ? "text-muted" : "text-ink"
-              }`}
-            >
-              <span className="flex size-4 shrink-0 items-center justify-center">
-                {state === "done" ? (
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    aria-hidden="true"
-                    className="text-ok"
-                  >
-                    <path
-                      d="M5 12.5l4.5 4.5L19 7.5"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : state === "active" ? (
-                  <Spinner />
-                ) : (
-                  <span className="size-1.5 rounded-full bg-line-strong" />
-                )}
-              </span>
-              {s.label}
-            </li>
-          );
-        })}
-      </ol>
-    </div>
-  );
-}
+import { InlineUnlock } from "../components/InlineUnlock";
+import { StepList } from "../components/StepList";
+import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
 
 export function Offer() {
   const [searchParams] = useSearchParams();
@@ -343,7 +214,7 @@ export function Offer() {
           ) : locked ? (
             <InlineUnlock accounts={accounts} />
           ) : running ? (
-            <StepList current={step} />
+            <StepList title="Issuing" steps={ISSUANCE_STEPS} current={step} />
           ) : (
             <div className="mt-6">
               {error !== null && (

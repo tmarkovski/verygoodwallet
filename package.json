@@ -10,6 +10,7 @@
     "test": "pnpm -r test",
     "build": "pnpm -r build",
     "dev:wallet": "pnpm --filter @vgw/wallet dev",
-    "dev:dmv": "pnpm --filter @vgw/dmv dev"
+    "dev:dmv": "pnpm --filter @vgw/dmv dev",
+    "dev:shop": "pnpm --filter @vgw/shop dev"
   }
 }

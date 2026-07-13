@@ -47,3 +47,8 @@ jobs:
         # the runtime, so only this catches bundles that fail Cloudflare's
         # script-startup validation (see apps/dmv/scripts/smoke.mjs).
         run: pnpm --filter @vgw/dmv smoke
+
+      - name: Smoke-test Shop Worker bundle under workerd
+        # Same rationale as the DMV smoke, plus the Durable Object migration:
+        # only workerd validates the DO binding + class export end to end.
+        run: pnpm --filter @vgw/shop smoke

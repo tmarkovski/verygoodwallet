@@ -113,6 +113,9 @@ describe("issuer metadata", () => {
     expect(metadata.credential_endpoint).toBe(`${TEST_ISSUER_ORIGIN}/oid4vci/credential`);
     expect(metadata.token_endpoint).toBe(`${TEST_ISSUER_ORIGIN}/oid4vci/token`);
     expect(metadata.display).toEqual([{ name: "Utopia DMV", locale: "en-US" }]);
+    // Verifiers pin expectedIssuer from this field (fetched over our origin);
+    // it must be the same DID the credential endpoint signs under.
+    expect(metadata.vgw_issuer_did).toMatch(/^did:key:zUC7/);
 
     const config =
       metadata.credential_configurations_supported[CREDENTIAL_CONFIGURATION_ID];
@@ -345,8 +348,11 @@ describe("POST /oid4vci/credential", () => {
     expect(proof["cryptosuite"]).toBe("bbs-2023");
     expect(proof["type"]).toBe("DataIntegrityProof");
 
+    // No subject id, deliberately: bbs-2023 derivation reveals node ids
+    // structurally, so an embedded holder DID would correlate every
+    // presentation of this credential across verifiers.
     const subject = vc?.["credentialSubject"] as Record<string, unknown>;
-    expect(subject["id"]).toBe(HOLDER_DID);
+    expect(subject["id"]).toBeUndefined();
 
     const license = subject["driversLicense"] as Record<string, unknown>;
     expect(license["given_name"]).toBe(SUBJECT.givenName);

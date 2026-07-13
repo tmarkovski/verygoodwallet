@@ -10,6 +10,7 @@ GitHub Pages until cutover.
 | Legacy CRA app (`web/`) | GitHub Pages at `verygoodwallet.com` | `.github/workflows/deploy.yml` (push to `main`) — **stays live until M6 cutover** |
 | New wallet (`apps/wallet/`) | Cloudflare Worker `vgw-wallet` at `vgw-wallet.<account>.workers.dev` | `.github/workflows/deploy-wallet.yml` (push to `main`, or manual `workflow_dispatch`) |
 | Utopia DMV issuer (`apps/dmv/`) | Cloudflare Worker `vgw-dmv` at `vgw-dmv.<account>.workers.dev` | `.github/workflows/deploy-dmv.yml` (push to `main`, or manual `workflow_dispatch`) |
+| The Nightcap verifier (`apps/shop/`) | Cloudflare Worker `vgw-shop` at `vgw-shop.<account>.workers.dev` | `.github/workflows/deploy-shop.yml` (push to `main`, or manual `workflow_dispatch`) |
 
 Until DNS moves and M6 cutover happens, the new wallet is only reachable on its
 `workers.dev` URL. The apex domain keeps pointing at GitHub Pages.
@@ -171,16 +172,63 @@ works **before** the apex cutover, since a subdomain doesn't collide with the
 legacy GitHub Pages site: Dashboard → Workers & Pages → `vgw-dmv` → Settings →
 Domains & Routes → *Add* → **Custom domain**.
 
+## Deploying The Nightcap verifier (shop)
+
+Every push to `main` deploys automatically using the workflow's defaults —
+the live wallet and DMV Worker URLs. To deploy with different origins, run
+the **Deploy Shop** workflow manually:
+
+```sh
+gh workflow run deploy-shop.yml \
+  -f wallet_origin=https://vgw-wallet.<account>.workers.dev \
+  -f dmv_origin=https://vgw-dmv.<account>.workers.dev
+```
+
+Same Worker + assets shape as the DMV (Hono OID4VP endpoints + static UI via
+`@cloudflare/vite-plugin`), plus one extra piece: the `VerificationSessions`
+**Durable Object** (SQLite-backed, available on the Workers Free plan) that
+holds each verification session's outcome so cross-device polls read their
+writes. The first deploy runs the `v1` migration from `wrangler.jsonc`
+automatically.
+
+Configuration, all handled by the workflow:
+
+- `VITE_WALLET_ORIGIN` (build-time) / `WALLET_ORIGIN` (Worker var) — same
+  two-channel wallet-origin story as the DMV, but for `/present` links.
+- `DMV_ORIGIN` (Worker var) — where the shop discovers the trusted issuer
+  DID (`vgw_issuer_did` in the DMV's issuer metadata, fetched over TLS and
+  cached per isolate). `TRUSTED_ISSUER_DID` (optional var) pins the DID
+  directly and skips discovery.
+
+### Worker secret (set after the first deploy)
+
+The shop signs its stateless OID4VP `state` values with `TOKEN_SECRET`
+(public dev fallback until set). From `apps/shop/`:
+
+```sh
+openssl rand -hex 32 | pnpm exec wrangler secret put TOKEN_SECRET
+```
+
+Note: rotating the DMV's `ISSUER_SEED` changes the issuer DID; the shop
+follows automatically via metadata discovery (per-isolate cache, so give it
+a redeploy or a few minutes), but credentials issued under the old seed stop
+verifying.
+
+### Live end-to-end check
+
+With both dev servers running (`pnpm dev:dmv`, `pnpm dev:shop`):
+
+```sh
+VGW_E2E=1 pnpm --filter @vgw/shop test
+```
+
+runs `apps/shop/worker/e2e.test.ts` — real issuance at the dev DMV, a real
+tier-1 presentation into the dev shop, the under-18 denial, and a replay
+rejection against the live Durable Object. (Skipped without `VGW_E2E=1`.)
+
 ## Future apps (per PLAN.md)
 
-The verifier apps deploy the same way — one Worker each, mapped to a
-subdomain custom domain once DNS is on Cloudflare (subdomains can be mapped
-before the apex cutover, since they don't collide with GitHub Pages):
-
-| App | Worker (suggested) | Custom domain |
-|-----|--------------------|---------------|
-| The Nightcap (verifier) | `vgw-shop` | `shop.verygoodwallet.com` |
-| Utopia Wheels (verifier) | `vgw-rentals` | `rentals.verygoodwallet.com` |
-
-These carry OID4VP Worker endpoints (not assets-only), so they will follow
-the DMV's Worker + assets shape rather than the wallet's assets-only one.
+Utopia Wheels (`vgw-rentals`, `rentals.verygoodwallet.com`) deploys the same
+way as the shop — one OID4VP Worker + assets, subdomain custom domain once
+DNS is on Cloudflare (mappable before the apex cutover, since subdomains
+don't collide with GitHub Pages).

@@ -8,9 +8,16 @@ import { describeHierarchy, type DerivationNode } from "@vgw/keys";
 import { useSession } from "../session";
 import { DEMO_ISSUER_ORIGIN } from "../services/demo";
 
-/** Origins shown as branches; presenters are the planned M3/M5 verifiers. */
+/**
+ * Origins shown as branches. The shop entry matches what /present actually
+ * derives against today (presenter branches are keyed by the verifier's
+ * exact origin); rentals is the planned M5 verifier.
+ */
 const ISSUER_ORIGINS = [DEMO_ISSUER_ORIGIN];
-const VERIFIER_ORIGINS = ["shop.verygoodwallet.com", "rentals.verygoodwallet.com"];
+const VERIFIER_ORIGINS = [
+  "https://vgw-shop.t7m8.workers.dev",
+  "rentals.verygoodwallet.com",
+];
 
 function Node({ node, root = false }: { node: DerivationNode; root?: boolean }) {
   return (

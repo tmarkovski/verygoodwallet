@@ -10,6 +10,7 @@
 import { securityLoader } from '@digitalbazaar/security-document-loader';
 import * as didKey from '@digitalbazaar/did-method-key';
 import * as Bls12381Multikey from '@digitalbazaar/bls12-381-multikey';
+import * as Ed25519Multikey from '@digitalbazaar/ed25519-multikey';
 import { CachedResolver } from '@digitalbazaar/did-io';
 import { contexts as credentialsContexts } from '@digitalbazaar/credentials-context';
 import { BUNDLED_CONTEXTS, CREDENTIALS_V2_CONTEXT_URL } from './contexts/index.js';
@@ -29,12 +30,18 @@ if (!loader.documents.has(CREDENTIALS_V2_CONTEXT_URL)) {
   }
 }
 
-// did:key driver that accepts BLS12-381 G2 Multikeys (multibase header zUC7),
-// used for both issuer and holder BBS keys.
+// did:key driver for the two key types this kit resolves: BLS12-381 G2
+// Multikeys (header zUC7 — issuer/holder BBS keys) and Ed25519 Multikeys
+// (header z6Mk — presenter keys signing presentations). The driver has NO
+// default handlers; every header must be registered explicitly.
 const didKeyDriver = didKey.driver();
 didKeyDriver.use({
   multibaseMultikeyHeader: 'zUC7',
   fromMultibase: Bls12381Multikey.from,
+});
+didKeyDriver.use({
+  multibaseMultikeyHeader: 'z6Mk',
+  fromMultibase: Ed25519Multikey.from,
 });
 
 const resolver = new CachedResolver();
