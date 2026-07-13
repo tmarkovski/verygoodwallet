@@ -195,10 +195,15 @@ Configuration, all handled by the workflow:
 
 - `VITE_WALLET_ORIGIN` (build-time) / `WALLET_ORIGIN` (Worker var) — same
   two-channel wallet-origin story as the DMV, but for `/present` links.
-- `DMV_ORIGIN` (Worker var) — where the shop discovers the trusted issuer
-  DID (`vgw_issuer_did` in the DMV's issuer metadata, fetched over TLS and
-  cached per isolate). `TRUSTED_ISSUER_DID` (optional var) pins the DID
-  directly and skips discovery.
+- `TRUSTED_ISSUER_DID` (Worker var) — the issuer DID verification pins. The
+  workflow discovers it at deploy time from the DMV's issuer metadata
+  (`vgw_issuer_did`), because worker-to-worker fetches between
+  `*.workers.dev` hosts on the same account don't route to the target
+  Worker. Consequence: **rotating the DMV's `ISSUER_SEED` requires
+  redeploying the shop.**
+- `DMV_ORIGIN` (Worker var) — the runtime-discovery fallback used when no
+  DID is pinned; works in dev (localhost) and, post-M6, across custom
+  domains.
 
 ### Worker secret (set after the first deploy)
 
@@ -209,10 +214,9 @@ The shop signs its stateless OID4VP `state` values with `TOKEN_SECRET`
 openssl rand -hex 32 | pnpm exec wrangler secret put TOKEN_SECRET
 ```
 
-Note: rotating the DMV's `ISSUER_SEED` changes the issuer DID; the shop
-follows automatically via metadata discovery (per-isolate cache, so give it
-a redeploy or a few minutes), but credentials issued under the old seed stop
-verifying.
+Note: rotating the DMV's `ISSUER_SEED` changes the issuer DID; redeploy the
+shop afterwards so its pinned `TRUSTED_ISSUER_DID` follows. Credentials
+issued under the old seed stop verifying either way.
 
 ### Live end-to-end check
 

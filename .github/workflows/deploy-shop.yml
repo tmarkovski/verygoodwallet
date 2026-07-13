@@ -94,6 +94,31 @@ jobs:
             }
           '
 
+      - name: Discover the trusted issuer DID from the DMV
+        # The Worker can't do this at runtime today: worker-to-worker fetches
+        # between *.workers.dev hosts on the same account don't route to the
+        # target Worker (Cloudflare platform restriction; service bindings
+        # are the sanctioned path, but they'd couple the two deploys). Same
+        # TLS trust model, evaluated at deploy time instead — which means
+        # rotating the DMV's ISSUER_SEED requires redeploying the shop.
+        # Runtime discovery still covers dev and post-M6 custom domains.
+        run: |
+          DID=$(curl -fsS "$DMV_ORIGIN/.well-known/openid-credential-issuer" \
+            | node -e '
+              let data = "";
+              process.stdin.on("data", (c) => (data += c));
+              process.stdin.on("end", () => {
+                const did = JSON.parse(data).vgw_issuer_did;
+                if (typeof did !== "string" || !/^did:key:[A-Za-z0-9]+$/.test(did)) {
+                  console.error(`DMV metadata carries no usable vgw_issuer_did: ${did}`);
+                  process.exit(1);
+                }
+                console.log(did);
+              });
+            ')
+          echo "TRUSTED_ISSUER_DID=$DID" >> "$GITHUB_ENV"
+          echo "Pinning trusted issuer: $DID"
+
       - name: Build Shop
         run: pnpm --filter @vgw/shop build
         env:
@@ -117,5 +142,6 @@ jobs:
           # stale and predates the compatibility_date in wrangler.jsonc.
           wranglerVersion: "4.110.0"
           # WALLET_ORIGIN covers the server-built wallet_link; DMV_ORIGIN is
-          # where the Worker discovers the trusted issuer DID from.
-          command: deploy --var WALLET_ORIGIN:${{ env.WALLET_ORIGIN }} --var DMV_ORIGIN:${{ env.DMV_ORIGIN }}
+          # the runtime-discovery fallback; TRUSTED_ISSUER_DID (validated
+          # did:key, discovered above) is what verification actually pins.
+          command: deploy --var WALLET_ORIGIN:${{ env.WALLET_ORIGIN }} --var DMV_ORIGIN:${{ env.DMV_ORIGIN }} --var TRUSTED_ISSUER_DID:${{ env.TRUSTED_ISSUER_DID }}

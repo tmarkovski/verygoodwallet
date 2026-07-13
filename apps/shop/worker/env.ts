@@ -98,6 +98,11 @@ const issuerDidByOrigin = new Map<string, Promise<string>>();
  * DMV's issuer metadata (`vgw_issuer_did`), fetched over the DMV's TLS
  * origin — the same trust model as a did:web resolution, which this is the
  * stand-in for. Fails closed: no DID, no verification.
+ *
+ * Production deploys PIN the DID (the Deploy Shop workflow discovers it at
+ * deploy time): worker-to-worker fetches between *.workers.dev hosts on the
+ * same account don't route to the target Worker, so runtime discovery only
+ * works in dev (localhost) and, post-M6, across custom domains.
  */
 export function trustedIssuerDid(
   env: ShopBindings,
