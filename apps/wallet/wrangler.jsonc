@@ -1,0 +1,15 @@
+// Cloudflare Workers configuration for the wallet SPA.
+//
+// Assets-only deployment: no Worker script — Cloudflare serves the static
+// Vite build output from ./dist. `single-page-application` rewrites 404s to
+// /index.html so client-side routing (react-router) works on deep links.
+//
+// Deploy: `wrangler deploy` from this directory (CI: .github/workflows/deploy-wallet.yml).
+{
+  "name": "vgw-wallet",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}

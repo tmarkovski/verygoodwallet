@@ -1,0 +1,52 @@
+# Deploys the wallet SPA (apps/wallet) to Cloudflare Workers (static assets).
+#
+# Manual trigger only for now: the CLOUDFLARE_* secrets must be configured
+# first (see DEPLOY.md). A push trigger can be added once secrets are in
+# place and the M6 cutover retires the legacy GitHub Pages deploy.
+name: Deploy wallet
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-wallet
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy to Cloudflare Workers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        # Version comes from the "packageManager" field in the root package.json.
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build wallet
+        run: pnpm --filter @vgw/wallet build
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/wallet
+          # Must be explicit: the action's package-manager detection only looks
+          # for a lockfile inside workingDirectory, finds none (pnpm-lock.yaml
+          # lives at the repo root), and falls back to npm — which cannot
+          # resolve the workspace:* deps in apps/wallet/package.json.
+          packageManager: pnpm
+          # Pin wrangler; the action's built-in default (3.90.0, Nov 2024) is
+          # stale and predates the compatibility_date in wrangler.jsonc.
+          wranglerVersion: "4.110.0"

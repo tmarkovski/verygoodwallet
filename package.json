@@ -1,0 +1,14 @@
+{
+  "name": "verygoodwallet",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "dev:wallet": "pnpm --filter @vgw/wallet dev"
+  }
+}

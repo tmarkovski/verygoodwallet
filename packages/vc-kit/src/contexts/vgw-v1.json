@@ -1,0 +1,6 @@
+{
+  "@context": {
+    "@protected": true,
+    "birthDateCommitment": "https://verygoodwallet.com/vocab#birthDateCommitment"
+  }
+}

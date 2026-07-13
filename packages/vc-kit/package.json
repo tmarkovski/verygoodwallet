@@ -1,0 +1,29 @@
+{
+  "name": "@vgw/vc-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contexts": "./src/contexts/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@digitalbazaar/bbs-2023-cryptosuite": "^2.0.1",
+    "@digitalbazaar/bls12-381-multikey": "^2.2.0",
+    "@digitalbazaar/credentials-context": "^3.2.0",
+    "@digitalbazaar/data-integrity": "^2.5.0",
+    "@digitalbazaar/did-io": "^2.2.0",
+    "@digitalbazaar/did-method-key": "^5.3.0",
+    "@digitalbazaar/security-document-loader": "^3.2.0",
+    "jsonld-signatures": "^11.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "~5.9.0",
+    "vitest": "^4.1.10"
+  }
+}
