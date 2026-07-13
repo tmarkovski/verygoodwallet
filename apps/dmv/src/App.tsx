@@ -13,7 +13,8 @@ import { clientWalletOrigin } from "./walletOrigin";
 interface OfferResponseBody {
   credential_offer: CredentialOffer;
   credential_offer_uri: string;
-  wallet_link: string;
+  /** Omitted by the Worker when no wallet origin is configured (unused here — the link is rebuilt client-side). */
+  wallet_link?: string;
 }
 
 const INPUT_CLASS =
@@ -211,7 +212,11 @@ export default function App() {
           <OfferResult
             credentialOffer={result.credential_offer}
             credentialOfferUri={result.credential_offer_uri}
-            walletLink={walletOfferLink(walletOrigin, result.credential_offer_uri)}
+            walletLink={
+              walletOrigin !== null
+                ? walletOfferLink(walletOrigin, result.credential_offer_uri)
+                : null
+            }
             walletOrigin={walletOrigin}
           />
         )}

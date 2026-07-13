@@ -51,15 +51,16 @@ import {
   type OfferCodePayload,
 } from "./tokens.js";
 
-export const ISSUER_DISPLAY_NAME = "Utopia DMV";
-
-const DEFAULT_WALLET_ORIGIN = "https://verygoodwallet.com";
+// Not exported: workerd requires every named export of the Worker entry
+// module to be a handler or function — a string export fails script startup.
+const ISSUER_DISPLAY_NAME = "Utopia DMV";
 
 /** What `POST /api/offers` returns to the DMV UI. */
 export interface OfferResponseBody {
   credential_offer: CredentialOffer;
   credential_offer_uri: string;
-  wallet_link: string;
+  /** Omitted when no wallet origin is configured (see {@link resolveWalletOrigin}). */
+  wallet_link?: string;
 }
 
 /** Loopback origins only — a production issuer must not reflect arbitrary Origins into links. */
@@ -78,24 +79,48 @@ function isLocalhostOrigin(value: string): boolean {
   }
 }
 
+let warnedWalletOrigin = false;
+
 /**
  * Which wallet the server-built `wallet_link` targets: the WALLET_ORIGIN var
- * when set, else a localhost caller's own origin (dev heuristic), else the
- * production wallet. The UI usually rebuilds the link client-side from
- * `credential_offer_uri` (supporting its `?wallet=` override), so this is a
- * fallback for API-only consumers.
+ * when set, else a localhost caller's own origin (dev heuristic), else
+ * nothing — the link is omitted from the response. The UI usually rebuilds
+ * the link client-side from `credential_offer_uri` (supporting its `?wallet=`
+ * override), so this is a fallback for API-only consumers.
+ *
+ * There is deliberately no production default: until the M6 cutover the apex
+ * domain serves the legacy GitHub Pages app, which has no /offer route, so a
+ * guessed origin would dead-end issuance AND deliver the PII-bearing code to
+ * the wrong host. No link is strictly better than a wrong link.
  */
 function resolveWalletOrigin(
   env: DmvBindings,
   requestOrigin: string | undefined,
-): string {
+): string | undefined {
   if (env.WALLET_ORIGIN !== undefined && env.WALLET_ORIGIN !== "") {
-    return env.WALLET_ORIGIN;
+    // Normalize the same way the UI's ?wallet= param is normalized — a
+    // trailing slash or stray path would otherwise yield //offer links the
+    // wallet's router silently redirects away from. A value that doesn't
+    // parse throws instead of falling back, same policy as a malformed
+    // ISSUER_SEED: failing beats silently minting broken links.
+    try {
+      return new URL(env.WALLET_ORIGIN).origin;
+    } catch {
+      throw new Error(
+        `WALLET_ORIGIN must be an absolute origin (e.g. https://wallet.example), got: ${env.WALLET_ORIGIN}`,
+      );
+    }
   }
   if (requestOrigin !== undefined && isLocalhostOrigin(requestOrigin)) {
     return requestOrigin;
   }
-  return DEFAULT_WALLET_ORIGIN;
+  if (!warnedWalletOrigin) {
+    warnedWalletOrigin = true;
+    console.warn(
+      "vgw-dmv: WALLET_ORIGIN is not set — omitting wallet_link from offers. Set the Worker var (see DEPLOY.md) so issued offers can point at a wallet.",
+    );
+  }
+  return undefined;
 }
 
 /** Coerce a form/JSON body field to a string parameter (forms may yield Files/arrays). */
@@ -192,13 +217,13 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
     };
     // Signed tokens are base64url + "." — safe as a raw path segment.
     const credentialOfferUri = `${origin}/oid4vci/offer/${code}`;
+    const walletOrigin = resolveWalletOrigin(c.env, c.req.header("origin"));
     const response: OfferResponseBody = {
       credential_offer: credentialOffer,
       credential_offer_uri: credentialOfferUri,
-      wallet_link: walletOfferLink(
-        resolveWalletOrigin(c.env, c.req.header("origin")),
-        credentialOfferUri,
-      ),
+      ...(walletOrigin !== undefined
+        ? { wallet_link: walletOfferLink(walletOrigin, credentialOfferUri) }
+        : {}),
     };
     return c.json(response);
   });
@@ -345,10 +370,21 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
 
     let request: CredentialRequest;
     try {
-      request = (await c.req.json()) as CredentialRequest;
+      const parsed: unknown = await c.req.json();
+      // JSON.parse("null") returns null without throwing — guard the shape
+      // (same as the token endpoint) so a null/array body gets a clean 400
+      // instead of a TypeError on the property access below.
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        throw new Error("body must be a JSON object");
+      }
+      request = parsed as CredentialRequest;
     } catch {
       return c.json(
-        ...oauthError(400, "invalid_credential_request", "request body must be JSON"),
+        ...oauthError(
+          400,
+          "invalid_credential_request",
+          "request body must be a JSON object",
+        ),
       );
     }
     if (request.credential_configuration_id !== CREDENTIAL_CONFIGURATION_ID) {

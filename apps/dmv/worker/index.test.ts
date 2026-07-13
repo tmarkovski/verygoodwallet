@@ -139,10 +139,10 @@ describe("POST /api/offers", () => {
     ]);
     const code = preAuthorizedCode(credential_offer);
     expect(credential_offer_uri).toBe(`${TEST_ISSUER_ORIGIN}/oid4vci/offer/${code}`);
-    // No Origin header, no WALLET_ORIGIN -> the production wallet default.
-    expect(wallet_link).toBe(
-      `https://verygoodwallet.com/offer?credential_offer_uri=${encodeURIComponent(credential_offer_uri)}`,
-    );
+    // No Origin header, no WALLET_ORIGIN -> no wallet_link. Pre-M6 there is
+    // no production wallet to default to (the apex serves the legacy app),
+    // so omitting the link beats minting one that dead-ends at the wrong host.
+    expect(wallet_link).toBeUndefined();
 
     const fetched = await app.request(new URL(credential_offer_uri).pathname, {}, TEST_ENV);
     expect(fetched.status).toBe(200);
@@ -181,13 +181,13 @@ describe("POST /api/offers", () => {
   it("uses a localhost Origin header for the wallet link", async () => {
     const res = await postJson("/api/offers", SUBJECT, { origin: "http://localhost:5173" });
     const { wallet_link } = (await res.json()) as OfferResponseBody;
-    expect(wallet_link.startsWith("http://localhost:5173/offer?")).toBe(true);
+    expect(wallet_link?.startsWith("http://localhost:5173/offer?")).toBe(true);
   });
 
-  it("ignores a non-localhost Origin header", async () => {
+  it("ignores a non-localhost Origin header (no wallet_link rather than a guess)", async () => {
     const res = await postJson("/api/offers", SUBJECT, { origin: "https://evil.example" });
     const { wallet_link } = (await res.json()) as OfferResponseBody;
-    expect(wallet_link.startsWith("https://verygoodwallet.com/offer?")).toBe(true);
+    expect(wallet_link).toBeUndefined();
   });
 
   it("lets WALLET_ORIGIN override everything", async () => {
@@ -196,7 +196,28 @@ describe("POST /api/offers", () => {
       WALLET_ORIGIN: "https://wallet.example",
     });
     const { wallet_link } = (await res.json()) as OfferResponseBody;
-    expect(wallet_link.startsWith("https://wallet.example/offer?")).toBe(true);
+    expect(wallet_link?.startsWith("https://wallet.example/offer?")).toBe(true);
+  });
+
+  it("normalizes a WALLET_ORIGIN with a trailing slash", async () => {
+    // "https://x/" + "/offer" would yield "//offer", which the wallet's
+    // router silently redirects away from — the origin must be normalized.
+    const res = await postJson("/api/offers", SUBJECT, {}, {
+      ...TEST_ENV,
+      WALLET_ORIGIN: "https://wallet.example/",
+    });
+    const { wallet_link } = (await res.json()) as OfferResponseBody;
+    expect(wallet_link?.startsWith("https://wallet.example/offer?")).toBe(true);
+  });
+
+  it("fails loudly on a WALLET_ORIGIN that is not an absolute URL", async () => {
+    // Same policy as a malformed ISSUER_SEED: a misconfigured deploy should
+    // error, not silently emit broken links.
+    const res = await postJson("/api/offers", SUBJECT, {}, {
+      ...TEST_ENV,
+      WALLET_ORIGIN: "verygoodwallet.com",
+    });
+    expect(res.status).toBe(500);
   });
 
   it.each([
@@ -378,6 +399,20 @@ describe("POST /oid4vci/credential", () => {
       { authorization: `Bearer ${preAuthorizedCode(credential_offer)}` },
     );
     await expectOauthError(res, 401, "invalid_token");
+  });
+
+  it.each([
+    ["null", null],
+    ["array", []],
+  ])("rejects a JSON %s body with invalid_credential_request (not a 500)", async (_label, body) => {
+    // JSON.parse("null") returns null without throwing, so without a shape
+    // guard the handler would TypeError on property access -> a bare 500.
+    const { credential_offer } = await createOffer();
+    const token = await exchangeForToken(preAuthorizedCode(credential_offer));
+    const res = await postJson("/oid4vci/credential", body, {
+      authorization: `Bearer ${token.access_token}`,
+    });
+    await expectOauthError(res, 400, "invalid_credential_request");
   });
 
   it("rejects an unknown credential_configuration_id", async () => {

@@ -41,3 +41,9 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Smoke-test DMV Worker bundle under workerd
+        # vitest runs the Worker in plain Node and `vite build` never starts
+        # the runtime, so only this catches bundles that fail Cloudflare's
+        # script-startup validation (see apps/dmv/scripts/smoke.mjs).
+        run: pnpm --filter @vgw/dmv smoke

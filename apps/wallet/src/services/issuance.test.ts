@@ -78,6 +78,12 @@ interface FakeIssuerConfig {
   tamperOpening?: boolean;
   /** Make the token endpoint fail with this OAuth error. */
   tokenError?: { status: number; body: Record<string, unknown> };
+  /** Transform the served metadata (hostile-display tests). */
+  mutateMetadata?: (metadata: IssuerMetadata) => unknown;
+  /** Runs as the token endpoint is hit — interleave session actions mid-flight. */
+  onTokenRequest?: () => void;
+  /** Transform the credential response (malformed-response tests). */
+  mutateCredentialResponse?: (response: CredentialResponse) => unknown;
 }
 
 interface FakeIssuer {
@@ -148,9 +154,10 @@ async function makeFakeIssuer(config: FakeIssuerConfig): Promise<FakeIssuer> {
       return json(offer);
     }
     if (request.method === "GET" && path === "/.well-known/openid-credential-issuer") {
-      return json(metadata);
+      return json(config.mutateMetadata?.(metadata) ?? metadata);
     }
     if (request.method === "POST" && path === "/oid4vci/token") {
+      config.onTokenRequest?.();
       if (config.tokenError !== undefined) {
         return json(config.tokenError.body, config.tokenError.status);
       }
@@ -196,7 +203,7 @@ async function makeFakeIssuer(config: FakeIssuerConfig): Promise<FakeIssuer> {
           commitment: opening.commitment,
         },
       };
-      return json(response);
+      return json(config.mutateCredentialResponse?.(response) ?? response);
     }
     return json({ error: "not_found" }, 404);
   };
@@ -372,6 +379,137 @@ describe("acceptCredentialOffer", () => {
         vaultKey,
       }),
     ).rejects.toThrow(/bound to .* instead of this wallet's holder DID/);
+    expect(db.stored).toHaveLength(0);
+  }, 60_000);
+
+  it("binds to the real pairwise DID even if the session zeroes the secret mid-flight", async () => {
+    // What logout() does during the token round-trip: the session's buffer
+    // is zeroed IN PLACE while the flow still holds a reference to it. The
+    // credential must never end up bound to the publicly-derivable
+    // all-zero-master key.
+    const liveSecret = masterSecret.slice();
+    const issuer = await makeFakeIssuer({
+      origin: "https://dmv.utopia.example",
+      seed: new Uint8Array(32).fill(1),
+      onTokenRequest: () => liveSecret.fill(0),
+    });
+    routeFetchTo(issuer);
+
+    const record = await acceptCredentialOffer({
+      offerUri: issuer.offerUri,
+      accountId: 1,
+      masterSecret: liveSecret,
+      vaultKey,
+    });
+
+    const realHolder = ed25519KeyPairFromSeed(
+      await deriveHolderSeed(masterSecret, issuer.origin),
+    );
+    const zeroHolder = ed25519KeyPairFromSeed(
+      await deriveHolderSeed(new Uint8Array(32), issuer.origin),
+    );
+    const envelope = await decryptJson<CredentialPayload>(vaultKey, record.payload);
+    const subject = envelope.vc.credentialSubject as Record<string, unknown>;
+    expect(subject["id"]).toBe(realHolder.did);
+    expect(subject["id"]).not.toBe(zeroHolder.did);
+  }, 60_000);
+
+  it("stops at the next phase boundary when the session locks mid-flight", async () => {
+    const liveSecret = masterSecret.slice();
+    const lock = new AbortController();
+    const issuer = await makeFakeIssuer({
+      origin: "https://dmv.utopia.example",
+      seed: new Uint8Array(32).fill(1),
+      // Both halves of logout(): zero the secret, abort the lock signal.
+      onTokenRequest: () => {
+        liveSecret.fill(0);
+        lock.abort(new Error("The wallet was locked"));
+      },
+    });
+    routeFetchTo(issuer);
+
+    const steps: IssuanceStep[] = [];
+    await expect(
+      acceptCredentialOffer({
+        offerUri: issuer.offerUri,
+        accountId: 1,
+        masterSecret: liveSecret,
+        vaultKey,
+        signal: lock.signal,
+        onStep: (step) => steps.push(step),
+      }),
+    ).rejects.toThrow(/wallet was locked/);
+    // Nothing signed, nothing stored: the flow never reached the proof phase.
+    expect(steps).not.toContain("creating-proof");
+    expect(db.stored).toHaveLength(0);
+  }, 30_000);
+
+  it("never lets non-string metadata display names reach the preview", async () => {
+    const issuer = await makeFakeIssuer({
+      origin: "https://dmv.utopia.example",
+      seed: new Uint8Array(32).fill(1),
+      // A hostile issuer can put any JSON shape in display — a non-string
+      // rendered as a React child would crash the whole app.
+      mutateMetadata: (metadata) => ({
+        ...metadata,
+        display: [{ name: { x: 1 } }],
+        credential_configurations_supported: {
+          [CREDENTIAL_CONFIGURATION_ID]: {
+            ...metadata.credential_configurations_supported[
+              CREDENTIAL_CONFIGURATION_ID
+            ],
+            display: [{ name: "" }],
+          },
+        },
+      }),
+    });
+    routeFetchTo(issuer);
+
+    const preview = await previewCredentialOffer({ offerUri: issuer.offerUri });
+    expect(preview.issuerName).toBe("dmv.utopia.example");
+    expect(preview.credentialName).toBe(CREDENTIAL_CONFIGURATION_ID);
+  }, 30_000);
+
+  it("reports a malformed credentials array as a protocol error, not a TypeError", async () => {
+    const issuer = await makeFakeIssuer({
+      origin: "https://dmv.utopia.example",
+      seed: new Uint8Array(32).fill(1),
+      mutateCredentialResponse: () => ({ credentials: [null] }),
+    });
+    routeFetchTo(issuer);
+
+    await expect(
+      acceptCredentialOffer({
+        offerUri: issuer.offerUri,
+        accountId: 1,
+        masterSecret,
+        vaultKey,
+      }),
+    ).rejects.toThrow(/empty or malformed credentials array/);
+    expect(db.stored).toHaveLength(0);
+  }, 60_000);
+
+  it("reports a null proof as an unbound-proof error, not a TypeError", async () => {
+    const issuer = await makeFakeIssuer({
+      origin: "https://dmv.utopia.example",
+      seed: new Uint8Array(32).fill(1),
+      mutateCredentialResponse: (response) => ({
+        ...response,
+        credentials: response.credentials.map((entry) => ({
+          credential: { ...entry.credential, proof: null },
+        })),
+      }),
+    });
+    routeFetchTo(issuer);
+
+    await expect(
+      acceptCredentialOffer({
+        offerUri: issuer.offerUri,
+        accountId: 1,
+        masterSecret,
+        vaultKey,
+      }),
+    ).rejects.toThrow(/not controlled by its declared issuer/);
     expect(db.stored).toHaveLength(0);
   }, 60_000);
 

@@ -11,8 +11,9 @@ import type { CredentialOffer } from "@vgw/protocols";
 export interface OfferResultProps {
   credentialOffer: CredentialOffer;
   credentialOfferUri: string;
-  walletLink: string;
-  walletOrigin: string;
+  /** Null when no wallet origin is configured — the panel shows a notice instead. */
+  walletLink: string | null;
+  walletOrigin: string | null;
 }
 
 export function OfferResult({
@@ -24,6 +25,10 @@ export function OfferResult({
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    if (walletLink === null) {
+      setQrDataUrl(null);
+      return;
+    }
     let cancelled = false;
     // Rendered at 2x the display size for crisp modules; petrol-on-paper so
     // the code stays scannable (QR needs dark-on-light) inside the dark UI.
@@ -58,39 +63,54 @@ export function OfferResult({
         </div>
       </div>
 
-      <a
-        href={walletLink}
-        className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-accent-contrast shadow-sm transition-all duration-150 hover:brightness-110 active:scale-[0.98]"
-      >
-        Open in VeryGoodWallet
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path
-            d="M7 17L17 7M9 7h8v8"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </a>
-      <p className="mt-2 text-center font-mono text-[11px] text-muted">
-        wallet origin {walletOrigin} — override with ?wallet=&lt;origin&gt;
-      </p>
+      {walletLink !== null ? (
+        <>
+          <a
+            href={walletLink}
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-accent-contrast shadow-sm transition-all duration-150 hover:brightness-110 active:scale-[0.98]"
+          >
+            Open in VeryGoodWallet
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M7 17L17 7M9 7h8v8"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </a>
+          <p className="mt-2 text-center font-mono text-[11px] text-muted">
+            wallet origin {walletOrigin} — override with ?wallet=&lt;origin&gt;
+          </p>
 
-      <div className="mt-5 flex flex-col items-center">
-        {qrDataUrl !== null && (
-          <img
-            src={qrDataUrl}
-            alt="QR code of the wallet offer link"
-            width={224}
-            height={224}
-            className="rounded-2xl border border-line"
-          />
-        )}
-        <p className="mt-2 text-[11px] text-muted">
-          Scan to pick up on another device
+          <div className="mt-5 flex flex-col items-center">
+            {qrDataUrl !== null && (
+              <img
+                src={qrDataUrl}
+                alt="QR code of the wallet offer link"
+                width={224}
+                height={224}
+                className="rounded-2xl border border-line"
+              />
+            )}
+            <p className="mt-2 text-[11px] text-muted">
+              Scan to pick up on another device
+            </p>
+          </div>
+        </>
+      ) : (
+        // No wallet origin configured: a loud notice beats a link/QR that
+        // dead-ends at the wrong host (see src/walletOrigin.ts).
+        <p
+          role="alert"
+          className="mt-5 rounded-xl bg-danger-soft px-4 py-3 text-sm text-danger"
+        >
+          No wallet configured — append ?wallet=&lt;origin&gt; to this page, or
+          rebuild with VITE_WALLET_ORIGIN set (see DEPLOY.md), to get a pickup
+          link and QR code.
         </p>
-      </div>
+      )}
 
       <details className="mt-5 rounded-xl border border-line bg-canvas">
         <summary className="cursor-pointer select-none px-4 py-3 text-[12px] font-medium text-ink-dim">

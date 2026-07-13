@@ -170,9 +170,20 @@ export async function previewCredentialOffer(
     offer,
     metadata,
     issuerOrigin,
-    issuerName: metadata.display?.[0]?.name ?? new URL(issuerOrigin).host,
-    credentialName: configuration?.display?.[0]?.name ?? configurationId,
+    issuerName: displayName(metadata.display?.[0]?.name) ?? new URL(issuerOrigin).host,
+    credentialName: displayName(configuration?.display?.[0]?.name) ?? configurationId,
   };
+}
+
+/**
+ * Display names come from the issuer's metadata, which assertIssuerMetadata
+ * only shape-checks around the endpoints — a hostile document can put any
+ * JSON here, and a non-string rendered as a React child would crash the page.
+ * Only a non-empty string may reach the UI; anything else means "use the
+ * caller's fallback".
+ */
+function displayName(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
 }
 
 export type AcceptCredentialOfferOptions = {
@@ -185,6 +196,12 @@ export type AcceptCredentialOfferOptions = {
    * user accepts right after previewing. Still sanity-checked against the offer.
    */
   metadata?: IssuerMetadata;
+  /**
+   * Aborted when the session locks (the session's `lockSignal`). Locking
+   * revokes the key material, so the flow stops at the next phase boundary —
+   * nothing may be signed or stored on behalf of a locked session.
+   */
+  signal?: AbortSignal;
   onStep?: (step: IssuanceStep) => void;
 } & OfferSource;
 
@@ -196,8 +213,30 @@ export type AcceptCredentialOfferOptions = {
 export async function acceptCredentialOffer(
   opts: AcceptCredentialOfferOptions,
 ): Promise<CredentialRecord> {
-  const step = (id: IssuanceStep) => opts.onStep?.(id);
+  const step = (id: IssuanceStep) => {
+    // Locking mid-flight aborts the signal — stop before the next phase
+    // rather than continue a ceremony whose key material was revoked.
+    opts.signal?.throwIfAborted();
+    opts.onStep?.(id);
+  };
 
+  // Snapshot the master secret before the first await: logout() zeroes the
+  // session's buffer IN PLACE, so a mid-flight lock would otherwise turn the
+  // holder derivation below into HKDF over all-zero input — a "pairwise" key
+  // anyone can recompute. The copy is zeroed on every exit path instead.
+  const masterSecret = opts.masterSecret.slice();
+  try {
+    return await runAcceptCredentialOffer(opts, masterSecret, step);
+  } finally {
+    masterSecret.fill(0);
+  }
+}
+
+async function runAcceptCredentialOffer(
+  opts: AcceptCredentialOfferOptions,
+  masterSecret: Uint8Array,
+  step: (id: IssuanceStep) => void,
+): Promise<CredentialRecord> {
   // 1. The offer: who is issuing, what, and under which one-time code.
   step("fetching-offer");
   const offer = await resolveOffer(opts);
@@ -222,7 +261,7 @@ export async function acceptCredentialOffer(
   // issuers comes from the per-origin HKDF branch), then the PoP JWT over
   // the issuer's c_nonce.
   step("creating-proof");
-  const holderSeed = await deriveHolderSeed(opts.masterSecret, issuerOrigin);
+  const holderSeed = await deriveHolderSeed(masterSecret, issuerOrigin);
   const holder = ed25519KeyPairFromSeed(holderSeed);
   inspect.emit({
     label: "Holder seed derived",
@@ -273,6 +312,9 @@ export async function acceptCredentialOffer(
     label: "Credential encrypted at rest",
     data: { cipher: "AES-GCM-256 (vault key)", payloadChars: payload.length },
   });
+  // encryptJson awaited above: re-check the lock so nothing enters the vault
+  // on behalf of a session that locked during the final encryption.
+  opts.signal?.throwIfAborted();
   return addCredential({
     accountId: opts.accountId,
     meta: metaFromCredential(vc),
@@ -401,9 +443,11 @@ function extractCredential(
   credentialEndpoint: string,
 ): VerifiableCredential {
   const entry = response.credentials[0];
-  if (entry === undefined || !isRecord(entry.credential)) {
+  // isRecord(entry) before entry.credential: `credentials: [null]` must be a
+  // protocol error the user can read, not a TypeError from the property access.
+  if (!isRecord(entry) || !isRecord(entry.credential)) {
     throw new Error(
-      `The issuer's credential endpoint (${credentialEndpoint}) returned an empty credentials array`,
+      `The issuer's credential endpoint (${credentialEndpoint}) returned an empty or malformed credentials array`,
     );
   }
   const vc = entry.credential;
@@ -448,11 +492,15 @@ async function verifyReceivedCredential(
   if (issuer === undefined) {
     throw new Error("The received credential names no issuer DID");
   }
-  const proofs = Array.isArray(vc.proof)
+  // The typed `proof` field is really issuer-controlled JSON: keep only real
+  // objects so `proof: null` (or null array entries) falls through to the
+  // descriptive unbound-proof error below instead of a TypeError.
+  const proofCandidates: unknown[] = Array.isArray(vc.proof)
     ? vc.proof
     : vc.proof !== undefined
       ? [vc.proof]
       : [];
+  const proofs = proofCandidates.filter(isRecord);
   const proofBoundToIssuer = proofs.some((proof) => {
     const vm = proof["verificationMethod"];
     return typeof vm === "string" && (vm === issuer || vm.startsWith(`${issuer}#`));

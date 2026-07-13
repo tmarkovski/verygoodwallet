@@ -84,11 +84,18 @@ At M6 cutover (not before — the apex still serves the legacy app):
 ## Deploying the Utopia DMV issuer
 
 Run the **Deploy DMV** workflow: Repo → Actions → *Deploy DMV* →
-*Run workflow* (branch `main`), or:
+*Run workflow* (branch `main`). It requires a `wallet_origin` input — the
+origin issued offer links and QR codes target. Until the M6 apex cutover
+that is the wallet Worker's `workers.dev` URL (the apex still serves the
+legacy app, which cannot handle offers):
 
 ```sh
-gh workflow run deploy-dmv.yml
+gh workflow run deploy-dmv.yml -f wallet_origin=https://vgw-wallet.<account>.workers.dev
 ```
+
+The workflow bakes the origin into the client bundle (`VITE_WALLET_ORIGIN`,
+used for the UI's link and QR) and sets the `WALLET_ORIGIN` Worker var (used
+for the server-built `wallet_link` fallback).
 
 Unlike the assets-only wallet, the DMV is a full Worker (Hono OID4VCI
 endpoints) plus static UI, built as one deployable by `@cloudflare/vite-plugin`:
@@ -97,15 +104,22 @@ endpoints) plus static UI, built as one deployable by `@cloudflare/vite-plugin`:
 up automatically. The first deploy creates the `vgw-dmv` Worker and prints its
 `workers.dev` URL.
 
-Local alternative from `apps/dmv/`:
+Local alternative from `apps/dmv/` (set the wallet origin in both steps, for
+the same two reasons as above):
 
 ```sh
-pnpm --filter @vgw/dmv build
-pnpm exec wrangler deploy   # picks up dist/vgw_dmv/wrangler.json; `wrangler login` first
+VITE_WALLET_ORIGIN=https://vgw-wallet.<account>.workers.dev pnpm --filter @vgw/dmv build
+pnpm exec wrangler deploy --var WALLET_ORIGIN:https://vgw-wallet.<account>.workers.dev
+# picks up dist/vgw_dmv/wrangler.json; `wrangler login` first
 ```
 
 (`wrangler` is a devDependency of `apps/dmv`, so `pnpm exec` uses the pinned
 version — no `dlx` download needed.)
+
+To sanity-check a built bundle before deploying, `pnpm --filter @vgw/dmv smoke`
+boots `dist/` under workerd and fetches the issuer metadata — the same check
+CI runs, catching bundles that would fail Cloudflare's script-startup
+validation.
 
 ### Worker secrets (set after the first deploy)
 
@@ -125,10 +139,27 @@ openssl rand -hex 32 | pnpm exec wrangler secret put TOKEN_SECRET
 Note: rotating `ISSUER_SEED` changes the issuer DID, invalidating previously
 issued credentials for verifiers pinned to the old DID.
 
-Optional: set a `WALLET_ORIGIN` var (plaintext, not a secret) to control the
-wallet origin in server-built `wallet_link`s. Without it the Worker defaults
-to `https://verygoodwallet.com` (or a localhost caller's own origin in dev);
-the DMV UI also supports a `?wallet=<origin>` override client-side.
+### Wallet origin (required until the M6 apex cutover)
+
+There is **no production default** wallet origin: pre-cutover the apex serves
+the legacy GitHub Pages app, which has no `/offer` route, so any guessed
+default would produce offer links and QR codes that dead-end — and deliver
+the PII-bearing offer code to the wrong host. Two settings, both handled by
+the Deploy DMV workflow's `wallet_origin` input:
+
+- `VITE_WALLET_ORIGIN` (build-time) — baked into the client bundle; the UI
+  builds the visible link and QR from it. Without it the UI shows a
+  "no wallet configured" notice instead of a link (a `?wallet=<origin>`
+  query param overrides it per visit).
+- `WALLET_ORIGIN` (Worker var, plaintext) — used for the server-built
+  `wallet_link`; when unset the Worker omits `wallet_link` from `/api/offers`
+  responses (and logs a warning) rather than emitting a wrong link. In dev, a
+  localhost caller's own origin is used instead.
+
+Both values are normalized to a bare origin; a value that isn't an absolute
+URL makes the Worker fail `/api/offers` loudly instead of falling back. After
+M6 puts the new wallet on the apex, `https://verygoodwallet.com` becomes the
+value to set (or a default can be reinstated then).
 
 ### Custom domain
 

@@ -156,8 +156,15 @@ function StepList({ current }: { current: IssuanceStep | null }) {
 export function Offer() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { accounts, accountsError, locked, account, masterSecret, vaultKey } =
-    useSession();
+  const {
+    accounts,
+    accountsError,
+    locked,
+    account,
+    masterSecret,
+    vaultKey,
+    lockSignal,
+  } = useSession();
 
   const params = useMemo(() => parseOfferParams(searchParams), [searchParams]);
 
@@ -210,6 +217,9 @@ export function Offer() {
         accountId: account.id,
         masterSecret,
         vaultKey,
+        // Locking the wallet mid-ceremony aborts the flow before it can sign
+        // or store anything with the (now zeroed) session secret.
+        signal: lockSignal ?? undefined,
         onStep: setStep,
       });
       await navigate(`/credentials/${record.id}`);

@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { SessionProvider } from "./session";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Shell } from "./components/Shell";
 import { Welcome } from "./pages/Welcome";
 import { Home } from "./pages/Home";
@@ -12,14 +13,18 @@ export default function App() {
     <BrowserRouter>
       <SessionProvider>
         <Shell>
-          <Routes>
-            <Route path="/welcome" element={<Welcome />} />
-            <Route path="/" element={<Home />} />
-            <Route path="/credentials/:id" element={<CredentialDetail />} />
-            <Route path="/offer" element={<Offer />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          {/* Issuer-controlled JSON reaches render; a hostile value must not
+              blank the whole wallet (declarative Routes has no built-in boundary). */}
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/welcome" element={<Welcome />} />
+              <Route path="/" element={<Home />} />
+              <Route path="/credentials/:id" element={<CredentialDetail />} />
+              <Route path="/offer" element={<Offer />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </ErrorBoundary>
         </Shell>
       </SessionProvider>
     </BrowserRouter>

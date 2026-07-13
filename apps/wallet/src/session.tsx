@@ -56,6 +56,12 @@ export interface SessionValue {
   vaultKey: CryptoKey | null;
   /** True whenever there is no live master secret. */
   locked: boolean;
+  /**
+   * Aborted by `logout()`. Flows that hold the master secret across awaits
+   * (issuance) tie themselves to this so locking cancels them — the secret
+   * is zeroed in place, and nothing may keep running on revoked key material.
+   */
+  lockSignal: AbortSignal | null;
   /** True when the unlocked account uses the simulated (non-PRF) fallback. */
   simulated: boolean;
   lastAccountId: number | null;
@@ -80,6 +86,8 @@ interface UnlockedState {
   masterSecret: Uint8Array;
   vaultKey: CryptoKey;
   source: MasterSecretSource;
+  /** Aborted on lock so in-flight flows stop using this session's secret. */
+  lockController: AbortController;
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -122,6 +130,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         masterSecret: result.masterSecret,
         vaultKey,
         source: result.source,
+        lockController: new AbortController(),
       });
       setLastAccountId(account.id);
       try {
@@ -159,6 +168,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     if (unlocked !== null) {
       unlocked.masterSecret.fill(0);
+      // Zeroing revokes the secret; aborting tells anything still awaiting a
+      // network round-trip with it (issuance) to stop instead of continuing.
+      unlocked.lockController.abort(new Error("The wallet was locked"));
       inspect.emit({ label: "Wallet locked", data: { account: unlocked.account.name } });
     }
     setUnlocked(null);
@@ -188,6 +200,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       masterSecret: unlocked?.masterSecret ?? null,
       vaultKey: unlocked?.vaultKey ?? null,
       locked: unlocked === null,
+      lockSignal: unlocked?.lockController.signal ?? null,
       simulated: unlocked?.source === "simulated",
       lastAccountId,
       createWallet,

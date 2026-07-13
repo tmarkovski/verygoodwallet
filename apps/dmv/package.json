@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "smoke": "node scripts/smoke.mjs",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
