@@ -6,9 +6,11 @@
  * verifier learned.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { TourOverlay, adoptTourFromUrl, advanceTourFrom } from "@vgw/tour";
 import { AgeGate } from "./components/AgeGate";
 import { Shelf } from "./components/Shelf";
+import { rentalsOrigin } from "./rentalsOrigin";
 
 export default function App() {
   // ?session= means we came back from a same-device wallet redirect (or a
@@ -19,6 +21,18 @@ export default function App() {
     [],
   );
   const [verdict, setVerdict] = useState<"allowed" | "denied" | null>(null);
+
+  // Guided tour: adopt the ?tour= param, and warm the in-browser verifier at
+  // the arrival stop — by the time the visitor returns from the wallet, the
+  // WASM is cached and the tier-2 verdict lands in well under a second
+  // instead of paying the fresh-origin cold start.
+  useEffect(() => {
+    if (adoptTourFromUrl() === "shop") {
+      import("@vgw/zk/verify")
+        .then((zk) => void zk.warmAgeVerifier())
+        .catch(() => {});
+    }
+  }, []);
 
   return (
     <div className="bulb-glow min-h-dvh">
@@ -43,7 +57,15 @@ export default function App() {
 
       <main className="mx-auto max-w-3xl space-y-8 px-5 pb-16 pt-10">
         <section className="animate-rise">
-          <AgeGate resumeSessionId={resumeSessionId} onVerdict={setVerdict} />
+          <AgeGate
+            resumeSessionId={resumeSessionId}
+            onVerdict={(v) => {
+              setVerdict(v);
+              // Cross-device returns never carry the ?tour= param — the
+              // verdict itself moves the tour along.
+              if (v === "allowed") advanceTourFrom("shop");
+            }}
+          />
         </section>
 
         <div className="animate-fade">
@@ -67,6 +89,8 @@ export default function App() {
           </p>
         </footer>
       </main>
+
+      <TourOverlay origins={{ rentals: rentalsOrigin() }} />
     </div>
   );
 }

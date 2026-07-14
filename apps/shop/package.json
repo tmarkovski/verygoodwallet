@@ -15,6 +15,7 @@
   "dependencies": {
     "@vgw/keys": "workspace:*",
     "@vgw/protocols": "workspace:*",
+    "@vgw/tour": "workspace:*",
     "@vgw/vc-kit": "workspace:*",
     "@vgw/zk": "workspace:*",
     "hono": "^4.12.30",

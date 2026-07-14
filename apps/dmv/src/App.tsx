@@ -4,8 +4,16 @@
  * offer for VeryGoodWallet to collect.
  */
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { walletOfferLink, type CredentialOffer } from "@vgw/protocols";
+import {
+  TOUR_PERSONA,
+  TourOverlay,
+  adoptTourFromUrl,
+  nextTourStop,
+  useTourStop,
+  withTourParam,
+} from "@vgw/tour";
 import { OfferResult } from "./components/OfferResult";
 import { PERSONAS, type Persona } from "./personas";
 import { clientWalletOrigin } from "./walletOrigin";
@@ -49,6 +57,18 @@ export default function App() {
   const [result, setResult] = useState<OfferResponseBody | null>(null);
 
   const walletOrigin = clientWalletOrigin();
+  const tourStop = useTourStop();
+
+  // A guided-tour arrival prefills the counter form with the tour persona —
+  // the visitor should issue, not type. (Idempotent under StrictMode.)
+  useEffect(() => {
+    if (adoptTourFromUrl() === "issue") {
+      setGivenName(TOUR_PERSONA.givenName);
+      setFamilyName(TOUR_PERSONA.familyName);
+      setBirthDate(TOUR_PERSONA.birthDate);
+      setDocumentNumber("");
+    }
+  }, []);
 
   const applyPersona = (persona: Persona) => {
     setGivenName(persona.givenName);
@@ -212,11 +232,13 @@ export default function App() {
           <OfferResult
             credentialOffer={result.credential_offer}
             credentialOfferUri={result.credential_offer_uri}
-            walletLink={
-              walletOrigin !== null
-                ? walletOfferLink(walletOrigin, result.credential_offer_uri)
-                : null
-            }
+            walletLink={(() => {
+              if (walletOrigin === null) return null;
+              const link = walletOfferLink(walletOrigin, result.credential_offer_uri);
+              // Carry the tour across to the wallet's /offer stop.
+              const next = tourStop?.id === "issue" ? nextTourStop("issue") : null;
+              return next !== null ? withTourParam(link, next.id) : link;
+            })()}
             walletOrigin={walletOrigin}
           />
         )}
@@ -229,6 +251,8 @@ export default function App() {
           nothing issued here is a real credential.
         </p>
       </footer>
+
+      <TourOverlay origins={{ wallet: walletOrigin }} />
     </div>
   );
 }

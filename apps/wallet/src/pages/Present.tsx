@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { nextTourStop, useTourStop, withTourParam } from "@vgw/tour";
 import { useSession } from "../session";
 import { decryptJson } from "@vgw/keys";
 import type { VerifiableCredential } from "@vgw/vc-kit";
@@ -74,6 +75,24 @@ function tierRows(zk: ZkAgeOption | null): {
   ];
 }
 
+/**
+ * The verifier's redirect back, carrying the tour forward when this ceremony
+ * was one of the tour's presentation stops. The param is how the tour crosses
+ * origins — the verifier's page picks it up; its Worker never reads it.
+ */
+function returnHref(redirectUri: string, tourStopId: string | undefined): string {
+  if (tourStopId !== "present-shop" && tourStopId !== "present-rentals") {
+    return redirectUri;
+  }
+  const next = nextTourStop(tourStopId);
+  if (next === null) return redirectUri;
+  try {
+    return withTourParam(redirectUri, next.id);
+  } catch {
+    return redirectUri; // not an absolute URL — leave it untouched
+  }
+}
+
 function DisclosureList({ entries }: { entries: Record<string, unknown> }) {
   const items = Object.entries(entries);
   if (items.length === 0) {
@@ -110,6 +129,7 @@ export function Present() {
   } = useSession();
 
   const params = useMemo(() => parsePresentParams(searchParams), [searchParams]);
+  const tourStop = useTourStop();
   const preview = useMemo(
     () => (params.kind === "request" ? previewPresentationRequest(params.request) : null),
     [params],
@@ -313,7 +333,13 @@ export function Present() {
         </div>
         <div className="mt-5 flex gap-2">
           {outcome.redirectUri !== undefined && (
-            <Button onClick={() => window.location.assign(outcome.redirectUri as string)}>
+            <Button
+              onClick={() =>
+                window.location.assign(
+                  returnHref(outcome.redirectUri as string, tourStop?.id),
+                )
+              }
+            >
               Return to {preview.verifierName}
             </Button>
           )}

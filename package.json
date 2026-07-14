@@ -12,6 +12,7 @@
     "dev:wallet": "pnpm --filter @vgw/wallet dev",
     "dev:dmv": "pnpm --filter @vgw/dmv dev",
     "dev:shop": "pnpm --filter @vgw/shop dev",
-    "dev:rentals": "pnpm --filter @vgw/rentals dev"
+    "dev:rentals": "pnpm --filter @vgw/rentals dev",
+    "dev:landing": "pnpm --filter @vgw/landing dev"
   }
 }

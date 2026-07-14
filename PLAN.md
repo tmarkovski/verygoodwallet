@@ -38,7 +38,8 @@ for passkey RP ID, DC API origin display, and pairwise DIDs):
 
 | Site | Origin | Role |
 |------|--------|------|
-| **Wallet** | `verygoodwallet.com` | Static PWA; passkeys + PRF; credential storage |
+| **Landing** | `verygoodwallet.com` | The narrator: thesis, cast, guided-tour launcher, technical writeup ("Passport" brand — decided at M6; the apex meets visitors with the story, not an onboarding screen) |
+| **Wallet** | `wallet.verygoodwallet.com` | Static PWA; passkeys + PRF; credential storage |
 | **Utopia DMV** | `dmv.verygoodwallet.com` | Issuer portal — issues the Utopia Driver's License (reuses existing Utopia credential art) |
 | **The Nightcap** (bottle shop) | `shop.verygoodwallet.com` | Flagship verifier — age gate (over 18/21) |
 | **Utopia Wheels** (car rental) | `rentals.verygoodwallet.com` | Second verifier — name + license number + over 25 |
@@ -133,8 +134,11 @@ Stretch (not in scope): longfellow-style ZK over ECDSA-signed mdocs.
 - **Inspector drawer** on every app: raw protocol messages (offer, token request, VC, VP,
   DCQL), key derivation tree, PRF output (hashed preview), ZK public inputs.
 - **Tier comparison screen** at the shop: same request answered three ways.
-- **Guided demo mode**: a scripted 90-second walkthrough across the four sites.
-- Landing page states the thesis and links a technical writeup.
+- **Guided demo mode**: a narrated tour across the four sites (`@vgw/tour`) — a `?tour=`
+  param rides the demo's existing cross-origin links; nothing is simulated. Realistically
+  ~3 minutes, not 90 seconds: proving time and reading time are real.
+- Landing page (`apps/landing`, apex) states the thesis, launches the tour, renders the
+  stamped-passport finale, and hosts the technical writeup at `/writeup/`.
 
 ## Milestones
 

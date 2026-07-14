@@ -31,5 +31,11 @@ export default defineConfig({
   server: {
     port: 5176,
     strictPort: true,
+    // Mirror the deployed public/_headers: crossOriginIsolated unlocks
+    // multithreaded bb.js in dev too (single-threaded verify is ~6x slower).
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+    },
   },
 });

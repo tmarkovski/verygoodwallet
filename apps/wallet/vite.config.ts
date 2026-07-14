@@ -10,4 +10,12 @@ export default defineConfig({
     // `vite dev` (production builds are unaffected). Standard NoirJS setup.
     exclude: ["@aztec/bb.js", "@noir-lang/noir_js", "@noir-lang/noirc_abi", "@noir-lang/acvm_js"],
   },
+  server: {
+    // Mirror the deployed public/_headers: crossOriginIsolated unlocks
+    // multithreaded bb.js in dev too (single-threaded proving is ~10x slower).
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+    },
+  },
 });

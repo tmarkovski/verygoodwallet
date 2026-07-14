@@ -7,17 +7,15 @@ import { useEffect, useState } from "react";
 import { describeHierarchy, type DerivationNode } from "@vgw/keys";
 import { useSession } from "../session";
 import { DEMO_ISSUER_ORIGIN } from "../services/demo";
+import { DEMO_SITE_ORIGINS } from "../services/demoSites";
 
 /**
  * Origins shown as branches — the two deployed verifiers, matching what
  * /present actually derives against (presenter branches are keyed by the
- * verifier's exact origin). Both move to custom domains at the M6 cutover.
+ * verifier's exact origin).
  */
 const ISSUER_ORIGINS = [DEMO_ISSUER_ORIGIN];
-const VERIFIER_ORIGINS = [
-  "https://vgw-shop.t7m8.workers.dev",
-  "https://vgw-rentals.t7m8.workers.dev",
-];
+const VERIFIER_ORIGINS = [DEMO_SITE_ORIGINS.shop, DEMO_SITE_ORIGINS.rentals];
 
 function Node({ node, root = false }: { node: DerivationNode; root?: boolean }) {
   return (

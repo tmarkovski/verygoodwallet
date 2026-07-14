@@ -1,0 +1,29 @@
+// Cloudflare Workers configuration for the landing site.
+//
+// Assets-only deployment: no Worker script — Cloudflare serves the static
+// Vite build output from ./dist. Two real pages (/ and /writeup/), so no
+// SPA fallback: unknown paths 404.
+//
+// Deploy: `wrangler deploy` from this directory (CI: .github/workflows/deploy-landing.yml).
+{
+  "name": "vgw-landing",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./dist"
+  },
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
+  }
+}

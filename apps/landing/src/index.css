@@ -1,0 +1,259 @@
+@import "tailwindcss";
+
+/*
+ * Landing design tokens — "PASSPORT".
+ *
+ * The landing is the demo's narrator, not a participant, so it takes its own
+ * identity (DESIGN.md: every site is its own brand; only the wallet and DMV
+ * share Intaglio). Concept: an identity document — the navy passport cover
+ * with gold-foil frame opens onto cream visa pages with faint guilloché
+ * line-work, and the tour's finale is a stamped page. The guilloché echoes
+ * Intaglio's engraving heritage without borrowing its petrol/gold values.
+ *
+ * The Tailwind utility NAMES mirror the other apps (bg-canvas, text-ink,
+ * bg-accent…) so components read identically across the monorepo — only the
+ * values differ. Here accent = passport navy, foil = gold leaf on the cover
+ * (decorative + eyebrows, never body text on cream), stamp/crimson = the two
+ * visa-stamp inks.
+ */
+
+:root {
+  color-scheme: light;
+
+  --pp-canvas: #f5efdf;
+  --pp-surface: #faf6ea;
+  --pp-raised: #fffdf6;
+  --pp-line: rgb(35 42 64 / 0.14);
+  --pp-line-strong: rgb(35 42 64 / 0.3);
+  --pp-ink: #232a40;
+  --pp-ink-dim: #4a5271;
+  --pp-muted: #7d8298;
+  /* Passport-cover navy — brand and actions. Cream on it clears 12:1. */
+  --pp-accent: #1b2540;
+  --pp-accent-soft: rgb(27 37 64 / 0.08);
+  --pp-accent-contrast: #f5efdf;
+  /* Gold leaf: cover lettering and frames. On navy only — 1.9:1 on cream. */
+  --pp-foil: #c9a86a;
+  --pp-foil-soft: rgb(201 168 106 / 0.18);
+  /* Visa-stamp inks. */
+  --pp-stamp: #6b4fa3;
+  --pp-stamp-soft: rgb(107 79 163 / 0.12);
+  --pp-crimson: #a83a4a;
+  --pp-crimson-soft: rgb(168 58 74 / 0.12);
+  --pp-ok: #2f6b52;
+  --pp-ok-soft: rgb(47 107 82 / 0.12);
+  --pp-danger: #a83a4a;
+  --pp-danger-soft: rgb(168 58 74 / 0.12);
+}
+
+@theme {
+  /* An identity document reads in serif; sans is for micro-labels only. */
+  --font-sans:
+    Georgia, "Iowan Old Style", "Times New Roman", Times, serif;
+  --font-display:
+    Palatino, "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --font-label:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  --animate-rise: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade: fade 0.3s ease both;
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--pp-canvas);
+  --color-surface: var(--pp-surface);
+  --color-raised: var(--pp-raised);
+  --color-line: var(--pp-line);
+  --color-line-strong: var(--pp-line-strong);
+  --color-ink: var(--pp-ink);
+  --color-ink-dim: var(--pp-ink-dim);
+  --color-muted: var(--pp-muted);
+  --color-accent: var(--pp-accent);
+  --color-accent-soft: var(--pp-accent-soft);
+  --color-accent-contrast: var(--pp-accent-contrast);
+  --color-foil: var(--pp-foil);
+  --color-foil-soft: var(--pp-foil-soft);
+  --color-stamp: var(--pp-stamp);
+  --color-stamp-soft: var(--pp-stamp-soft);
+  --color-crimson: var(--pp-crimson);
+  --color-crimson-soft: var(--pp-crimson-soft);
+  --color-ok: var(--pp-ok);
+  --color-ok-soft: var(--pp-ok-soft);
+  --color-danger: var(--pp-danger);
+  --color-danger-soft: var(--pp-danger-soft);
+}
+
+body {
+  background-color: var(--pp-canvas);
+  color: var(--pp-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+}
+
+::selection {
+  background-color: var(--pp-accent);
+  color: var(--pp-accent-contrast);
+}
+
+:focus-visible {
+  outline: 2px solid var(--pp-accent);
+  outline-offset: 2px;
+}
+
+/*
+ * .foil-frame — the passport cover's tooled border: a fine gold outer rule,
+ * a navy gutter, and a second hairline. Reserved for the cover and the
+ * stamped finale's frame.
+ */
+.foil-frame {
+  box-shadow:
+    inset 0 0 0 1.5px var(--pp-foil),
+    inset 0 0 0 8px var(--pp-accent),
+    inset 0 0 0 9px rgb(201 168 106 / 0.65);
+}
+
+/*
+ * .guilloche — engraved rosette line-work, CSS-only (concentric hairline
+ * rings), always behind content and masked to fade out. Ink chosen by the
+ * host via `color`; defaults to the stamp violet at whisper opacity.
+ */
+.guilloche {
+  background: repeating-radial-gradient(
+    circle,
+    transparent 0 9px,
+    currentColor 9px 10px
+  );
+  mask-image: radial-gradient(circle, rgb(0 0 0) 30%, transparent 70%);
+  -webkit-mask-image: radial-gradient(circle, rgb(0 0 0) 30%, transparent 70%);
+}
+
+/*
+ * .stamp — a visa stamp: double-ruled border in the stamp's own ink,
+ * letterspaced caps, multiplied onto the paper like real ink. Rotation is
+ * per-instance (inline transform).
+ */
+.stamp {
+  border: 2.5px solid currentColor;
+  box-shadow: inset 0 0 0 1px currentColor;
+  border-radius: 10px;
+  padding: 0.6rem 0.9rem;
+  font-family: var(--font-label);
+  text-transform: uppercase;
+  mix-blend-mode: multiply;
+  opacity: 0.92;
+}
+
+/* Keep the rise/fade system, but stand still for reduced-motion users. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-fade {
+    animation: none;
+  }
+}
+
+/*
+ * Long-form writeup typography (/writeup/). Hand-rolled prose styles — no
+ * plugin — tuned for the passport serif on cream.
+ */
+.prose {
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--pp-ink);
+}
+.prose h2 {
+  margin-top: 3rem;
+  font-family: var(--font-display);
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.prose h2::after {
+  content: "";
+  display: block;
+  width: 3.5rem;
+  height: 2px;
+  margin-top: 0.55rem;
+  background: var(--pp-foil);
+}
+.prose h3 {
+  margin-top: 2rem;
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+.prose p {
+  margin-top: 1rem;
+}
+.prose ul {
+  margin-top: 1rem;
+  padding-left: 1.4rem;
+  list-style: disc;
+}
+.prose li {
+  margin-top: 0.45rem;
+}
+.prose li::marker {
+  color: var(--pp-foil);
+}
+.prose a {
+  color: var(--pp-ink);
+  text-decoration: underline;
+  text-decoration-color: rgb(107 79 163 / 0.55);
+  text-underline-offset: 2px;
+}
+.prose a:hover {
+  text-decoration-color: var(--pp-stamp);
+}
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  background: var(--pp-accent-soft);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.prose pre {
+  margin-top: 1rem;
+  overflow-x: auto;
+  background: var(--pp-accent);
+  color: var(--pp-accent-contrast);
+  border-radius: 12px;
+  padding: 1rem 1.2rem;
+}
+.prose pre code {
+  background: none;
+  padding: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.prose blockquote {
+  margin-top: 1rem;
+  border-left: 3px solid var(--pp-foil);
+  padding-left: 1rem;
+  color: var(--pp-ink-dim);
+  font-style: italic;
+}

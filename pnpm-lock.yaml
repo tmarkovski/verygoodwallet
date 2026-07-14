@@ -16,6 +16,9 @@ importers:
       '@vgw/protocols':
         specifier: workspace:*
         version: link:../../packages/protocols
+      '@vgw/tour':
+        specifier: workspace:*
+        version: link:../../packages/tour
       '@vgw/vc-kit':
         specifier: workspace:*
         version: link:../../packages/vc-kit
@@ -69,6 +72,46 @@ importers:
         specifier: ^4.110.0
         version: 4.110.0
 
+  apps/landing:
+    dependencies:
+      '@vgw/tour':
+        specifier: workspace:*
+        version: link:../../packages/tour
+      react:
+        specifier: ^19.2.0
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.0
+        version: 19.2.7(react@19.2.7)
+    devDependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.3.0
+        version: 4.3.2(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0))
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      '@types/react':
+        specifier: ^19.2.0
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.2.0
+        version: 19.2.3(@types/react@19.2.17)
+      '@vitejs/plugin-react':
+        specifier: ^6.0.0
+        version: 6.0.3(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0))
+      tailwindcss:
+        specifier: ^4.3.0
+        version: 4.3.2
+      typescript:
+        specifier: ~5.9.0
+        version: 5.9.3
+      vite:
+        specifier: ^8.1.0
+        version: 8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)
+      wrangler:
+        specifier: ^4.110.0
+        version: 4.110.0
+
   apps/rentals:
     dependencies:
       '@vgw/keys':
@@ -77,6 +120,9 @@ importers:
       '@vgw/protocols':
         specifier: workspace:*
         version: link:../../packages/protocols
+      '@vgw/tour':
+        specifier: workspace:*
+        version: link:../../packages/tour
       '@vgw/vc-kit':
         specifier: workspace:*
         version: link:../../packages/vc-kit
@@ -141,6 +187,9 @@ importers:
       '@vgw/protocols':
         specifier: workspace:*
         version: link:../../packages/protocols
+      '@vgw/tour':
+        specifier: workspace:*
+        version: link:../../packages/tour
       '@vgw/vc-kit':
         specifier: workspace:*
         version: link:../../packages/vc-kit
@@ -205,6 +254,9 @@ importers:
       '@vgw/protocols':
         specifier: workspace:*
         version: link:../../packages/protocols
+      '@vgw/tour':
+        specifier: workspace:*
+        version: link:../../packages/tour
       '@vgw/vc-kit':
         specifier: workspace:*
         version: link:../../packages/vc-kit
@@ -280,6 +332,21 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1
+      typescript:
+        specifier: ~5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0))
+
+  packages/tour:
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.0
+        version: 19.2.17
+      react:
+        specifier: ^19.2.0
+        version: 19.2.7
       typescript:
         specifier: ~5.9.0
         version: 5.9.3

@@ -9,4 +9,6 @@
 interface ImportMetaEnv {
   /** Build-time default for the wallet origin the presentation links target. */
   readonly VITE_WALLET_ORIGIN?: string;
+  /** Build-time override for the rentals site the tour's CTA links to. */
+  readonly VITE_RENTALS_ORIGIN?: string;
 }

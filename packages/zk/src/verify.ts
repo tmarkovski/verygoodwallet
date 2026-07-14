@@ -38,6 +38,23 @@ export interface VerifyAgeProofResult {
   verifyMs: number;
 }
 
+/**
+ * Prefetch and compile the verifier's WASM ahead of a verification. The api
+ * instance is not kept — verifyAgeProof builds its own — so the warmth lives
+ * in the browser's HTTP and compiled-WASM caches, which is exactly what the
+ * real call hits next. First-ever verification on a fresh origin otherwise
+ * pays a multi-second cold start (measured ~26s; ~0.6s warm).
+ */
+export async function warmAgeVerifier(): Promise<void> {
+  try {
+    const { Barretenberg } = await import("@aztec/bb.js");
+    const api = await Barretenberg.new({ threads: 1 });
+    await api.destroy();
+  } catch {
+    // Best-effort: a failed warm just means the real call pays the cost.
+  }
+}
+
 export async function verifyAgeProof(
   opts: VerifyAgeProofOptions,
 ): Promise<VerifyAgeProofResult> {

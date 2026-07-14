@@ -34,6 +34,26 @@ export interface ProveAgeResult {
   provingMs: number;
 }
 
+/**
+ * Prefetch and compile the prover's WASM stack (ACVM/ABI + barretenberg)
+ * ahead of a proof, so proveAgePredicate's first run doesn't pay the module
+ * fetch + compile on top of proving itself. Warmth lives in the browser's
+ * HTTP and compiled-WASM caches; no instance is kept.
+ */
+export async function warmAgeProver(): Promise<void> {
+  try {
+    const [, { Barretenberg }] = await Promise.all([
+      import("@noir-lang/noir_js"),
+      import("@aztec/bb.js"),
+      import("../artifacts/age_check.json"),
+    ]);
+    const api = await Barretenberg.new({});
+    await api.destroy();
+  } catch {
+    // Best-effort: a failed warm just means the real call pays the cost.
+  }
+}
+
 export async function proveAgePredicate(opts: ProveAgeOptions): Promise<ProveAgeResult> {
   const commitment = normalizeFieldHex(opts.commitment);
   if (!Number.isInteger(opts.dobDays) || opts.dobDays < 0 || opts.dobDays > 0xffff_ffff) {

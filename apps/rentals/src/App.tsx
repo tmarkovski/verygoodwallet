@@ -6,9 +6,11 @@
  * one at The Nightcap.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { TourOverlay, adoptTourFromUrl, advanceTourFrom } from "@vgw/tour";
 import { RentalGate } from "./components/RentalGate";
 import { Fleet } from "./components/Fleet";
+import { clientWalletOrigin } from "./walletOrigin";
 
 /** Interstate-style route shield, the brand mark. */
 function RouteShield() {
@@ -50,6 +52,18 @@ export default function App() {
   );
   const [verdict, setVerdict] = useState<"allowed" | "denied" | null>(null);
 
+  // Guided tour: adopt the ?tour= param, and warm the in-browser verifier at
+  // the arrival stop — by the time the visitor returns from the wallet, the
+  // WASM is cached and the tier-2 verdict lands in well under a second
+  // instead of paying the fresh-origin cold start.
+  useEffect(() => {
+    if (adoptTourFromUrl() === "rentals") {
+      import("@vgw/zk/verify")
+        .then((zk) => void zk.warmAgeVerifier())
+        .catch(() => {});
+    }
+  }, []);
+
   return (
     <div className="min-h-dvh">
       <header className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-5 pt-8">
@@ -79,7 +93,15 @@ export default function App() {
         <div className="center-line" aria-hidden="true" />
 
         <section className="animate-rise">
-          <RentalGate resumeSessionId={resumeSessionId} onVerdict={setVerdict} />
+          <RentalGate
+            resumeSessionId={resumeSessionId}
+            onVerdict={(v) => {
+              setVerdict(v);
+              // Cross-device returns never carry the ?tour= param — the
+              // verdict itself moves the tour along.
+              if (v === "allowed") advanceTourFrom("rentals");
+            }}
+          />
         </section>
 
         <div className="animate-fade">
@@ -105,6 +127,8 @@ export default function App() {
           </p>
         </footer>
       </main>
+
+      <TourOverlay origins={{ wallet: clientWalletOrigin() }} />
     </div>
   );
 }

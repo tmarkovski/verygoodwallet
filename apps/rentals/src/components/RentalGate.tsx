@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { walletPresentLink, type PresentationRequest } from "@vgw/protocols";
+import { nextTourStop, useTourStop, withTourParam } from "@vgw/tour";
 import { clientWalletOrigin } from "../walletOrigin";
 
 /** Mirrors the Worker's VerificationSessionBody (wire contract, not import). */
@@ -362,6 +363,7 @@ export function RentalGate({
     resumeSessionId !== null ? { kind: "resumed", sessionId: resumeSessionId } : null,
   );
   const walletOrigin = clientWalletOrigin();
+  const tourStopId = useTourStop()?.id;
 
   const start = useCallback(async () => {
     setPhase({ kind: "starting" });
@@ -427,10 +429,14 @@ export function RentalGate({
   // (supports the ?wallet= override); the server's wallet_link is the
   // fallback for when no client-side origin is known.
   const walletLink = (session: VerificationSession): string | null => {
-    if (walletOrigin !== null) {
-      return walletPresentLink(walletOrigin, session.request);
-    }
-    return session.wallet_link ?? null;
+    const link =
+      walletOrigin !== null
+        ? walletPresentLink(walletOrigin, session.request)
+        : (session.wallet_link ?? null);
+    // An active tour rides the link to the wallet's presentation stop.
+    if (link === null || tourStopId !== "rentals") return link;
+    const next = nextTourStop("rentals");
+    return next !== null ? withTourParam(link, next.id) : link;
   };
 
   if (phase === null) {
