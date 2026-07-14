@@ -12,6 +12,10 @@
     "directory": "./dist",
     "not_found_handling": "single-page-application"
   },
+  // Custom domain attaches on every deploy (Cloudflare manages DNS + cert).
+  // Note: passkeys are origin-bound, so wallets created on workers.dev do
+  // not carry over to this hostname (see DEPLOY.md).
+  "routes": [{ "pattern": "wallet.verygoodwallet.com", "custom_domain": true }],
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,

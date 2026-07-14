@@ -18,6 +18,8 @@
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
   "main": "./worker/index.ts",
+  // Custom domain attaches on every deploy (Cloudflare manages DNS + cert).
+  "routes": [{ "pattern": "rentals.verygoodwallet.com", "custom_domain": true }],
   "assets": {
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/oid4vp/*", "/api/*"]

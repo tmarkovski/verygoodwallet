@@ -86,10 +86,14 @@ goes to the **landing site**, and every app gets a subdomain:
 | `vgw-shop` | `shop.verygoodwallet.com` |
 | `vgw-rentals` | `rentals.verygoodwallet.com` |
 
-1. For each Worker: Dashboard → Workers & Pages → *Settings* → Domains &
-   Routes → *Add* → **Custom domain**. Cloudflare creates the record and
-   certificate automatically (the apex assignment replaces the GitHub Pages
-   records).
+1. The domains are declared in each app's `wrangler.jsonc` as
+   `routes: [{ "pattern": "<hostname>", "custom_domain": true }]`, so every
+   deploy (re)attaches them — Cloudflare creates the DNS records and
+   certificates; no dashboard steps. In CI (non-interactive) wrangler
+   auto-overrides conflicting records, which is exactly what performs the
+   apex cutover: the first `vgw-landing` deploy after the routes land
+   replaces the imported GitHub Pages records atomically. The `workers.dev`
+   hostnames stay enabled alongside.
 2. Delete `.github/workflows/deploy.yml`, the root `CNAME` file, and the
    GitHub Pages site settings; `web/` and `api/` are deleted per PLAN.md M6.
 3. Flip the origin constants baked into the builds, then redeploy everything:

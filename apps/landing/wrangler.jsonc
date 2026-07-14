@@ -11,6 +11,14 @@
   "assets": {
     "directory": "./dist"
   },
+  // Custom domains attach on every deploy (Cloudflare manages DNS + certs).
+  // The apex attach is the M6 cutover moment: in CI (non-interactive),
+  // wrangler overrides the imported GitHub Pages records, so the apex flips
+  // from the legacy site to this Worker atomically.
+  "routes": [
+    { "pattern": "verygoodwallet.com", "custom_domain": true },
+    { "pattern": "www.verygoodwallet.com", "custom_domain": true }
+  ],
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,
