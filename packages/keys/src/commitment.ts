@@ -11,7 +11,10 @@
  * implementation, or its hashes will not match commitments produced here.
  */
 
-import { poseidon2 } from "poseidon-lite";
+// The arity-2 subpath, NOT the package root: poseidon-lite is CommonJS with
+// no sideEffects marker, so bundlers keep the root's re-export of every
+// arity's round constants (~400 KB) in whatever chunk imports it.
+import { poseidon2 } from "poseidon-lite/poseidon2";
 import { toHex } from "./encoding.js";
 
 /** BN254 (alt_bn128) scalar field modulus — the field circomlib Poseidon operates over. */

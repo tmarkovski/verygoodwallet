@@ -15,18 +15,20 @@ import { decryptJson } from "@vgw/keys";
 import type { VerifiableCredential } from "@vgw/vc-kit";
 import { isInsecureIssuerOrigin } from "../services/issuance";
 import {
-  PRESENTATION_STEPS,
   disclosurePreview,
   hasEmbeddedSubjectId,
   matchCredentials,
   parsePresentParams,
   presentCredential,
+  presentationSteps,
   previewPresentationRequest,
+  zkAgeOption,
   type CandidateCredential,
   type DisclosureTier,
   type PresentCredentialResult,
   type PresentationStep,
   type QueryCandidates,
+  type ZkAgeOption,
 } from "../services/presentation";
 import { listCredentials, type CredentialPayload } from "../services/db";
 import { inspect } from "../inspector/events";
@@ -34,33 +36,42 @@ import { InlineUnlock } from "../components/InlineUnlock";
 import { StepList } from "../components/StepList";
 import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
 
-/** The tier picker's rows — tier 2 is a promise kept honest, not a control. */
-const TIERS: {
-  tier: DisclosureTier | 2;
+/** The tier picker's rows; tier 2 depends on the request and the credential. */
+function tierRows(zk: ZkAgeOption | null): {
+  tier: DisclosureTier;
   title: string;
   detail: string;
   disabled?: boolean;
-}[] = [
-  {
-    tier: 0,
-    title: "Show everything",
-    detail:
-      "Full disclosure — every field on the license. Today's status quo: handing over the card.",
-  },
-  {
-    tier: 1,
-    title: "Share only what's asked",
-    detail:
-      "BBS selective disclosure — just the claims below, unlinkable across presentations.",
-  },
-  {
-    tier: 2,
-    title: "Prove it without revealing anything",
-    disabled: true,
-    detail:
-      "A zero-knowledge predicate over the committed birthdate — arrives with the ZK milestone (M4).",
-  },
-];
+}[] {
+  return [
+    {
+      tier: 0,
+      title: "Show everything",
+      detail:
+        "Full disclosure — every field on the license. Today's status quo: handing over the card.",
+    },
+    {
+      tier: 1,
+      title: "Share only what's asked",
+      detail:
+        "BBS selective disclosure — just the claims below, unlinkable across presentations.",
+    },
+    zk !== null && zk.available
+      ? {
+          tier: 2,
+          title: "Prove it without revealing anything",
+          detail: `A zero-knowledge proof that you're over ${zk.years}, computed against today's cutoff. The verifier sees an opaque commitment and one bit — proving takes a few seconds in this tab.`,
+        }
+      : {
+          tier: 2,
+          title: "Prove it without revealing anything",
+          disabled: true,
+          detail:
+            zk?.reason ??
+            "A zero-knowledge predicate over the committed birthdate — unavailable for this request.",
+        },
+  ];
+}
 
 function DisclosureList({ entries }: { entries: Record<string, unknown> }) {
   const items = Object.entries(entries);
@@ -135,7 +146,7 @@ export function Present() {
         const decrypted = await Promise.all(
           records.map(async (record) => ({
             record,
-            vc: (await decryptJson<CredentialPayload>(vaultKey, record.payload)).vc,
+            payload: await decryptJson<CredentialPayload>(vaultKey, record.payload),
           })),
         );
         const result = matchCredentials(decrypted, params.request);
@@ -162,6 +173,15 @@ export function Present() {
 
   const selected: CandidateCredential | null =
     matches?.candidates.find((c) => c.record.id === selectedId) ?? null;
+
+  // Tier 2 availability is per-candidate; a switch to an ineligible
+  // credential falls back to selective disclosure rather than a dead button.
+  const zk: ZkAgeOption | null =
+    matches !== null && selected !== null ? zkAgeOption(matches.query, selected) : null;
+  const zkAvailable = zk !== null && zk.available;
+  useEffect(() => {
+    if (!zkAvailable) setTier((current) => (current === 2 ? 1 : current));
+  }, [zkAvailable]);
 
   const share = async () => {
     if (
@@ -260,7 +280,9 @@ export function Present() {
                 What was disclosed (tier {tier})
               </p>
               <div className="mt-2">
-                <DisclosureList entries={disclosurePreview(tier, selected.vc, selected.match)} />
+                <DisclosureList
+                  entries={disclosurePreview(tier, selected.vc, selected.match, zk ?? undefined)}
+                />
               </div>
             </div>
           )}
@@ -332,7 +354,7 @@ export function Present() {
       ) : locked ? (
         <InlineUnlock accounts={accounts} />
       ) : running ? (
-        <StepList title="Presenting" steps={PRESENTATION_STEPS} current={step} />
+        <StepList title="Presenting" steps={presentationSteps(tier)} current={step} />
       ) : matchError !== null ? (
         <div className="mt-6">
           <ErrorNote>Couldn't check your credentials: {matchError}</ErrorNote>
@@ -380,7 +402,7 @@ export function Present() {
           <div className="mt-6">
             <SectionTitle>How much to reveal</SectionTitle>
             <ul className="mt-2 space-y-2" role="radiogroup" aria-label="Disclosure tier">
-              {TIERS.map((option) => {
+              {tierRows(zk).map((option) => {
                 const active = !option.disabled && option.tier === tier;
                 return (
                   <li key={option.tier}>
@@ -390,7 +412,7 @@ export function Present() {
                       aria-checked={active}
                       disabled={option.disabled === true}
                       onClick={() => {
-                        if (option.disabled !== true) setTier(option.tier as DisclosureTier);
+                        if (option.disabled !== true) setTier(option.tier);
                       }}
                       className={`w-full rounded-2xl border px-4 py-3 text-left transition-colors ${
                         active
@@ -420,7 +442,9 @@ export function Present() {
             <div className="mt-6 rounded-3xl border border-line bg-surface p-5">
               <SectionTitle>This will reveal</SectionTitle>
               <div className="mt-3">
-                <DisclosureList entries={disclosurePreview(tier, selected.vc, selected.match)} />
+                <DisclosureList
+                  entries={disclosurePreview(tier, selected.vc, selected.match, zk ?? undefined)}
+                />
               </div>
               {hasEmbeddedSubjectId(selected.vc) && (
                 <p className="mt-3 rounded-xl bg-danger-soft px-3 py-2.5 text-[12px] leading-relaxed text-danger">

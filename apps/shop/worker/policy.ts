@@ -2,21 +2,38 @@
  * The Nightcap's verification policy: what it asks for (DCQL) and how it
  * judges what comes back.
  *
- * The query prefers the mdoc-style `age_over_18` flag and falls back to the
- * raw `birth_date` for credentials issued before the flags existed — a
- * deliberate exhibit: the fallback discloses strictly more than the flag,
- * and the result page shows that difference. The ZK tier (M4) will beat
- * both.
+ * The query's alternatives are the demo's privacy ladder, in the shop's
+ * order of preference: the ZK age predicate over the birthdate commitment
+ * (learns one bit, valid for ANY cutoff), the mdoc-style `age_over_18` flag
+ * (one bit, but only cutoffs the issuer anticipated — and stale since
+ * issuance), and the raw `birth_date` fallback for credentials issued
+ * before the flags existed (discloses strictly the most).
  */
 
 import type { DcqlQuery } from "@vgw/protocols";
 import type { VerifiableCredential } from "@vgw/vc-kit";
+// Subpath imports only: pulling in @vgw/zk's root would drag the bb.js/noir
+// WASM stacks into the WORKER bundle (as lazy chunks, but uploaded and
+// counted all the same). These three modules are WASM-free by contract.
+import { assertAgeProofBundle } from "@vgw/zk/bundle";
+import { ageCutoffDays } from "@vgw/zk/cutoff";
+import { normalizeFieldHex } from "@vgw/zk/encoding";
 import type { SessionOutcome } from "./sessions.js";
 
 /** The single credential query id — key of this query's vp_token entry. */
 export const AGE_QUERY_ID = "utopia_dl_age";
 
-/** Path segments shared by both claims. */
+/** The age threshold this shop gates on. */
+export const AGE_YEARS = 18;
+
+/**
+ * Clock-skew tolerance for the proof's cutoff: the wallet computes "today
+ * minus 18 years" on its own clock, which near midnight may run one day
+ * ahead of the Worker's.
+ */
+const CUTOFF_SKEW_DAYS = 1;
+
+/** Path segments shared by all three claims. */
 const LICENSE_PATH = ["credentialSubject", "driversLicense"] as const;
 
 export const AGE_DCQL_QUERY: DcqlQuery = {
@@ -32,11 +49,117 @@ export const AGE_DCQL_QUERY: DcqlQuery = {
         // not steer under-18 wallets into disclosing their birth date.
         { id: "age_flag", path: [...LICENSE_PATH, "age_over_18"] },
         { id: "dob", path: [...LICENSE_PATH, "birth_date"] },
+        { id: "commitment", path: [...LICENSE_PATH, "birthDateCommitment"] },
       ],
-      claim_sets: [["age_flag"], ["dob"]],
+      // The wallet's DEFAULT is the first satisfiable set; the ZK path needs
+      // the holder's opt-in (proving costs seconds), so the flag leads and
+      // the tier picker is how a wallet chooses the commitment route.
+      claim_sets: [["age_flag"], ["dob"], ["commitment"]],
+      vgw_zk: { predicate: "age_over", years: AGE_YEARS, claim_id: "commitment" },
     },
   ],
 };
+
+/**
+ * Judge a tier-2 response: the presentation disclosed the birthdate
+ * commitment and carried a `zkAgeProof` bundle (signature-covered by the VP
+ * wrapper, which already verified).
+ *
+ * The Worker checks everything EXCEPT the UltraHonk proof itself:
+ * bb.js instantiates WASM from bytes at runtime, which the Workers runtime
+ * prohibits, and its WASM alone would exhaust the free plan's script budget
+ * — so the final cryptographic check runs in the shop's own client (and in
+ * Node for the e2e suite), against the same checked-in verification key.
+ * Hence `zk_pending`, never `allowed`, from this function.
+ *
+ * What IS checked here, because the client shouldn't have to re-derive it:
+ * - the bundle is well-formed (shape, sizes, known scheme/circuit),
+ * - its commitment equals the BBS-disclosed `birthDateCommitment` — the
+ *   link between "a proof about SOME birthdate" and "THE birthdate the DMV
+ *   signed for this credential",
+ * - its threshold is this shop's policy threshold, and
+ * - its cutoff is at most today's cutoff (older is stricter, newer would
+ *   shrink the required age), with one day of clock-skew tolerance.
+ */
+export function evaluateZkAgePolicy(
+  credentials: VerifiableCredential[],
+  zkAgeProof: unknown,
+  now: Date = new Date(),
+): Pick<SessionOutcome, "status" | "verdict" | "reason" | "disclosed" | "zk"> {
+  const disclosed = disclosedLicenseClaims(credentials);
+
+  let bundle;
+  try {
+    ({ bundle } = assertAgeProofBundle(zkAgeProof));
+  } catch (error) {
+    return {
+      status: "failed",
+      reason: error instanceof Error ? error.message : "malformed zkAgeProof",
+      disclosed,
+    };
+  }
+
+  const disclosedCommitment = disclosed["birthDateCommitment"];
+  if (typeof disclosedCommitment !== "string") {
+    return {
+      status: "failed",
+      reason:
+        "The presentation carries a zkAgeProof but does not disclose the birthDateCommitment it must be proven against.",
+      disclosed,
+    };
+  }
+  let signedCommitment: string;
+  try {
+    signedCommitment = normalizeFieldHex(disclosedCommitment);
+  } catch {
+    return {
+      status: "failed",
+      reason: "The disclosed birthDateCommitment is not a hex field element.",
+      disclosed,
+    };
+  }
+  if (bundle.commitment !== signedCommitment) {
+    return {
+      status: "failed",
+      reason:
+        "The zkAgeProof's commitment is not the birthDateCommitment the issuer signed — the proof is about some other birthdate.",
+      disclosed,
+    };
+  }
+
+  if (bundle.years !== AGE_YEARS) {
+    return {
+      status: "failed",
+      reason: `The zkAgeProof proves an age_over_${bundle.years} predicate; this shop requires age_over_${AGE_YEARS}.`,
+      disclosed,
+    };
+  }
+
+  const maxCutoff = ageCutoffDays(AGE_YEARS, now) + CUTOFF_SKEW_DAYS;
+  if (bundle.cutoffDays > maxCutoff) {
+    return {
+      status: "failed",
+      reason: `The zkAgeProof's cutoff (day ${bundle.cutoffDays}) is later than today's age_over_${AGE_YEARS} cutoff (day ${maxCutoff - CUTOFF_SKEW_DAYS}) — it would prove less than ${AGE_YEARS} years.`,
+      disclosed,
+    };
+  }
+
+  return {
+    status: "verified",
+    verdict: "zk_pending",
+    reason:
+      "Signatures, issuer, and the proof's public-input bindings verified on the Worker; the UltraHonk proof itself is verified by the shop's client (the free-tier edge runtime cannot run the WASM verifier — see the inspector).",
+    disclosed,
+    zk: {
+      scheme: bundle.scheme,
+      circuit: bundle.circuit,
+      years: bundle.years,
+      cutoffDays: bundle.cutoffDays,
+      commitment: bundle.commitment,
+      proof: bundle.proof,
+    },
+  };
+}
 
 /**
  * Judge the verified credentials against the 18+ policy. Only called with

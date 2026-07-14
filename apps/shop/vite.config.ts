@@ -22,6 +22,12 @@ export default defineConfig({
       },
     },
   },
+  optimizeDeps: {
+    // The shop client lazy-loads bb.js for UltraHonk verification; esbuild
+    // prebundling would relocate its JS away from the WASM it fetches
+    // relative to import.meta.url (dev-mode only issue).
+    exclude: ["@aztec/bb.js"],
+  },
   server: {
     port: 5175,
     strictPort: true,

@@ -227,8 +227,30 @@ VGW_E2E=1 pnpm --filter @vgw/shop test
 ```
 
 runs `apps/shop/worker/e2e.test.ts` — real issuance at the dev DMV, a real
-tier-1 presentation into the dev shop, the under-18 denial, and a replay
-rejection against the live Durable Object. (Skipped without `VGW_E2E=1`.)
+tier-1 presentation into the dev shop, the under-18 denial, a replay
+rejection against the live Durable Object, and the tier-2 flow: a real
+UltraHonk proof round-trips, the Worker records it, and the suite verifies
+the stored payload with the same `@vgw/zk` call the shop client makes.
+(Skipped without `VGW_E2E=1`.)
+
+### ZK circuit artifacts (packages/zk)
+
+The tier-2 circuit ships as checked-in artifacts (`packages/zk/artifacts/`):
+the compiled Noir program and the UltraHonk verification key. After editing
+`packages/zk/circuit/` or bumping the pinned `@noir-lang/*`/`@aztec/bb.js`
+versions, regenerate with:
+
+```sh
+pnpm --filter @vgw/zk compile
+```
+
+A test recompiles the circuit and fails CI if the checked-in artifact is
+stale. Note the trust split baked into the design: the shop Worker validates
+everything about a tier-2 presentation EXCEPT the UltraHonk proof (Workers
+cannot instantiate WASM from bytes, and bb.js wouldn't fit the free plan's
+3 MiB script cap); the proof itself is verified by the shop's client against
+the verification key bundled into the shop build. Redeploying the shop after
+regenerating artifacts keeps prover and verifier in agreement.
 
 ## Future apps (per PLAN.md)
 

@@ -144,4 +144,46 @@ describe("assertDcqlQuery", () => {
       }),
     ).toThrow(/valid path/);
   });
+
+  describe("vgw_zk extension", () => {
+    const withZk = (vgw_zk: unknown) => ({
+      credentials: [
+        {
+          id: "x",
+          format: "ldp_vc",
+          claims: [
+            { id: "commitment", path: ["credentialSubject", "driversLicense", "birthDateCommitment"] },
+          ],
+          claim_sets: [["commitment"]],
+          vgw_zk,
+        },
+      ],
+    });
+
+    it("accepts a well-formed age predicate", () => {
+      const query = withZk({ predicate: "age_over", years: 18, claim_id: "commitment" });
+      expect(assertDcqlQuery(query)).toEqual(query);
+    });
+
+    it("rejects unknown predicates", () => {
+      expect(() =>
+        assertDcqlQuery(withZk({ predicate: "income_over", years: 18, claim_id: "commitment" })),
+      ).toThrow(/only age_over/);
+    });
+
+    it("rejects non-integer or out-of-range years", () => {
+      expect(() =>
+        assertDcqlQuery(withZk({ predicate: "age_over", years: 0, claim_id: "commitment" })),
+      ).toThrow(/positive integer/);
+      expect(() =>
+        assertDcqlQuery(withZk({ predicate: "age_over", years: "18", claim_id: "commitment" })),
+      ).toThrow(/positive integer/);
+    });
+
+    it("rejects claim_id references to undefined claims", () => {
+      expect(() =>
+        assertDcqlQuery(withZk({ predicate: "age_over", years: 18, claim_id: "nope" })),
+      ).toThrow(/unknown claim id "nope"/);
+    });
+  });
 });

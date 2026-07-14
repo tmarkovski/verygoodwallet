@@ -1,0 +1,14 @@
+# The age-predicate circuit (see src/main.nr). Compiled by scripts/compile.mjs
+# via @noir-lang/noir_wasm — no local nargo install needed.
+#
+# The poseidon dependency is vendored (../vendor-poseidon) at noir-lang/poseidon
+# v0.3.0: noir_wasm resolves path dependencies from the file manager, but not
+# git dependencies, and a checked-in copy pins the constants that commitment
+# compatibility depends on.
+[package]
+name = "vgw_age_check"
+type = "bin"
+authors = ["VeryGoodWallet"]
+
+[dependencies]
+poseidon = { path = "../vendor-poseidon" }

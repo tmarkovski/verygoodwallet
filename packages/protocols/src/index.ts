@@ -52,6 +52,7 @@ export {
   type DcqlClaimQuery,
   type DcqlCredentialQuery,
   type DcqlQuery,
+  type DcqlZkAgePredicate,
   type DirectPostResult,
   type OauthErrorResponse,
   type PresentationRequest,

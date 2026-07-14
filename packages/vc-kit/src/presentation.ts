@@ -45,26 +45,42 @@ const { AuthenticationProofPurpose } = jsigs.purposes;
  * @param options.challenge - The verifier's nonce, echoed into the proof.
  * @param options.domain - The verifier's identifier (OID4VP `client_id`);
  *   scopes the proof to this verifier.
+ * @param options.contexts - Extra JSON-LD context URLs the presentation's
+ *   own properties need (beyond credentials/v2).
+ * @param options.properties - Additional top-level presentation properties,
+ *   signed along with everything else (e.g. the VGW `zkAgeProof` JSON
+ *   literal). Every key must be a term defined by the presentation's
+ *   contexts.
  */
 export async function signPresentation({
   credentials,
   keyPair,
   challenge,
   domain,
+  contexts = [],
+  properties = {},
 }: {
   credentials: VerifiableCredential[];
   keyPair: Ed25519KeyPair;
   challenge: string;
   domain?: string;
+  contexts?: string[];
+  properties?: Record<string, unknown>;
 }): Promise<VerifiablePresentation> {
   if (credentials.length === 0) {
     throw new Error('signPresentation: at least one credential is required');
   }
+  for (const reserved of ['@context', 'type', 'holder', 'verifiableCredential', 'proof']) {
+    if (reserved in properties) {
+      throw new Error(`signPresentation: properties may not override "${reserved}"`);
+    }
+  }
   const presentation: VerifiablePresentation = {
-    '@context': [CREDENTIALS_V2_CONTEXT_URL],
+    '@context': [CREDENTIALS_V2_CONTEXT_URL, ...contexts],
     type: ['VerifiablePresentation'],
     holder: keyPair.controller,
     verifiableCredential: credentials,
+    ...properties,
   };
 
   const suite = new DataIntegrityProof({

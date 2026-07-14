@@ -13,6 +13,7 @@ import {
   type VerifiableCredential,
   type VerifiablePresentation,
 } from '../src/index.js';
+import { VGW_CONTEXT_URL } from '../src/contexts/index.js';
 
 const ISSUER_SEED = new Uint8Array(32).fill(1);
 const PRESENTER_SEED = new Uint8Array(32).fill(2);
@@ -101,6 +102,79 @@ describe('presentations (eddsa-rdfc-2022)', () => {
           challenge: CHALLENGE,
         })
       ).rejects.toThrow(/at least one credential/);
+    });
+
+    it('refuses properties that would override presentation structure', async () => {
+      await expect(
+        signPresentation({
+          credentials: [derived],
+          keyPair: presenter,
+          challenge: CHALLENGE,
+          properties: { holder: 'did:key:zMallory' },
+        })
+      ).rejects.toThrow(/may not override "holder"/);
+    });
+  });
+
+  describe('signPresentation with a zkAgeProof property (tier 2)', () => {
+    const zkAgeProof = {
+      scheme: 'noir-ultrahonk',
+      circuit: 'vgw-age-check-v1',
+      years: 18,
+      cutoffDays: 14073,
+      commitment: `0x${'1b'.repeat(32)}`,
+      proof: 'AAAA'.repeat(50),
+    };
+    let zkVp: VerifiablePresentation;
+
+    beforeAll(async () => {
+      zkVp = await signPresentation({
+        credentials: [derived],
+        keyPair: presenter,
+        challenge: CHALLENGE,
+        domain: DOMAIN,
+        contexts: [VGW_CONTEXT_URL],
+        properties: { zkAgeProof },
+      });
+    });
+
+    it('carries the bundle as a JSON literal and still verifies', async () => {
+      expect(zkVp['zkAgeProof']).toEqual(zkAgeProof);
+      const result = await verifyPresentation({
+        presentation: zkVp,
+        challenge: CHALLENGE,
+        domain: DOMAIN,
+        expectedIssuer: issuer.controller,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.verified).toBe(true);
+    });
+
+    it('signs the bundle: tampering with it breaks the wrapper proof', async () => {
+      // A relaxed cutoff would let an under-age proof pass policy — the
+      // wrapper signature must cover the JSON literal so this cannot happen
+      // in transit.
+      const tampered = structuredClone(zkVp) as VerifiablePresentation;
+      (tampered['zkAgeProof'] as Record<string, unknown>)['cutoffDays'] = 99999;
+      const result = await verifyPresentation({
+        presentation: tampered,
+        challenge: CHALLENGE,
+        domain: DOMAIN,
+        expectedIssuer: issuer.controller,
+      });
+      expect(result.verified).toBe(false);
+    });
+
+    it('signs the proof bytes too: swapping them breaks the wrapper proof', async () => {
+      const tampered = structuredClone(zkVp) as VerifiablePresentation;
+      (tampered['zkAgeProof'] as Record<string, unknown>)['proof'] = 'BBBB'.repeat(50);
+      const result = await verifyPresentation({
+        presentation: tampered,
+        challenge: CHALLENGE,
+        domain: DOMAIN,
+        expectedIssuer: issuer.controller,
+      });
+      expect(result.verified).toBe(false);
     });
   });
 

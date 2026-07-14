@@ -19,16 +19,35 @@
  * storage stub, which an RPC DO's platform base class would preclude.
  */
 
+/** The tier-2 payload the shop CLIENT verifies (see policy.ts on why not here). */
+export interface ZkOutcomePayload {
+  scheme: string;
+  circuit: string;
+  years: number;
+  /** Cutoff the Worker validated against its own policy clock. */
+  cutoffDays: number;
+  /** The BBS-disclosed commitment (canonical hex) — the proof's other public input. */
+  commitment: string;
+  /** UltraHonk proof bytes, base64url. */
+  proof: string;
+}
+
 /** Everything the shop UI learns about a completed session. */
 export interface SessionOutcome {
   /** `verified` = the presentation checked out; `failed` = it did not. */
   status: "verified" | "failed";
-  /** Only for `verified`: what the age policy decided. */
-  verdict?: "allowed" | "denied";
+  /**
+   * Only for `verified`: what the age policy decided. `zk_pending` means
+   * every Worker-side check passed and the final UltraHonk verification is
+   * the client's (see the `zk` payload).
+   */
+  verdict?: "allowed" | "denied" | "zk_pending";
   /** Human-readable basis for the outcome (shown in the shop UI). */
   reason: string;
   /** Claim name → disclosed value — exactly what this verifier learned. */
   disclosed: Record<string, unknown>;
+  /** Present iff `verdict` is `zk_pending`. */
+  zk?: ZkOutcomePayload;
   /** The vp_token as received, for the protocol inspector. */
   vpToken?: unknown;
   completedAt: number;

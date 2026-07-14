@@ -16,6 +16,7 @@
     "@vgw/keys": "workspace:*",
     "@vgw/protocols": "workspace:*",
     "@vgw/vc-kit": "workspace:*",
+    "@vgw/zk": "workspace:*",
     "hono": "^4.12.30",
     "qrcode": "^1.5.4",
     "react": "^19.2.0",

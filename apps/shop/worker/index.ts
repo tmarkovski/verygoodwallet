@@ -36,7 +36,12 @@ import {
   trustedIssuerDid,
   type ShopBindings,
 } from "./env.js";
-import { AGE_DCQL_QUERY, AGE_QUERY_ID, evaluateAgePolicy } from "./policy.js";
+import {
+  AGE_DCQL_QUERY,
+  AGE_QUERY_ID,
+  evaluateAgePolicy,
+  evaluateZkAgePolicy,
+} from "./policy.js";
 import type { SessionOutcome, SessionStatus } from "./sessions.js";
 
 export { VerificationSessions } from "./sessions.js";
@@ -286,9 +291,16 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
       expectedIssuer,
     });
 
+    // A zkAgeProof on the presentation selects the tier-2 policy path. The
+    // property is signature-covered (a VGW JSON-literal term), so after
+    // verifyPresentation succeeded it is exactly what the wallet signed.
+    const zkAgeProof = (presentation as VerifiablePresentation)["zkAgeProof"];
+    const verifiedCredentials = () => result.credentials.map((r) => r.credential);
     const outcome: SessionOutcome = result.verified
       ? {
-          ...evaluateAgePolicy(result.credentials.map((r) => r.credential)),
+          ...(zkAgeProof !== undefined
+            ? evaluateZkAgePolicy(verifiedCredentials(), zkAgeProof)
+            : evaluateAgePolicy(verifiedCredentials())),
           vpToken,
           completedAt: Date.now(),
         }

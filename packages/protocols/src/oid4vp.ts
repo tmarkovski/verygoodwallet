@@ -48,6 +48,21 @@ export interface DcqlClaimQuery {
   values?: (string | number | boolean)[];
 }
 
+/**
+ * VGW extension to a credential query: the verifier also accepts a ZK age
+ * predicate proven against the credential's Poseidon `birthDateCommitment`
+ * (the tier-2 path). Standard DCQL cannot express predicates — `values`
+ * filters only match disclosed values — so this rides alongside as a
+ * vendor-prefixed member, which OID4VP-compliant consumers ignore.
+ */
+export interface DcqlZkAgePredicate {
+  predicate: "age_over";
+  /** The age threshold; the wallet derives the day cutoff at proving time. */
+  years: number;
+  /** Which claim id in `claims` addresses the commitment the proof opens. */
+  claim_id: string;
+}
+
 /** One credential the verifier asks for, with the claims it wants from it. */
 export interface DcqlCredentialQuery {
   /** Key for this query's presentations in the `vp_token` map. */
@@ -64,6 +79,8 @@ export interface DcqlCredentialQuery {
    * before the flags existed.
    */
   claim_sets?: string[][];
+  /** See {@link DcqlZkAgePredicate}. */
+  vgw_zk?: DcqlZkAgePredicate;
 }
 
 export interface DcqlQuery {
@@ -337,6 +354,29 @@ export function assertDcqlQuery(value: unknown): DcqlQuery {
             `Credential query "${id}" has a claim with malformed values (expected scalars)`,
           );
         }
+      }
+    }
+    const zk = entry["vgw_zk"];
+    if (zk !== undefined) {
+      if (!isRecord(zk)) {
+        throw new Error(`Credential query "${id}" has a non-object vgw_zk`);
+      }
+      if (zk["predicate"] !== "age_over") {
+        throw new Error(
+          `Credential query "${id}" has unsupported vgw_zk.predicate "${String(zk["predicate"])}" — only age_over is supported`,
+        );
+      }
+      const years = zk["years"];
+      if (typeof years !== "number" || !Number.isInteger(years) || years <= 0 || years > 150) {
+        throw new Error(
+          `Credential query "${id}" has a vgw_zk.years that is not a positive integer`,
+        );
+      }
+      const claimId = zk["claim_id"];
+      if (typeof claimId !== "string" || !claimIds.has(claimId)) {
+        throw new Error(
+          `Credential query "${id}" vgw_zk.claim_id references unknown claim id "${String(claimId)}"`,
+        );
       }
     }
     const claimSets = entry["claim_sets"];

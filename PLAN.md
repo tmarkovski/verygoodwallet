@@ -95,9 +95,15 @@ Noir circuit, deliberately small:
 - **Proves**: `C == Poseidon(dob, r)` ∧ `dob ≤ cutoff`
 
 Presentation bundle = BBS derived proof disclosing *only* `birthDateCommitment` (issuer-signed,
-so the commitment is authentic) + UltraHonk proof over that commitment. Verifier checks both
-and learns exactly one bit. Proving happens in-browser (bb.js WASM, lazy-loaded); verification
-happens on the verifier Worker and client-side for the inspector.
+so the commitment is authentic) + UltraHonk proof over that commitment, embedded in the signed
+VP as the VGW `zkAgeProof` JSON-literal term. Verifier checks both and learns exactly one bit.
+Proving happens in-browser (bb.js WASM, lazy-loaded). Verification splits honestly across two
+runtimes (as built in M4): the shop **Worker** verifies the BBS layer, the VP wrapper, and the
+proof's public-input bindings (commitment = the signed claim, cutoff = today's policy), but
+**cannot** run bb.js — Cloudflare Workers prohibit runtime WASM compilation and the free plan's
+3 MiB script cap wouldn't fit it anyway — so the UltraHonk check itself runs in the shop's own
+client (lazy bb.js against the checked-in verification key), with the e2e suite running the
+identical call in Node, exactly as a self-hosted verifier would server-side.
 
 Stretch (not in scope): longfellow-style ZK over ECDSA-signed mdocs.
 

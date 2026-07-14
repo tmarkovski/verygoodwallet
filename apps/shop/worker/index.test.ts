@@ -17,6 +17,9 @@ import {
   type VerifiableCredential,
   type VerifiablePresentation,
 } from "@vgw/vc-kit";
+import { VGW_CONTEXT_URL } from "@vgw/vc-kit/contexts";
+import { createCommitment, daysSinceEpoch, toBase64Url } from "@vgw/keys";
+import { ageCutoffDays, proveAgePredicate, verifyAgeProof, type AgeProofBundle } from "@vgw/zk";
 import type { OauthErrorResponse, PresentationRequest } from "@vgw/protocols";
 import { createApp, type VerificationSessionBody } from "./index.js";
 import {
@@ -45,16 +48,25 @@ let adultViaFlag: VerifiableCredential;
 let adultViaDob: VerifiableCredential;
 let minorViaFlag: VerifiableCredential;
 let rogueViaFlag: VerifiableCredential;
+/** Tier-2 fixtures: commitment-only disclosure + a REAL UltraHonk proof. */
+let adultViaCommitment: VerifiableCredential;
+let adultOpening: { commitment: string; blinding: string };
+let adultZkBundle: AgeProofBundle;
+
+const ADULT_BIRTH_DATE = "1988-04-19";
 
 beforeAll(async () => {
   issuer = await generateBbsKeyPair(ISSUER_SEED);
   rogueIssuer = await generateBbsKeyPair(ROGUE_ISSUER_SEED);
   presenter = await generateEd25519KeyPair(PRESENTER_SEED);
 
+  adultOpening = createCommitment(daysSinceEpoch(ADULT_BIRTH_DATE));
+
   const sign = async (opts: {
     keyPair: BbsKeyPair;
     birthDate: string;
     pointer: string;
+    birthDateCommitment?: string;
   }): Promise<VerifiableCredential> => {
     const credential = buildUtopiaDriversLicense({
       givenName: "TEST",
@@ -64,6 +76,9 @@ beforeAll(async () => {
       issuer: { id: opts.keyPair.controller, name: "Utopia DMV" },
       validFrom: "2026-01-01T00:00:00Z",
       validUntil: "2032-01-01T00:00:00Z",
+      ...(opts.birthDateCommitment !== undefined
+        ? { birthDateCommitment: opts.birthDateCommitment }
+        : {}),
     });
     const signed = await signCredential({ credential, keyPair: opts.keyPair });
     return deriveCredential({
@@ -74,13 +89,28 @@ beforeAll(async () => {
 
   const FLAG = "/credentialSubject/driversLicense/age_over_18";
   const DOB = "/credentialSubject/driversLicense/birth_date";
-  [adultViaFlag, adultViaDob, minorViaFlag, rogueViaFlag] = await Promise.all([
-    sign({ keyPair: issuer, birthDate: "1988-04-19", pointer: FLAG }),
-    sign({ keyPair: issuer, birthDate: "1988-04-19", pointer: DOB }),
-    sign({ keyPair: issuer, birthDate: "2009-11-02", pointer: FLAG }),
-    sign({ keyPair: rogueIssuer, birthDate: "1988-04-19", pointer: FLAG }),
-  ]);
-}, 60_000);
+  const COMMITMENT = "/credentialSubject/driversLicense/birthDateCommitment";
+  [adultViaFlag, adultViaDob, minorViaFlag, rogueViaFlag, adultViaCommitment, { bundle: adultZkBundle }] =
+    await Promise.all([
+      sign({ keyPair: issuer, birthDate: ADULT_BIRTH_DATE, pointer: FLAG }),
+      sign({ keyPair: issuer, birthDate: ADULT_BIRTH_DATE, pointer: DOB }),
+      sign({ keyPair: issuer, birthDate: "2009-11-02", pointer: FLAG }),
+      sign({ keyPair: rogueIssuer, birthDate: ADULT_BIRTH_DATE, pointer: FLAG }),
+      sign({
+        keyPair: issuer,
+        birthDate: ADULT_BIRTH_DATE,
+        pointer: COMMITMENT,
+        birthDateCommitment: adultOpening.commitment,
+      }),
+      proveAgePredicate({
+        dobDays: daysSinceEpoch(ADULT_BIRTH_DATE),
+        blinding: adultOpening.blinding,
+        commitment: adultOpening.commitment,
+        cutoffDays: ageCutoffDays(18),
+        years: 18,
+      }),
+    ]);
+}, 120_000);
 
 /** In-memory namespace running the REAL VerificationSessions class. */
 function memoryNamespace(): DurableObjectNamespaceLike {
@@ -140,6 +170,8 @@ async function presentAndPost(options: {
   challenge?: string;
   domain?: string;
   state?: string;
+  /** Embed a tier-2 proof bundle (signed into the VP under the VGW context). */
+  zkAgeProof?: unknown;
   mutate?: (vp: VerifiablePresentation) => VerifiablePresentation;
 }): Promise<Response> {
   const vp = await signPresentation({
@@ -147,6 +179,9 @@ async function presentAndPost(options: {
     keyPair: presenter,
     challenge: options.challenge ?? options.request.nonce,
     domain: options.domain ?? options.request.client_id,
+    ...(options.zkAgeProof !== undefined
+      ? { contexts: [VGW_CONTEXT_URL], properties: { zkAgeProof: options.zkAgeProof } }
+      : {}),
   });
   const finalVp = options.mutate?.(vp) ?? vp;
   const body = new URLSearchParams({
@@ -327,6 +362,141 @@ describe("POST /oid4vp/response", () => {
     });
     expect(res.status).toBe(400);
     expect((await sessionStatus(env, session.session_id)).status).toBe("failed");
+  });
+
+  describe("tier 2 (zkAgeProof)", () => {
+    it("accepts a real proof: zk_pending outcome whose payload then verifies like the client would", async () => {
+      const env = makeEnv();
+      const session = await createSession(env);
+      const res = await presentAndPost({
+        env,
+        request: session.request,
+        credential: adultViaCommitment,
+        zkAgeProof: adultZkBundle,
+      });
+      expect(res.status).toBe(200);
+
+      const status = await sessionStatus(env, session.session_id);
+      expect(status.status).toBe("verified");
+      if (status.status !== "verified") return;
+      expect(status.verdict).toBe("zk_pending");
+      // The commitment is all the shop learned — no flag, no birthdate.
+      expect(status.disclosed["birthDateCommitment"]).toBe(adultOpening.commitment);
+      expect(status.disclosed["age_over_18"]).toBeUndefined();
+      expect(status.disclosed["birth_date"]).toBeUndefined();
+
+      expect(status.zk).toBeDefined();
+      if (status.zk === undefined) return;
+      expect(status.zk.commitment).toBe(adultOpening.commitment);
+      expect(status.zk.years).toBe(18);
+
+      // The exact call the shop client (and a self-hosted verifier) makes:
+      const zkResult = await verifyAgeProof({
+        proof: status.zk.proof,
+        commitment: status.zk.commitment,
+        cutoffDays: status.zk.cutoffDays,
+      });
+      expect(zkResult.verified).toBe(true);
+    }, 60_000);
+
+    const fakeProof = () => toBase64Url(new Uint8Array(14656).fill(1));
+
+    it("rejects a proof about a different commitment than the issuer signed", async () => {
+      const env = makeEnv();
+      const session = await createSession(env);
+      const otherCommitment = createCommitment(daysSinceEpoch("2005-01-01")).commitment;
+      const res = await presentAndPost({
+        env,
+        request: session.request,
+        credential: adultViaCommitment,
+        zkAgeProof: { ...adultZkBundle, commitment: otherCommitment, proof: fakeProof() },
+      });
+      expect(res.status).toBe(400);
+      const status = await sessionStatus(env, session.session_id);
+      expect(status.status).toBe("failed");
+      if (status.status !== "failed") return;
+      expect(status.reason).toMatch(/other birthdate/);
+    });
+
+    it("rejects a cutoff later than today's policy cutoff", async () => {
+      const env = makeEnv();
+      const session = await createSession(env);
+      const res = await presentAndPost({
+        env,
+        request: session.request,
+        credential: adultViaCommitment,
+        zkAgeProof: { ...adultZkBundle, cutoffDays: ageCutoffDays(18) + 30, proof: fakeProof() },
+      });
+      expect(res.status).toBe(400);
+      const status = await sessionStatus(env, session.session_id);
+      expect(status.status).toBe("failed");
+      if (status.status !== "failed") return;
+      expect(status.reason).toMatch(/cutoff/);
+    });
+
+    it("rejects a proof for a weaker age threshold than the policy's", async () => {
+      const env = makeEnv();
+      const session = await createSession(env);
+      const res = await presentAndPost({
+        env,
+        request: session.request,
+        credential: adultViaCommitment,
+        zkAgeProof: { ...adultZkBundle, years: 16, proof: fakeProof() },
+      });
+      expect(res.status).toBe(400);
+      const status = await sessionStatus(env, session.session_id);
+      expect(status.status).toBe("failed");
+      if (status.status !== "failed") return;
+      expect(status.reason).toMatch(/age_over_16.*age_over_18/);
+    });
+
+    it("rejects a malformed bundle (unknown scheme)", async () => {
+      const env = makeEnv();
+      const session = await createSession(env);
+      const res = await presentAndPost({
+        env,
+        request: session.request,
+        credential: adultViaCommitment,
+        zkAgeProof: { ...adultZkBundle, scheme: "groth16" },
+      });
+      expect(res.status).toBe(400);
+      expect((await sessionStatus(env, session.session_id)).status).toBe("failed");
+    });
+
+    it("rejects a zkAgeProof when the commitment claim is not disclosed", async () => {
+      const env = makeEnv();
+      const session = await createSession(env);
+      const res = await presentAndPost({
+        env,
+        request: session.request,
+        credential: adultViaFlag, // discloses the flag, not the commitment
+        zkAgeProof: adultZkBundle,
+      });
+      expect(res.status).toBe(400);
+      const status = await sessionStatus(env, session.session_id);
+      expect(status.status).toBe("failed");
+      if (status.status !== "failed") return;
+      expect(status.reason).toMatch(/does not disclose/);
+    });
+
+    it("rejects a bundle tampered with after signing (wrapper coverage)", async () => {
+      const env = makeEnv();
+      const session = await createSession(env);
+      const res = await presentAndPost({
+        env,
+        request: session.request,
+        credential: adultViaCommitment,
+        zkAgeProof: adultZkBundle,
+        mutate: (vp) => {
+          const tampered = structuredClone(vp) as VerifiablePresentation;
+          (tampered["zkAgeProof"] as Record<string, unknown>)["cutoffDays"] =
+            ageCutoffDays(18) - 10_000;
+          return tampered;
+        },
+      });
+      expect(res.status).toBe(400);
+      expect((await sessionStatus(env, session.session_id)).status).toBe("failed");
+    });
   });
 
   it("rejects an unknown or expired state without recording anything", async () => {

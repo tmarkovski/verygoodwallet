@@ -18,12 +18,18 @@
  *   1 — selective disclosure: only the claims the verifier's DCQL query
  *       matched, plus the issuer's mandatory pointers. Unlinkable across
  *       presentations.
- *   2 — ZK predicate: not yet (milestone M4); the consent UI shows it
- *       disabled rather than pretending.
+ *   2 — ZK predicate: disclose only the issuer-signed birthdate COMMITMENT
+ *       and attach an UltraHonk proof that the committed date satisfies the
+ *       verifier's age cutoff (vgw_zk in the DCQL query). The proof rides
+ *       inside the signed presentation as the VGW `zkAgeProof` JSON term,
+ *       so the wrapper signature covers it. Requires the vault's stored
+ *       commitment opening; the proving stack (noir_js + bb.js WASM) loads
+ *       lazily only on this path.
  */
 
 import { derivePresenterSeed, previewSecret } from "@vgw/keys";
 import {
+  claimPathToPointer,
   matchDcqlCredentialQuery,
   presentationRequestFromParams,
   type DcqlCredentialMatch,
@@ -38,21 +44,43 @@ import {
   type VerifiableCredential,
   type VerifiablePresentation,
 } from "@vgw/vc-kit";
+import { VGW_CONTEXT_URL } from "@vgw/vc-kit/contexts";
+import { ageCutoffDays } from "@vgw/zk/cutoff";
+import { normalizeFieldHex } from "@vgw/zk/encoding";
 import { inspect } from "../inspector/events";
-import type { CredentialRecord } from "./db";
+import type { CommitmentOpening, CredentialPayload, CredentialRecord } from "./db";
 
 /**
- * The protocol phases, in execution order, with UI labels. `onStep` fires
- * with each id as the phase begins so the Present page can render progress.
+ * The protocol phases for a tier, in execution order, with UI labels.
+ * `onStep` fires with each id as the phase begins so the Present page can
+ * render progress. Tier 2 adds the proving phase — by far the longest.
  */
-export const PRESENTATION_STEPS = [
-  { id: "deriving-presenter", label: "Deriving a pairwise presenter key" },
-  { id: "deriving-disclosure", label: "Deriving the selective disclosure" },
-  { id: "signing-presentation", label: "Signing the presentation" },
-  { id: "posting", label: "Sending it to the verifier" },
-] as const;
+export function presentationSteps(
+  tier: DisclosureTier,
+): { id: PresentationStep; label: string }[] {
+  return [
+    { id: "deriving-presenter", label: "Deriving a pairwise presenter key" },
+    {
+      id: "deriving-disclosure",
+      label:
+        tier === 2
+          ? "Deriving the commitment-only disclosure"
+          : "Deriving the selective disclosure",
+    },
+    ...(tier === 2
+      ? [{ id: "proving" as const, label: "Generating the zero-knowledge proof" }]
+      : []),
+    { id: "signing-presentation", label: "Signing the presentation" },
+    { id: "posting", label: "Sending it to the verifier" },
+  ];
+}
 
-export type PresentationStep = (typeof PRESENTATION_STEPS)[number]["id"];
+export type PresentationStep =
+  | "deriving-presenter"
+  | "deriving-disclosure"
+  | "proving"
+  | "signing-presentation"
+  | "posting";
 
 /** Result of {@link parsePresentParams} — a tiny state machine for /present. */
 export type PresentParams =
@@ -109,6 +137,8 @@ export function previewPresentationRequest(request: PresentationRequest): Verifi
 export interface CandidateCredential {
   record: CredentialRecord;
   vc: VerifiableCredential;
+  /** The decrypted vault envelope — carries the commitment opening (tier 2). */
+  payload: CredentialPayload;
   match: DcqlCredentialMatch;
 }
 
@@ -126,7 +156,7 @@ export interface QueryCandidates {
  * than silently presenting less than the verifier asked for.
  */
 export function matchCredentials(
-  decrypted: { record: CredentialRecord; vc: VerifiableCredential }[],
+  decrypted: { record: CredentialRecord; payload: CredentialPayload }[],
   request: PresentationRequest,
 ): QueryCandidates {
   const queries = request.dcql_query.credentials;
@@ -136,20 +166,108 @@ export function matchCredentials(
       `This wallet answers exactly one credential query per request; the verifier sent ${queries.length}`,
     );
   }
-  const candidates = decrypted.flatMap(({ record, vc }) => {
-    const match = matchDcqlCredentialQuery(vc, query);
-    return match === null ? [] : [{ record, vc, match }];
+  const candidates = decrypted.flatMap(({ record, payload }) => {
+    const match = matchDcqlCredentialQuery(payload.vc, query);
+    return match === null ? [] : [{ record, vc: payload.vc, payload, match }];
   });
   return { queryId: query.id, query, candidates };
 }
 
-export type DisclosureTier = 0 | 1;
+export type DisclosureTier = 0 | 1 | 2;
+
+/** Whether (and how) this candidate can answer the verifier's ZK predicate. */
+export type ZkAgeOption =
+  | {
+      available: true;
+      years: number;
+      /** Selective-disclosure pointer for the commitment claim. */
+      pointer: string;
+      /** The credential's signed commitment, canonical hex. */
+      commitment: string;
+      opening: CommitmentOpening;
+    }
+  | { available: false; reason: string };
+
+/**
+ * Tier 2 needs four things to line up: the verifier asked for a predicate
+ * (vgw_zk), the credential carries the committed birthdate, the vault kept
+ * the opening, and the opening matches the signed commitment. Anything
+ * missing gets a human reason for the tier picker to show.
+ */
+export function zkAgeOption(
+  query: DcqlCredentialQuery,
+  candidate: { vc: VerifiableCredential; payload: CredentialPayload },
+): ZkAgeOption {
+  const zk = query.vgw_zk;
+  if (zk === undefined) {
+    return { available: false, reason: "This verifier doesn't accept ZK proofs." };
+  }
+  const claim = query.claims?.find((c) => c.id === zk.claim_id);
+  if (claim === undefined) {
+    return { available: false, reason: "The verifier's ZK request is malformed." };
+  }
+  const commitment = claimValue(candidate.vc, claim.path);
+  if (typeof commitment !== "string") {
+    return {
+      available: false,
+      reason:
+        "This credential predates birthdate commitments — re-issue it at the Utopia DMV to unlock the ZK tier.",
+    };
+  }
+  const opening = candidate.payload.commitmentOpening;
+  if (opening === undefined) {
+    return {
+      available: false,
+      reason:
+        "The commitment's opening isn't in this wallet's vault — re-issue the credential to store one.",
+    };
+  }
+  let canonical: string;
+  try {
+    canonical = normalizeFieldHex(commitment);
+  } catch {
+    return { available: false, reason: "The credential's commitment is malformed." };
+  }
+  if (normalizeFieldHex(opening.commitment) !== canonical) {
+    return {
+      available: false,
+      reason: "The stored opening belongs to a different commitment — re-issue the credential.",
+    };
+  }
+  return {
+    available: true,
+    years: zk.years,
+    pointer: claimPathToPointer(claim.path),
+    commitment: canonical,
+    opening,
+  };
+}
+
+function claimValue(vc: VerifiableCredential, path: (string | number)[]): unknown {
+  let current: unknown = vc;
+  for (const segment of path) {
+    if (typeof current !== "object" || current === null) return undefined;
+    current = (current as Record<string | number, unknown>)[segment];
+  }
+  return current;
+}
 
 /** The bbs-2023 selective pointers a tier would disclose. */
-export function tierPointers(tier: DisclosureTier, match: DcqlCredentialMatch): string[] {
+export function tierPointers(
+  tier: DisclosureTier,
+  match: DcqlCredentialMatch,
+  zk?: ZkAgeOption,
+): string[] {
   if (tier === 0) {
     // One subtree pointer = the whole credentialSubject, id included.
     return ["/credentialSubject"];
+  }
+  if (tier === 2) {
+    if (zk === undefined || !zk.available) {
+      throw new Error("Tier 2 requires a satisfiable ZK option for this credential");
+    }
+    // Only the commitment — the proof carries the actual answer.
+    return [zk.pointer];
   }
   return match.claims.map((claim) => claim.pointer);
 }
@@ -176,6 +294,7 @@ export function disclosurePreview(
   tier: DisclosureTier,
   vc: VerifiableCredential,
   match: DcqlCredentialMatch,
+  zk?: ZkAgeOption,
 ): Record<string, unknown> {
   const subject = vc.credentialSubject;
   const disclosed: Record<string, unknown> = {};
@@ -183,6 +302,14 @@ export function disclosurePreview(
   // node-id disclosure) — list it truthfully regardless of tier.
   if (subject !== undefined && !Array.isArray(subject) && typeof subject["id"] === "string") {
     disclosed["subject id"] = subject["id"];
+  }
+  if (tier === 2) {
+    if (zk !== undefined && zk.available) {
+      disclosed["birthDateCommitment"] = zk.commitment;
+      disclosed[`age_over_${zk.years}`] =
+        "proven in zero knowledge — the verifier learns this one bit, never the date";
+    }
+    return disclosed;
   }
   if (tier === 1) {
     for (const claim of match.claims) {
@@ -252,6 +379,19 @@ async function runPresentCredential(
 ): Promise<PresentCredentialResult> {
   const { request, candidate, tier } = opts;
 
+  // Tier 2 preconditions resolve BEFORE any key material is derived.
+  const zk =
+    tier === 2
+      ? zkAgeOption(request.dcql_query.credentials[0] as DcqlCredentialQuery, candidate)
+      : undefined;
+  if (tier === 2 && (zk === undefined || !zk.available)) {
+    throw new Error(
+      zk !== undefined && !zk.available
+        ? `The ZK tier is not available: ${zk.reason}`
+        : "The ZK tier is not available for this request",
+    );
+  }
+
   // 1. Pairwise presenter key for THIS verifier only — a different DID at
   // every verifier, so presentations cannot be correlated by key.
   step("deriving-presenter");
@@ -276,7 +416,7 @@ async function runPresentCredential(
   // tier's pointers (plus the issuer's mandatory ones). Each derivation is
   // unlinkable to every other derivation of the same credential.
   step("deriving-disclosure");
-  const selectivePointers = tierPointers(tier, candidate.match);
+  const selectivePointers = tierPointers(tier, candidate.match, zk);
   const derived = await deriveCredential({
     verifiableCredential: candidate.vc,
     selectivePointers,
@@ -286,14 +426,50 @@ async function runPresentCredential(
     data: { tier, selectivePointers },
   });
 
+  // 2½ (tier 2 only). Prove the predicate over the committed birthdate. The
+  // proving stack — noir_js's ACVM and bb.js's barretenberg WASM — loads
+  // here and only here; today's cutoff makes the statement current, unlike
+  // the issuance-frozen age flags.
+  let zkAgeProof;
+  if (tier === 2 && zk !== undefined && zk.available) {
+    step("proving");
+    const { proveAgePredicate } = await import("@vgw/zk/prove");
+    const cutoffDays = ageCutoffDays(zk.years);
+    const { bundle, publicInputs, provingMs } = await proveAgePredicate({
+      dobDays: zk.opening.value,
+      blinding: zk.opening.blinding,
+      commitment: zk.commitment,
+      cutoffDays,
+      years: zk.years,
+    });
+    zkAgeProof = bundle;
+    inspect.emit({
+      label: "ZK age proof generated",
+      data: {
+        scheme: bundle.scheme,
+        circuit: bundle.circuit,
+        publicInputs,
+        cutoffDays,
+        years: zk.years,
+        provingMs,
+        proofBytes: Math.ceil((bundle.proof.length * 3) / 4),
+      },
+    });
+  }
+
   // 3. The presentation wrapper, signed by the presenter key over the
   // verifier's nonce (challenge) and identifier (domain) — replay armor.
+  // The zkAgeProof (if any) is INSIDE the signed payload: a VGW JSON-literal
+  // term, so tampering with the proof breaks the wrapper signature.
   step("signing-presentation");
   const presentation = await signPresentation({
     credentials: [derived],
     keyPair: presenter,
     challenge: request.nonce,
     domain: request.client_id,
+    ...(zkAgeProof !== undefined
+      ? { contexts: [VGW_CONTEXT_URL], properties: { zkAgeProof } }
+      : {}),
   });
   inspect.emit({
     label: "Presentation signed",
