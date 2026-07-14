@@ -172,8 +172,8 @@ export const TOUR_STOPS: readonly TourStop[] = [
     path: "/",
     title: "The exhibit",
     body: [
-      "“Across verifiers”, below your credential, shows both visits exactly as each verifier recorded them: two presenter identities, no overlap, unlinkable proofs.",
-      "The only thing that could ever join those records is a value you chose to disclose at both — and the shop got none. The shop can't find you in the rental's books; the rental can't find you in the shop's.",
+      "“Across verifiers”, below your credential, shows both visits exactly as each verifier recorded them: two presenter identities the cryptography can never join, and proofs derived fresh each time.",
+      "And one honest catch: you took the ZK tier at both counters, so both saw the same birthdate commitment — the seal never opens, but the seal itself is a value they could match. Your name went only to the rental counter. The exhibit draws the exact line between what could be joined and what never can.",
     ],
     ctaLabel: "Collect your stamps",
   },
@@ -182,7 +182,9 @@ export const TOUR_STOPS: readonly TourStop[] = [
     site: "landing",
     path: "/",
     title: "Passport, stamped",
-    body: ["Four sites visited, one passkey, and no way to follow you between them."],
+    body: [
+      "Four sites visited, one passkey — and an exhibit that tells the truth about what could follow you.",
+    ],
   },
 ];
 

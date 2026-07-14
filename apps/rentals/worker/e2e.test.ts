@@ -14,7 +14,10 @@
  * DID from live metadata, a credential issued by the real issuance flow
  * verifies through the real direct_post — and, for M5, that the SAME
  * credential presented to the two live verifiers leaves them nothing to
- * correlate: different pairwise presenter DIDs, disjoint disclosures.
+ * correlate: different pairwise presenter DIDs, disjoint disclosures. The
+ * one honest exception (found by the M6 guided tour): the ZK tier at BOTH
+ * verifiers shows both the same issuer-signed commitment — the seal never
+ * opens, but the seal itself is a joinable value, and the test pins that.
  */
 import { describe, expect, it } from "vitest";
 import { daysSinceEpoch, deriveHolderSeed, derivePresenterSeed, verifyCommitment } from "@vgw/keys";
@@ -314,8 +317,8 @@ describe.skipIf(process.env.VGW_E2E !== "1")("live end-to-end (DMV + rentals dev
     expect((status as SessionOutcome).reason).toMatch(/cutoff/);
   }, 120_000);
 
-  it("unlinkability: one credential, two live verifiers, nothing to join (needs the shop dev server too)", async () => {
-    const { vc } = await issueCredential({
+  it("unlinkability: one credential, two live verifiers, nothing to join — except the seal when both take the ZK tier (needs the shop dev server too)", async () => {
+    const { vc, opening } = await issueCredential({
       givenName: "Jamie",
       familyName: "Voss",
       birthDate: "1988-04-19",
@@ -379,5 +382,62 @@ describe.skipIf(process.env.VGW_E2E !== "1")("live end-to-end (DMV + rentals dev
         JSON.stringify(rentalsOutcome.disclosed[claim]) === JSON.stringify(value),
     );
     expect(sharedPairs).toEqual([]);
-  }, 120_000);
+
+    // 3. The honest exception (the guided tour's own path): the ZK tier at
+    // BOTH counters. Each proof binds to the same issuer-signed commitment
+    // and both verifiers must see it — the seal never opens, but the seal
+    // itself is the one stable value colluding verifiers could match. Pin
+    // it so the exhibit's claim stays true in both directions.
+    const zkShopSession = await createSession(SHOP);
+    const zkRentalsSession = await createSession(RENTALS);
+    const zkShop = await present({
+      vc,
+      session: zkShopSession,
+      verifierOrigin: new URL(SHOP).origin,
+      pointers: [`${LICENSE}/birthDateCommitment`],
+      zkAgeProof: (
+        await proveAgePredicate({
+          dobDays: opening.value,
+          blinding: opening.blinding,
+          commitment: opening.commitment,
+          cutoffDays: ageCutoffDays(18),
+          years: 18,
+          threads: 1,
+        })
+      ).bundle,
+    });
+    const zkRentals = await present({
+      vc,
+      session: zkRentalsSession,
+      verifierOrigin: new URL(RENTALS).origin,
+      pointers: [...IDENTITY_POINTERS, `${LICENSE}/birthDateCommitment`],
+      zkAgeProof: (
+        await proveAgePredicate({
+          dobDays: opening.value,
+          blinding: opening.blinding,
+          commitment: opening.commitment,
+          cutoffDays: ageCutoffDays(25),
+          years: 25,
+          threads: 1,
+        })
+      ).bundle,
+    });
+    expect(zkShop.response.status).toBe(200);
+    expect(zkRentals.response.status).toBe(200);
+    const zkShopOutcome = (await json<SessionStatus>(
+      await fetch(zkShopSession.status_url),
+    )) as SessionOutcome;
+    const zkRentalsOutcome = (await json<SessionStatus>(
+      await fetch(zkRentalsSession.status_url),
+    )) as SessionOutcome;
+    expect(zkShopOutcome.verdict).toBe("zk_pending");
+    expect(zkRentalsOutcome.verdict).toBe("zk_pending");
+    const zkSharedPairs = Object.entries(zkShopOutcome.disclosed).filter(
+      ([claim, value]) =>
+        typeof value !== "boolean" &&
+        claim in zkRentalsOutcome.disclosed &&
+        JSON.stringify(zkRentalsOutcome.disclosed[claim]) === JSON.stringify(value),
+    );
+    expect(zkSharedPairs.map(([claim]) => claim)).toEqual(["birthDateCommitment"]);
+  }, 180_000);
 });

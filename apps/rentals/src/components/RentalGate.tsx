@@ -282,9 +282,11 @@ function CorrelationPanel({ outcome }: { outcome: GateOutcome }) {
           <dt className="font-semibold text-ink">What COULD correlate</dt>
           <dd className="text-ink-dim">
             only the claim values above. This counter needed your name and license
-            number for the rental agreement; the shop asked for neither — so even
-            if the two compared notes, there is nothing to join on. Your wallet's
-            home screen shows the two verifiers' views side by side.
+            number for the rental agreement; the shop asked for neither. One
+            honest nuance: if you took the ZK tier at both, each saw the same
+            birthdate commitment — the seal never opens, but the seal itself is a
+            matchable value. Your wallet's home screen shows the two verifiers'
+            views side by side and draws that line exactly.
           </dd>
         </div>
       </dl>

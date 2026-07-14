@@ -203,7 +203,19 @@ Poseidon2(dob_days, blinding) == commitment   // public: the BBS-disclosed claim
           comparison now requires the same claim <em>and</em> the same
           non-boolean value — which is also the honest answer to "what could
           they learn by comparing notes?": only the values you chose to
-          disclose to both. The shop got none.
+          disclose to both.
+        </p>
+        <p>
+          The exhibit then earned its keep during the first full guided-tour
+          run: take the ZK tier at <em>both</em> verifiers and the panel
+          flags one shared value — the birthdate commitment itself. It has
+          to: each proof binds to the same issuer-signed seal, and both
+          verifiers must see that seal to verify against it. Neither learns
+          the date, but the seal is a stable value colluding verifiers could
+          match. The demo reports this instead of hiding it; making even the
+          seal presentation-unique (re-randomized commitments, or predicates
+          over hidden BBS messages) is the natural next step, and out of this
+          demo's scope.
         </p>
 
         <h2>What this demo doesn't claim</h2>

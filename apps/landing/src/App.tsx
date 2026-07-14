@@ -36,7 +36,13 @@ function Crest({ size = 88 }: { size?: number }) {
         );
       })}
       <circle cx="48" cy="41" r="10.5" stroke="currentColor" strokeWidth="2.4" />
-      <path d="M48 51.5v16M42.5 61h11" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      {/* Key shaft with two wards — teeth to one side so it reads as a key. */}
+      <path
+        d="M48 51.5v16M48 61h7M48 66.5h5"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -159,12 +165,14 @@ function StampedPage() {
         </div>
 
         <p className="mt-10 text-[15px] leading-relaxed text-ink-dim">
-          Four stamps, two verifiers — and no two of them can be linked to the
-          same traveler. Each site saw a different presenter key, every proof
-          was freshly derived, and the only values that could ever join their
-          records are the ones you chose to disclose. The shop got none. This
-          page, in your wallet's company, is the only place the whole journey
-          exists.
+          Four stamps, two verifiers. Each site saw a different presenter key
+          and a freshly derived proof — the cryptography itself gives them
+          nothing to join. What could join them is only what you chose to
+          disclose: a name and license number that went to the rental counter
+          alone, and — because you took the ZK tier at both — one sealed
+          birthdate commitment both saw. The seal never opens; your wallet's
+          exhibit draws that line exactly. This page, in your wallet's
+          company, is the only place the whole journey exists.
         </p>
 
         <div className="mt-8 flex flex-wrap gap-3">

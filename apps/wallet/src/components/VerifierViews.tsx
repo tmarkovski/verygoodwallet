@@ -154,7 +154,7 @@ export function VerifierViews() {
           <p className="mt-1 text-[12px] leading-relaxed text-ink-dim">
             The cryptography adds no handles — but these disclosed values
             appear in both verifiers' records, so colluding verifiers could
-            match them. Choosing a higher tier disclosed less.
+            match them.
           </p>
           <dl className="mt-2 space-y-1">
             {shared.map(({ claim, value }) => (
@@ -166,6 +166,15 @@ export function VerifierViews() {
               </div>
             ))}
           </dl>
+          {shared.some(({ claim }) => claim === "birthDateCommitment") && (
+            <p className="mt-2 border-t border-danger/20 pt-2 text-[12px] leading-relaxed text-ink-dim">
+              The birthdate commitment is the subtle one: use the ZK tier at
+              two verifiers and both see the same issuer-signed seal. Neither
+              ever learns the date inside — but the seal itself is a stable
+              value. Making even the seal presentation-unique is what full
+              anonymous credentials would add on top of this demo.
+            </p>
+          )}
         </div>
       )}
     </section>
