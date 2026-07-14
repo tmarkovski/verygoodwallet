@@ -7,15 +7,16 @@ GitHub Pages until cutover.
 
 | App | Where | Workflow |
 |-----|-------|----------|
-| Legacy CRA app (`web/`) | GitHub Pages at `verygoodwallet.com` | `.github/workflows/deploy.yml` (push to `main`) — **stays live until M6 cutover** |
-| New wallet (`apps/wallet/`) | Cloudflare Worker `vgw-wallet` at `vgw-wallet.<account>.workers.dev` | `.github/workflows/deploy-wallet.yml` (push to `main`, or manual `workflow_dispatch`) |
-| Utopia DMV issuer (`apps/dmv/`) | Cloudflare Worker `vgw-dmv` at `vgw-dmv.<account>.workers.dev` | `.github/workflows/deploy-dmv.yml` (push to `main`, or manual `workflow_dispatch`) |
-| The Nightcap verifier (`apps/shop/`) | Cloudflare Worker `vgw-shop` at `vgw-shop.<account>.workers.dev` | `.github/workflows/deploy-shop.yml` (push to `main`, or manual `workflow_dispatch`) |
-| Utopia Wheels verifier (`apps/rentals/`) | Cloudflare Worker `vgw-rentals` at `vgw-rentals.<account>.workers.dev` | `.github/workflows/deploy-rentals.yml` (push to `main`, or manual `workflow_dispatch`) |
-| Landing site (`apps/landing/`) | Cloudflare Worker `vgw-landing` at `vgw-landing.<account>.workers.dev` | `.github/workflows/deploy-landing.yml` (push to `main`, or manual `workflow_dispatch`) |
+| Legacy CRA app (`web/`) | GitHub Pages — **unreachable since the M6 apex cutover**; delete per PLAN.md M6 | `.github/workflows/deploy.yml` (push to `main`) |
+| Landing site (`apps/landing/`) | Cloudflare Worker `vgw-landing` at `verygoodwallet.com` (`www` redirects to the apex) | `.github/workflows/deploy-landing.yml` (push to `main`, or manual `workflow_dispatch`) |
+| New wallet (`apps/wallet/`) | Cloudflare Worker `vgw-wallet` at `wallet.verygoodwallet.com` | `.github/workflows/deploy-wallet.yml` (push to `main`, or manual `workflow_dispatch`) |
+| Utopia DMV issuer (`apps/dmv/`) | Cloudflare Worker `vgw-dmv` at `dmv.verygoodwallet.com` | `.github/workflows/deploy-dmv.yml` (push to `main`, or manual `workflow_dispatch`) |
+| The Nightcap verifier (`apps/shop/`) | Cloudflare Worker `vgw-shop` at `shop.verygoodwallet.com` | `.github/workflows/deploy-shop.yml` (push to `main`, or manual `workflow_dispatch`) |
+| Utopia Wheels verifier (`apps/rentals/`) | Cloudflare Worker `vgw-rentals` at `rentals.verygoodwallet.com` | `.github/workflows/deploy-rentals.yml` (push to `main`, or manual `workflow_dispatch`) |
 
-Until DNS moves and M6 cutover happens, the new wallet is only reachable on its
-`workers.dev` URL. The apex domain keeps pointing at GitHub Pages.
+The M6 cutover happened on 2026-07-14: the apex serves the landing site and
+each app its custom domain. The `vgw-*.<account>.workers.dev` hostnames still
+serve as aliases, but nothing links to them anymore.
 
 ## One-time Cloudflare setup
 
@@ -73,14 +74,13 @@ hosted on Cloudflare:
    breaks after migration, set the imported apex/`www` records to **DNS only**
    (grey cloud) so GitHub can renew its certificate.
 
-## Custom domains (M6 cutover)
+## Custom domains (M6 cutover, done 2026-07-14)
 
-At M6 cutover (not before — the apex still serves the legacy app). The apex
-goes to the **landing site**, and every app gets a subdomain:
+The apex went to the **landing site**, and every app got a subdomain:
 
 | Worker | Custom domain |
 |--------|---------------|
-| `vgw-landing` | `verygoodwallet.com` (and `www.verygoodwallet.com`) |
+| `vgw-landing` | `verygoodwallet.com` (`www` 301s to the apex via a dashboard redirect rule) |
 | `vgw-wallet` | `wallet.verygoodwallet.com` |
 | `vgw-dmv` | `dmv.verygoodwallet.com` |
 | `vgw-shop` | `shop.verygoodwallet.com` |
@@ -88,12 +88,14 @@ goes to the **landing site**, and every app gets a subdomain:
 
 1. The domains are declared in each app's `wrangler.jsonc` as
    `routes: [{ "pattern": "<hostname>", "custom_domain": true }]`, so every
-   deploy (re)attaches them — Cloudflare creates the DNS records and
-   certificates; no dashboard steps. In CI (non-interactive) wrangler
-   auto-overrides conflicting records, which is exactly what performs the
-   apex cutover: the first `vgw-landing` deploy after the routes land
-   replaces the imported GitHub Pages records atomically. The `workers.dev`
-   hostnames stay enabled alongside.
+   deploy (re)asserts them — Cloudflare creates the DNS records and
+   certificates; no per-deploy dashboard steps. One asymmetry learned at
+   cutover: the CI token (Workers Scripts → Edit only) can *create* a
+   custom-domain record on a free hostname (the four subdomains attached
+   from CI), but overriding *existing* DNS records — the imported GitHub
+   Pages records on the apex — fails; that one attach was done from the
+   dashboard. `workers_dev: true` is set explicitly, because declaring
+   routes otherwise disables the `workers.dev` alias on deploy.
 2. Delete `.github/workflows/deploy.yml`, the root `CNAME` file, and the
    GitHub Pages site settings; `web/` and `api/` are deleted per PLAN.md M6.
 3. Flip the origin constants baked into the builds, then redeploy everything:
@@ -116,21 +118,19 @@ the **Deploy Landing** workflow (`gh workflow run deploy-landing.yml`). It
 builds `@vgw/landing` and runs `wrangler deploy` in `apps/landing/` (config:
 `apps/landing/wrangler.jsonc`, assets-only Worker named `vgw-landing` — two
 static pages, no SPA fallback, no secrets). The links to the other sites come
-from build-time defaults in `apps/landing/src/origins.ts` (live Worker
-origins until the cutover flips them); override with `VITE_WALLET_ORIGIN` /
-`VITE_DMV_ORIGIN` / `VITE_SHOP_ORIGIN` / `VITE_RENTALS_ORIGIN` at build time
-if needed.
+from build-time defaults in `apps/landing/src/origins.ts` (the custom
+domains); override with `VITE_WALLET_ORIGIN` / `VITE_DMV_ORIGIN` /
+`VITE_SHOP_ORIGIN` / `VITE_RENTALS_ORIGIN` at build time if needed.
 
 ## Deploying the Utopia DMV issuer
 
 Every push to `main` deploys automatically using the workflow's default
-`wallet_origin` — the live wallet Worker URL (until the M6 apex cutover, the
-apex still serves the legacy app, which cannot handle offers). To deploy
-with a different wallet origin, run the **Deploy DMV** workflow manually:
+`wallet_origin` — the wallet's custom domain. To deploy with a different
+wallet origin, run the **Deploy DMV** workflow manually:
 Repo → Actions → *Deploy DMV* → *Run workflow* (branch `main`), or:
 
 ```sh
-gh workflow run deploy-dmv.yml -f wallet_origin=https://vgw-wallet.<account>.workers.dev
+gh workflow run deploy-dmv.yml -f wallet_origin=https://wallet.verygoodwallet.com
 ```
 
 The workflow bakes the origin into the client bundle (`VITE_WALLET_ORIGIN`,
@@ -148,8 +148,8 @@ Local alternative from `apps/dmv/` (set the wallet origin in both steps, for
 the same two reasons as above):
 
 ```sh
-VITE_WALLET_ORIGIN=https://vgw-wallet.<account>.workers.dev pnpm --filter @vgw/dmv build
-pnpm exec wrangler deploy --var WALLET_ORIGIN:https://vgw-wallet.<account>.workers.dev
+VITE_WALLET_ORIGIN=https://wallet.verygoodwallet.com pnpm --filter @vgw/dmv build
+pnpm exec wrangler deploy --var WALLET_ORIGIN:https://wallet.verygoodwallet.com
 # picks up dist/vgw_dmv/wrangler.json; `wrangler login` first
 ```
 
@@ -179,13 +179,13 @@ openssl rand -hex 32 | pnpm exec wrangler secret put TOKEN_SECRET
 Note: rotating `ISSUER_SEED` changes the issuer DID, invalidating previously
 issued credentials for verifiers pinned to the old DID.
 
-### Wallet origin (required until the M6 apex cutover)
+### Wallet origin
 
-There is **no production default** wallet origin: pre-cutover the apex serves
-the legacy GitHub Pages app, which has no `/offer` route, so any guessed
-default would produce offer links and QR codes that dead-end — and deliver
+The wallet origin must point at a host that actually serves the wallet app —
+a wrong value produces offer links and QR codes that dead-end, and delivers
 the PII-bearing offer code to the wrong host. Two settings, both handled by
-the Deploy DMV workflow's `wallet_origin` input:
+the Deploy DMV workflow's `wallet_origin` input (default:
+`https://wallet.verygoodwallet.com`):
 
 - `VITE_WALLET_ORIGIN` (build-time) — baked into the client bundle; the UI
   builds the visible link and QR from it. Without it the UI shows a
@@ -197,27 +197,23 @@ the Deploy DMV workflow's `wallet_origin` input:
   localhost caller's own origin is used instead.
 
 Both values are normalized to a bare origin; a value that isn't an absolute
-URL makes the Worker fail `/api/offers` loudly instead of falling back. After
-M6 puts the new wallet on the apex, `https://verygoodwallet.com` becomes the
-value to set (or a default can be reinstated then).
+URL makes the Worker fail `/api/offers` loudly instead of falling back.
 
 ### Custom domain
 
-`dmv.verygoodwallet.com` can be attached once DNS is on Cloudflare — this
-works **before** the apex cutover, since a subdomain doesn't collide with the
-legacy GitHub Pages site: Dashboard → Workers & Pages → `vgw-dmv` → Settings →
-Domains & Routes → *Add* → **Custom domain**.
+`dmv.verygoodwallet.com` is declared in `apps/dmv/wrangler.jsonc`
+(`routes`, `custom_domain: true`) and attaches on every deploy.
 
 ## Deploying The Nightcap verifier (shop)
 
 Every push to `main` deploys automatically using the workflow's defaults —
-the live wallet and DMV Worker URLs. To deploy with different origins, run
+the wallet and DMV custom domains. To deploy with different origins, run
 the **Deploy Shop** workflow manually:
 
 ```sh
 gh workflow run deploy-shop.yml \
-  -f wallet_origin=https://vgw-wallet.<account>.workers.dev \
-  -f dmv_origin=https://vgw-dmv.<account>.workers.dev
+  -f wallet_origin=https://wallet.verygoodwallet.com \
+  -f dmv_origin=https://dmv.verygoodwallet.com
 ```
 
 Same Worker + assets shape as the DMV (Hono OID4VP endpoints + static UI via

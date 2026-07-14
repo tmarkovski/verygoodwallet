@@ -16,7 +16,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -29,11 +29,21 @@ if (!existsSync(path.join(appDir, "dist/vgw_rentals/wrangler.json"))) {
   process.exit(1);
 }
 
+// The deploy snapshot carries the custom-domain routes, which make
+// `wrangler dev` simulate the production hostname instead of localhost.
+// Boot a routeless copy (same directory, so relative paths in the config
+// resolve identically) — script startup is what's under test, not routing.
+const smokeConfig = "dist/vgw_rentals/wrangler.smoke.json";
+const { routes: _routes, ...config } = JSON.parse(
+  readFileSync(path.join(appDir, "dist/vgw_rentals/wrangler.json"), "utf8"),
+);
+writeFileSync(path.join(appDir, smokeConfig), JSON.stringify(config, null, 2));
+
 // detached: the child leads its own process group, so killing -pid takes the
 // workerd children wrangler spawns down with it.
 const wrangler = spawn(
   "pnpm",
-  ["exec", "wrangler", "dev", "--port", String(port), "--inspector-port", "0"],
+  ["exec", "wrangler", "dev", "--config", smokeConfig, "--port", String(port), "--inspector-port", "0"],
   { cwd: appDir, detached: true, stdio: ["ignore", "pipe", "pipe"] },
 );
 

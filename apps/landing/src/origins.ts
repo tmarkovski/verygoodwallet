@@ -1,8 +1,8 @@
 /**
  * Where the demo's sites live, from the landing's point of view — the tour
  * launcher and the cast links. Build-time overrides (VITE_*_ORIGIN) win;
- * otherwise the sibling dev ports locally and the live Worker origins in
- * production. The M6 custom-domain cutover flips only the PROD table.
+ * otherwise the sibling dev ports locally and the custom domains in
+ * production (flipped at the M6 cutover).
  */
 
 import type { TourOrigins } from "@vgw/tour";
@@ -15,10 +15,10 @@ const DEV_ORIGINS = {
 } as const;
 
 const PROD_ORIGINS = {
-  wallet: "https://vgw-wallet.t7m8.workers.dev",
-  dmv: "https://vgw-dmv.t7m8.workers.dev",
-  shop: "https://vgw-shop.t7m8.workers.dev",
-  rentals: "https://vgw-rentals.t7m8.workers.dev",
+  wallet: "https://wallet.verygoodwallet.com",
+  dmv: "https://dmv.verygoodwallet.com",
+  shop: "https://shop.verygoodwallet.com",
+  rentals: "https://rentals.verygoodwallet.com",
 } as const;
 
 function origin(configured: string | undefined, fallback: string): string {

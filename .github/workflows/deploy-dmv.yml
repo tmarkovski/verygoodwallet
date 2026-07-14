@@ -13,12 +13,10 @@
 # Deploys on every push to main so the live Worker never lags the repo;
 # workflow_dispatch stays for redeploying with a different wallet_origin.
 #
-# wallet_origin must NEVER default to the apex domain: until the M6 cutover
-# it serves the legacy GitHub Pages app, which cannot handle credential
-# offers — that would bake dead-end, PII-leaking links and QR codes into
-# every offer this deploy issues. The default (used by push deploys and
-# prefilled on dispatch) is the KNOWN deployed wallet Worker URL (verified
-# live 2026-07-13); flip it to https://verygoodwallet.com at the M6 cutover.
+# wallet_origin default (used by push deploys and prefilled on dispatch) is
+# the wallet's custom domain, live since the M6 cutover (2026-07-14). It must
+# be an origin that serves the wallet app — a wrong value bakes dead-end,
+# PII-leaking links and QR codes into every offer this deploy issues.
 name: Deploy DMV
 
 on:
@@ -30,10 +28,10 @@ on:
       wallet_origin:
         description: >-
           Wallet origin that issued offer links/QR codes target (see
-          DEPLOY.md; switches to the apex domain at the M6 cutover).
+          DEPLOY.md).
         required: true
         type: string
-        default: https://vgw-wallet.t7m8.workers.dev
+        default: https://wallet.verygoodwallet.com
 
 concurrency:
   group: deploy-dmv
@@ -44,8 +42,8 @@ jobs:
     name: Build and deploy to Cloudflare Workers
     runs-on: ubuntu-latest
     env:
-      # Push events carry no inputs; fall back to the live wallet Worker.
-      WALLET_ORIGIN: ${{ inputs.wallet_origin || 'https://vgw-wallet.t7m8.workers.dev' }}
+      # Push events carry no inputs; fall back to the live wallet origin.
+      WALLET_ORIGIN: ${{ inputs.wallet_origin || 'https://wallet.verygoodwallet.com' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

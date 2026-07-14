@@ -19,6 +19,9 @@
   "main": "./worker/index.ts",
   // Custom domain attaches on every deploy (Cloudflare manages DNS + cert).
   "routes": [{ "pattern": "dmv.verygoodwallet.com", "custom_domain": true }],
+  // Explicit: declaring routes makes wrangler disable workers.dev by
+  // default; keep the alias hostname serving.
+  "workers_dev": true,
   "assets": {
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/oid4vci/*", "/.well-known/*", "/api/*"]

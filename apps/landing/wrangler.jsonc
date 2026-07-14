@@ -11,14 +11,16 @@
   "assets": {
     "directory": "./dist"
   },
-  // Custom domains attach on every deploy (Cloudflare manages DNS + certs).
-  // The apex attach is the M6 cutover moment: in CI (non-interactive),
-  // wrangler overrides the imported GitHub Pages records, so the apex flips
-  // from the legacy site to this Worker atomically.
-  "routes": [
-    { "pattern": "verygoodwallet.com", "custom_domain": true },
-    { "pattern": "www.verygoodwallet.com", "custom_domain": true }
-  ],
+  // The apex custom domain re-asserts on every deploy (Cloudflare manages
+  // DNS + cert). The initial attach — overriding the imported GitHub Pages
+  // records — was done from the dashboard: the CI token (Workers Scripts →
+  // Edit only) can create the domain record but not override existing DNS.
+  // www is NOT a Worker domain: a dashboard redirect rule 301s it to the
+  // apex, so declaring it here would clobber that rule on deploy.
+  "routes": [{ "pattern": "verygoodwallet.com", "custom_domain": true }],
+  // Explicit: declaring routes makes wrangler disable workers.dev by
+  // default; keep the alias hostname serving.
+  "workers_dev": true,
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,

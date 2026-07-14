@@ -10,11 +10,10 @@
 # DEPLOY.md) — without it the Worker signs state tokens with a public dev
 # constant.
 #
-# wallet_origin must NEVER default to the apex domain: until the M6 cutover
-# it serves the legacy GitHub Pages app, which has no /present route — that
-# would bake dead-end verification links and QR codes into every session.
-# Defaults are the KNOWN deployed Worker URLs; flip both to the custom
-# domains at the M6 cutover.
+# wallet_origin / dmv_origin defaults (used by push deploys and prefilled on
+# dispatch) are the custom domains, live since the M6 cutover (2026-07-14).
+# wallet_origin must be an origin that serves the wallet app — a wrong value
+# bakes dead-end verification links and QR codes into every session.
 name: Deploy Shop
 
 on:
@@ -26,17 +25,17 @@ on:
       wallet_origin:
         description: >-
           Wallet origin that verification links/QR codes target (see
-          DEPLOY.md; switches to the apex domain at the M6 cutover).
+          DEPLOY.md).
         required: true
         type: string
-        default: https://vgw-wallet.t7m8.workers.dev
+        default: https://wallet.verygoodwallet.com
       dmv_origin:
         description: >-
           Issuer origin whose metadata names the trusted issuer DID
           (vgw_issuer_did).
         required: true
         type: string
-        default: https://vgw-dmv.t7m8.workers.dev
+        default: https://dmv.verygoodwallet.com
 
 concurrency:
   group: deploy-shop
@@ -47,9 +46,9 @@ jobs:
     name: Build and deploy to Cloudflare Workers
     runs-on: ubuntu-latest
     env:
-      # Push events carry no inputs; fall back to the live Worker URLs.
-      WALLET_ORIGIN: ${{ inputs.wallet_origin || 'https://vgw-wallet.t7m8.workers.dev' }}
-      DMV_ORIGIN: ${{ inputs.dmv_origin || 'https://vgw-dmv.t7m8.workers.dev' }}
+      # Push events carry no inputs; fall back to the live origins.
+      WALLET_ORIGIN: ${{ inputs.wallet_origin || 'https://wallet.verygoodwallet.com' }}
+      DMV_ORIGIN: ${{ inputs.dmv_origin || 'https://dmv.verygoodwallet.com' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

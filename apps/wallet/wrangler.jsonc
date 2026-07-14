@@ -16,6 +16,10 @@
   // Note: passkeys are origin-bound, so wallets created on workers.dev do
   // not carry over to this hostname (see DEPLOY.md).
   "routes": [{ "pattern": "wallet.verygoodwallet.com", "custom_domain": true }],
+  // Explicit: declaring routes makes wrangler disable workers.dev by
+  // default; keep the alias serving — existing passkey wallets are bound to
+  // the workers.dev origin.
+  "workers_dev": true,
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,
