@@ -60,7 +60,6 @@ verygoodwallet/
 │   ├── zk/                # Noir circuit + prover/verifier wrappers (lazy-loaded WASM)
 │   ├── protocols/         # OID4VCI/OID4VP/DCQL message types + DC API adapter
 │   └── ui/                # shared components: credential cards, JSON inspector, consent UI
-├── web/                   # legacy CRA app — untouched until cutover, then deleted
 └── PLAN.md
 ```
 
@@ -160,8 +159,8 @@ Stretch (not in scope): longfellow-style ZK over ECDSA-signed mdocs.
   primary path anyway.
 - **bb.js WASM size** — lazy-load; ZK tier is progressive enhancement.
 - **BBS holder-binding nuance** — documented honestly in-app (see Identity & key design).
-- **DNS migration** — subdomains require moving `verygoodwallet.com` DNS to Cloudflare;
-  GitHub Pages deploy stays live until M6 cutover.
+- **DNS migration** — done at M6 cutover (2026-07-14): `verygoodwallet.com` DNS on
+  Cloudflare, custom domains attached, legacy GitHub Pages deploy deleted.
 
 ## Open items (non-blocking)
 

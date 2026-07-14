@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "dgSpecHash": "TKIJNriN0ec=",
+  "success": true,
+  "projectFilePath": "/Users/tm/git/tmarkovski/verygoodwallet/api/WebApi.csproj",
+  "expectedPackageFiles": [
+    "/Users/tm/.nuget/packages/microsoft.aspnetcore.spaservices.extensions/8.0.0/microsoft.aspnetcore.spaservices.extensions.8.0.0.nupkg.sha512",
+    "/Users/tm/.nuget/packages/microsoft.extensions.fileproviders.abstractions/8.0.0/microsoft.extensions.fileproviders.abstractions.8.0.0.nupkg.sha512",
+    "/Users/tm/.nuget/packages/microsoft.extensions.fileproviders.physical/8.0.0/microsoft.extensions.fileproviders.physical.8.0.0.nupkg.sha512",
+    "/Users/tm/.nuget/packages/microsoft.extensions.filesystemglobbing/8.0.0/microsoft.extensions.filesystemglobbing.8.0.0.nupkg.sha512",
+    "/Users/tm/.nuget/packages/microsoft.extensions.primitives/8.0.0/microsoft.extensions.primitives.8.0.0.nupkg.sha512",
+    "/Users/tm/.nuget/packages/microsoft.netcore.app.ref/8.0.22/microsoft.netcore.app.ref.8.0.22.nupkg.sha512",
+    "/Users/tm/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.22/microsoft.aspnetcore.app.ref.8.0.22.nupkg.sha512",
+    "/Users/tm/.nuget/packages/microsoft.netcore.app.host.osx-arm64/8.0.22/microsoft.netcore.app.host.osx-arm64.8.0.22.nupkg.sha512"
+  ],
+  "logs": []
+}

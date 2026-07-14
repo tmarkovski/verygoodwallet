@@ -1,13 +1,11 @@
 # Deployment Runbook
 
-How the new apps ship to Cloudflare Workers (static assets), and what stays on
-GitHub Pages until cutover.
+How the apps ship to Cloudflare Workers (static assets).
 
 ## Current state
 
 | App | Where | Workflow |
 |-----|-------|----------|
-| Legacy CRA app (`web/`) | GitHub Pages — **unreachable since the M6 apex cutover**; delete per PLAN.md M6 | `.github/workflows/deploy.yml` (push to `main`) |
 | Landing site (`apps/landing/`) | Cloudflare Worker `vgw-landing` at `verygoodwallet.com` (`www` redirects to the apex) | `.github/workflows/deploy-landing.yml` (push to `main`, or manual `workflow_dispatch`) |
 | New wallet (`apps/wallet/`) | Cloudflare Worker `vgw-wallet` at `wallet.verygoodwallet.com` | `.github/workflows/deploy-wallet.yml` (push to `main`, or manual `workflow_dispatch`) |
 | Utopia DMV issuer (`apps/dmv/`) | Cloudflare Worker `vgw-dmv` at `dmv.verygoodwallet.com` | `.github/workflows/deploy-dmv.yml` (push to `main`, or manual `workflow_dispatch`) |
@@ -64,15 +62,9 @@ pnpm dlx wrangler deploy   # uses wrangler.jsonc; `wrangler login` first
 Subdomains and the eventual apex cutover require `verygoodwallet.com` DNS to be
 hosted on Cloudflare:
 
-1. Add `verygoodwallet.com` as a zone in the Cloudflare dashboard. Cloudflare
-   imports existing records — verify the GitHub Pages records (apex A/AAAA to
-   GitHub Pages IPs, plus the `www`/CNAME setup if present) survive the import
-   so the legacy site stays up.
+1. Add `verygoodwallet.com` as a zone in the Cloudflare dashboard.
 2. Change the nameservers at the registrar to the pair Cloudflare assigns.
-3. Wait for the zone to go Active. The legacy GitHub Pages site continues to
-   serve the apex — nothing about it changes at this step. If Pages HTTPS
-   breaks after migration, set the imported apex/`www` records to **DNS only**
-   (grey cloud) so GitHub can renew its certificate.
+3. Wait for the zone to go Active. (Done 2026-07-14.)
 
 ## Custom domains (M6 cutover, done 2026-07-14)
 
@@ -96,8 +88,10 @@ The apex went to the **landing site**, and every app got a subdomain:
    Pages records on the apex — fails; that one attach was done from the
    dashboard. `workers_dev: true` is set explicitly, because declaring
    routes otherwise disables the `workers.dev` alias on deploy.
-2. Delete `.github/workflows/deploy.yml`, the root `CNAME` file, and the
-   GitHub Pages site settings; `web/` and `api/` are deleted per PLAN.md M6.
+2. The legacy GitHub Pages era is fully retired: `web/`, `api/`,
+   `.github/workflows/deploy.yml`, the root `CNAME` file, and the repo's
+   Pages site settings were all deleted after the apex was verified serving
+   `vgw-landing`.
 3. Flip the origin constants baked into the builds, then redeploy everything:
    - `wallet_origin` / `dmv_origin` defaults (inputs **and** job-level
      fallbacks) in `deploy-dmv.yml`, `deploy-shop.yml`, `deploy-rentals.yml` →
