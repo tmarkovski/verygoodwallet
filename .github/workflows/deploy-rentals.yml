@@ -1,0 +1,148 @@
+# Deploys the Utopia Wheels verifier (apps/rentals) to Cloudflare Workers.
+#
+# One deployable: the Hono Worker (OID4VP endpoints + VerificationSessions
+# Durable Object) plus the static rentals UI, built by @cloudflare/vite-plugin.
+# `vite build` writes a snapshot config to dist/vgw_rentals/wrangler.json
+# (plus a .wrangler/deploy redirect), which `wrangler deploy` picks up
+# automatically when run from apps/rentals.
+#
+# The Worker secret TOKEN_SECRET should be set after the first deploy (see
+# DEPLOY.md) — without it the Worker signs state tokens with a public dev
+# constant.
+#
+# wallet_origin must NEVER default to the apex domain: until the M6 cutover
+# it serves the legacy GitHub Pages app, which has no /present route — that
+# would bake dead-end verification links and QR codes into every session.
+# Defaults are the KNOWN deployed Worker URLs; flip both to the custom
+# domains at the M6 cutover.
+name: Deploy Rentals
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      wallet_origin:
+        description: >-
+          Wallet origin that verification links/QR codes target (see
+          DEPLOY.md; switches to the apex domain at the M6 cutover).
+        required: true
+        type: string
+        default: https://vgw-wallet.t7m8.workers.dev
+      dmv_origin:
+        description: >-
+          Issuer origin whose metadata names the trusted issuer DID
+          (vgw_issuer_did).
+        required: true
+        type: string
+        default: https://vgw-dmv.t7m8.workers.dev
+
+concurrency:
+  group: deploy-rentals
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy to Cloudflare Workers
+    runs-on: ubuntu-latest
+    env:
+      # Push events carry no inputs; fall back to the live Worker URLs.
+      WALLET_ORIGIN: ${{ inputs.wallet_origin || 'https://vgw-wallet.t7m8.workers.dev' }}
+      DMV_ORIGIN: ${{ inputs.dmv_origin || 'https://vgw-dmv.t7m8.workers.dev' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        # Version comes from the "packageManager" field in the root package.json.
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate origins
+        # Fail fast on anything that isn't a bare http(s) origin. Besides
+        # catching typos before they surface as a broken deployed UI, this
+        # keeps the values safe to interpolate into the wrangler command
+        # below (a bare origin has no path — no shell metacharacters).
+        run: |
+          node -e '
+            for (const name of ["WALLET_ORIGIN", "DMV_ORIGIN"]) {
+              const value = process.env[name];
+              let url;
+              try { url = new URL(value); } catch {
+                console.error(`${name} is not a URL: ${value}`);
+                process.exit(1);
+              }
+              if (url.protocol !== "https:" && url.protocol !== "http:") {
+                console.error(`${name} must be http(s): ${value}`);
+                process.exit(1);
+              }
+              if (url.origin !== value) {
+                console.error(
+                  `${name} must be a bare origin (no trailing slash or path); use: ${url.origin}`,
+                );
+                process.exit(1);
+              }
+            }
+          '
+
+      - name: Discover the trusted issuer DID from the DMV
+        # The Worker can't do this at runtime today: worker-to-worker fetches
+        # between *.workers.dev hosts on the same account don't route to the
+        # target Worker (Cloudflare platform restriction; service bindings
+        # are the sanctioned path, but they'd couple the two deploys). Same
+        # TLS trust model, evaluated at deploy time instead — which means
+        # rotating the DMV's ISSUER_SEED requires redeploying the rentals
+        # verifier. Runtime discovery still covers dev and post-M6 custom
+        # domains.
+        run: |
+          DID=$(curl -fsS "$DMV_ORIGIN/.well-known/openid-credential-issuer" \
+            | node -e '
+              let data = "";
+              process.stdin.on("data", (c) => (data += c));
+              process.stdin.on("end", () => {
+                const did = JSON.parse(data).vgw_issuer_did;
+                if (typeof did !== "string" || !/^did:key:[A-Za-z0-9]+$/.test(did)) {
+                  console.error(`DMV metadata carries no usable vgw_issuer_did: ${did}`);
+                  process.exit(1);
+                }
+                console.log(did);
+              });
+            ')
+          echo "TRUSTED_ISSUER_DID=$DID" >> "$GITHUB_ENV"
+          echo "Pinning trusted issuer: $DID"
+
+      - name: Build Rentals
+        run: pnpm --filter @vgw/rentals build
+        env:
+          # Bakes the wallet origin into the client bundle: the UI builds the
+          # visible link and QR code client-side, so the Worker var alone is
+          # not enough (it only covers the server's wallet_link fallback).
+          VITE_WALLET_ORIGIN: ${{ env.WALLET_ORIGIN }}
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/rentals
+          # Must be explicit: the action's package-manager detection only looks
+          # for a lockfile inside workingDirectory, finds none (pnpm-lock.yaml
+          # lives at the repo root), and falls back to npm — which cannot
+          # resolve the workspace:* deps in apps/rentals/package.json.
+          packageManager: pnpm
+          # Pin wrangler; the action's built-in default (3.90.0, Nov 2024) is
+          # stale and predates the compatibility_date in wrangler.jsonc.
+          wranglerVersion: "4.110.0"
+          # WALLET_ORIGIN covers the server-built wallet_link; DMV_ORIGIN is
+          # the runtime-discovery fallback; TRUSTED_ISSUER_DID (validated
+          # did:key, discovered above) is what verification actually pins.
+          command: deploy --var WALLET_ORIGIN:${{ env.WALLET_ORIGIN }} --var DMV_ORIGIN:${{ env.DMV_ORIGIN }} --var TRUSTED_ISSUER_DID:${{ env.TRUSTED_ISSUER_DID }}

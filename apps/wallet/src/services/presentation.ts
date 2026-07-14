@@ -18,9 +18,11 @@
  *   1 — selective disclosure: only the claims the verifier's DCQL query
  *       matched, plus the issuer's mandatory pointers. Unlinkable across
  *       presentations.
- *   2 — ZK predicate: disclose only the issuer-signed birthdate COMMITMENT
- *       and attach an UltraHonk proof that the committed date satisfies the
- *       verifier's age cutoff (vgw_zk in the DCQL query). The proof rides
+ *   2 — ZK predicate: disclose the claim_set holding the issuer-signed
+ *       birthdate COMMITMENT (only the commitment at the shop; the rentals
+ *       desk also requires name + license number alongside it) and attach an
+ *       UltraHonk proof that the committed date satisfies the verifier's age
+ *       cutoff (vgw_zk in the DCQL query). The proof rides
  *       inside the signed presentation as the VGW `zkAgeProof` JSON term,
  *       so the wrapper signature covers it. Requires the vault's stored
  *       commitment opening; the proving stack (noir_js + bb.js WASM) loads
@@ -182,6 +184,16 @@ export type ZkAgeOption =
       years: number;
       /** Selective-disclosure pointer for the commitment claim. */
       pointer: string;
+      /**
+       * Everything tier 2 discloses: the pointers of the query's claim_set
+       * that contains the commitment. The verifier's own claim_sets define
+       * what must accompany the proof — for the shop that set is just the
+       * commitment; the rentals verifier also requires the driver's name and
+       * license number alongside it.
+       */
+      pointers: string[];
+      /** Claim label → value for the consent preview, in claim-set order. */
+      disclosed: Record<string, unknown>;
       /** The credential's signed commitment, canonical hex. */
       commitment: string;
       opening: CommitmentOpening;
@@ -234,10 +246,37 @@ export function zkAgeOption(
       reason: "The stored opening belongs to a different commitment — re-issue the credential.",
     };
   }
+
+  // The tier-2 disclosure is the claim_set the commitment belongs to — the
+  // verifier's declaration of what must ride alongside the proof. Every
+  // claim in it must exist on this credential, or the set is unanswerable.
+  const setRefs =
+    query.claim_sets?.find((set) => set.includes(zk.claim_id)) ?? [zk.claim_id];
+  const pointers: string[] = [];
+  const disclosed: Record<string, unknown> = {};
+  for (const ref of setRefs) {
+    const setClaim = ref === zk.claim_id ? claim : query.claims?.find((c) => c.id === ref);
+    if (setClaim === undefined) {
+      return { available: false, reason: "The verifier's ZK request is malformed." };
+    }
+    const value = claimValue(candidate.vc, setClaim.path);
+    if (value === undefined) {
+      const label = String(setClaim.path[setClaim.path.length - 1]);
+      return {
+        available: false,
+        reason: `This credential is missing "${label}", which the verifier requires alongside the proof.`,
+      };
+    }
+    pointers.push(claimPathToPointer(setClaim.path));
+    disclosed[String(setClaim.path[setClaim.path.length - 1])] = value;
+  }
+
   return {
     available: true,
     years: zk.years,
     pointer: claimPathToPointer(claim.path),
+    pointers,
+    disclosed,
     commitment: canonical,
     opening,
   };
@@ -266,8 +305,10 @@ export function tierPointers(
     if (zk === undefined || !zk.available) {
       throw new Error("Tier 2 requires a satisfiable ZK option for this credential");
     }
-    // Only the commitment — the proof carries the actual answer.
-    return [zk.pointer];
+    // The commitment's claim_set — the proof carries the actual answer, and
+    // the set names whatever the verifier requires alongside it (nothing but
+    // the commitment at the shop; name + license number at the rentals desk).
+    return zk.pointers;
   }
   return match.claims.map((claim) => claim.pointer);
 }
@@ -305,7 +346,7 @@ export function disclosurePreview(
   }
   if (tier === 2) {
     if (zk !== undefined && zk.available) {
-      disclosed["birthDateCommitment"] = zk.commitment;
+      Object.assign(disclosed, zk.disclosed);
       disclosed[`age_over_${zk.years}`] =
         "proven in zero knowledge — the verifier learns this one bit, never the date";
     }

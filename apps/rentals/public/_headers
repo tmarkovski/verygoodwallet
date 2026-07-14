@@ -1,0 +1,9 @@
+# Cross-origin isolation: gives the page SharedArrayBuffer, so bb.js runs
+# its multithreaded WASM for the tier-2 UltraHonk verification (measured
+# live on the shop: ~13 s single-threaded vs ~2 s with threads). Safe here —
+# the rentals UI is self-contained (QR codes are data: URLs) and its API
+# calls are same-origin. Applies to static assets only; the Worker's
+# /oid4vp/* and /api/* responses are unaffected.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp

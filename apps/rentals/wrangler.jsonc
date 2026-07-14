@@ -1,11 +1,12 @@
-// Cloudflare Workers configuration for The Nightcap verifier (vgw-shop).
+// Cloudflare Workers configuration for the Utopia Wheels verifier
+// (vgw-rentals).
 //
 // The Worker serves the OID4VP verifier endpoints; everything else falls
 // through to the static React UI (SPA fallback). Verification sessions live
 // in a SQLite-backed Durable Object (available on the Workers Free plan) —
-// the one piece of server-side state in the demo, needed because the wallet
-// direct_posts the presentation from a different device than the shop tab
-// that polls for the outcome.
+// same design as the shop verifier: the wallet direct_posts the
+// presentation from a different device than the rentals tab that polls for
+// the outcome.
 //
 // Secrets/vars (see DEPLOY.md):
 //   TOKEN_SECRET        wrangler secret put TOKEN_SECRET   (HMAC for state tokens)
@@ -13,7 +14,7 @@
 //   DMV_ORIGIN          var — issuer origin to discover the trusted issuer DID from
 //   TRUSTED_ISSUER_DID  var (optional) — pin the issuer DID directly, skips discovery
 {
-  "name": "vgw-shop",
+  "name": "vgw-rentals",
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
   "main": "./worker/index.ts",

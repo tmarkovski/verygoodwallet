@@ -1,13 +1,18 @@
 /**
- * IndexedDB persistence ('vgw' database, v1) via `idb`.
+ * IndexedDB persistence ('vgw' database, v2) via `idb`.
  *
- * - `accounts`   — passkey accounts. The credential id and PRF capability are
- *                  plaintext; a `simulatedSecret` exists only for accounts
- *                  whose authenticator lacks PRF support.
- * - `credentials`— stored credentials. `payload` is the `encryptJson` output
- *                  of the full `{ vc, commitmentOpening? }` envelope under
- *                  the vault key; only `meta` is plaintext, for list
- *                  rendering while the wallet is locked.
+ * - `accounts`     — passkey accounts. The credential id and PRF capability
+ *                    are plaintext; a `simulatedSecret` exists only for
+ *                    accounts whose authenticator lacks PRF support.
+ * - `credentials`  — stored credentials. `payload` is the `encryptJson`
+ *                    output of the full `{ vc, commitmentOpening? }` envelope
+ *                    under the vault key; only `meta` is plaintext, for list
+ *                    rendering while the wallet is locked.
+ * - `presentations`— the presentation log (v2, for the cross-verifier
+ *                    exhibit): who was shown what, at which tier, under
+ *                    which pairwise presenter DID. Fully encrypted — the log
+ *                    names verifiers and disclosed values, so it is exactly
+ *                    as sensitive as the credentials themselves.
  */
 
 import { openDB, deleteDB, type DBSchema, type IDBPDatabase } from "idb";
@@ -53,6 +58,29 @@ export interface CredentialRecord {
 
 export type NewCredentialRecord = Omit<CredentialRecord, "id">;
 
+/** The JSON envelope encrypted into `PresentationRecord.payload`. */
+export interface PresentationLogPayload {
+  verifierOrigin: string;
+  verifierName: string;
+  /** The pairwise presenter DID this (and only this) verifier saw. */
+  presenterDid: string;
+  tier: 0 | 1 | 2;
+  /** Claim → value exactly as consented (the disclosure preview). */
+  disclosed: Record<string, unknown>;
+  /** Present for tier 2: the predicate proven in zero knowledge. */
+  zkYears?: number;
+  at: number;
+}
+
+export interface PresentationRecord {
+  id: number;
+  accountId: number;
+  /** `encryptJson(vaultKey, PresentationLogPayload)` output. */
+  payload: string;
+}
+
+export type NewPresentationRecord = Omit<PresentationRecord, "id">;
+
 interface VgwSchema extends DBSchema {
   accounts: { key: number; value: AccountRecord };
   credentials: {
@@ -60,23 +88,37 @@ interface VgwSchema extends DBSchema {
     value: CredentialRecord;
     indexes: { accountId: number };
   };
+  presentations: {
+    key: number;
+    value: PresentationRecord;
+    indexes: { accountId: number };
+  };
 }
 
 const DB_NAME = "vgw";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase<VgwSchema>> | null = null;
 
 function getDb(): Promise<IDBPDatabase<VgwSchema>> {
   if (dbPromise === null) {
     const promise = openDB<VgwSchema>(DB_NAME, DB_VERSION, {
-      upgrade(db) {
-        db.createObjectStore("accounts", { keyPath: "id", autoIncrement: true });
-        const credentials = db.createObjectStore("credentials", {
-          keyPath: "id",
-          autoIncrement: true,
-        });
-        credentials.createIndex("accountId", "accountId");
+      upgrade(db, oldVersion) {
+        if (oldVersion < 1) {
+          db.createObjectStore("accounts", { keyPath: "id", autoIncrement: true });
+          const credentials = db.createObjectStore("credentials", {
+            keyPath: "id",
+            autoIncrement: true,
+          });
+          credentials.createIndex("accountId", "accountId");
+        }
+        if (oldVersion < 2) {
+          const presentations = db.createObjectStore("presentations", {
+            keyPath: "id",
+            autoIncrement: true,
+          });
+          presentations.createIndex("accountId", "accountId");
+        }
       },
       // Another tab requested an upgrade or deleteDB. idb only auto-closes a
       // connection when `blocking` is provided, so without this a background
@@ -143,6 +185,21 @@ export async function getCredential(id: number): Promise<CredentialRecord | unde
 export async function deleteCredential(id: number): Promise<void> {
   const db = await getDb();
   await db.delete("credentials", id);
+}
+
+export async function addPresentation(
+  input: NewPresentationRecord,
+): Promise<PresentationRecord> {
+  const db = await getDb();
+  const id = await db.add("presentations", input as PresentationRecord);
+  return { ...input, id };
+}
+
+export async function listPresentations(
+  accountId: number,
+): Promise<PresentationRecord[]> {
+  const db = await getDb();
+  return db.getAllFromIndex("presentations", "accountId", accountId);
 }
 
 /**

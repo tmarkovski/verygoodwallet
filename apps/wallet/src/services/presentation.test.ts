@@ -76,6 +76,42 @@ const ZK_DCQL: DcqlQuery = {
   ],
 };
 
+/**
+ * The rentals M5 shape: identity claims required alongside every age route,
+ * so the ZK claim_set carries name + license number WITH the commitment.
+ */
+const RENTAL_ZK_DCQL: DcqlQuery = {
+  credentials: [
+    {
+      id: "utopia_dl_rental",
+      format: "ldp_vc",
+      meta: {
+        type_values: [["VerifiableCredential", "Iso18013DriversLicenseCredential"]],
+      },
+      claims: [
+        { id: "given_name", path: ["credentialSubject", "driversLicense", "given_name"] },
+        { id: "family_name", path: ["credentialSubject", "driversLicense", "family_name"] },
+        {
+          id: "document_number",
+          path: ["credentialSubject", "driversLicense", "document_number"],
+        },
+        { id: "age_flag", path: ["credentialSubject", "driversLicense", "age_over_25"] },
+        { id: "dob", path: ["credentialSubject", "driversLicense", "birth_date"] },
+        {
+          id: "commitment",
+          path: ["credentialSubject", "driversLicense", "birthDateCommitment"],
+        },
+      ],
+      claim_sets: [
+        ["given_name", "family_name", "document_number", "age_flag"],
+        ["given_name", "family_name", "document_number", "dob"],
+        ["given_name", "family_name", "document_number", "commitment"],
+      ],
+      vgw_zk: { predicate: "age_over", years: 25, claim_id: "commitment" },
+    },
+  ],
+};
+
 function request(overrides?: Partial<PresentationRequest>): PresentationRequest {
   return {
     response_type: "vp_token",
@@ -247,6 +283,58 @@ describe("zkAgeOption", () => {
     expect(option.years).toBe(18);
     expect(option.pointer).toBe("/credentialSubject/driversLicense/birthDateCommitment");
     expect(option.commitment).toBe(opening.commitment);
+    // The shop's ZK claim_set is the commitment alone.
+    expect(option.pointers).toEqual([option.pointer]);
+    expect(option.disclosed).toEqual({ birthDateCommitment: opening.commitment });
+  });
+
+  it("rentals shape: the ZK claim_set carries identity claims alongside the commitment", () => {
+    const option = zkAgeOption(RENTAL_ZK_DCQL.credentials[0]!, {
+      vc: zkVc,
+      payload: { vc: zkVc, commitmentOpening: opening },
+    });
+    expect(option.available).toBe(true);
+    if (!option.available) return;
+    expect(option.years).toBe(25);
+    expect(option.pointers).toEqual([
+      "/credentialSubject/driversLicense/given_name",
+      "/credentialSubject/driversLicense/family_name",
+      "/credentialSubject/driversLicense/document_number",
+      "/credentialSubject/driversLicense/birthDateCommitment",
+    ]);
+    expect(option.disclosed).toEqual({
+      given_name: "JAMIE",
+      family_name: "VOSS",
+      document_number: "F111222333",
+      birthDateCommitment: opening.commitment,
+    });
+    // Tier 2 discloses exactly that set; the preview names the proven bit.
+    const { candidates } = matchCredentials(
+      [{ record: record(1), payload: { vc: zkVc, commitmentOpening: opening } }],
+      request({ dcql_query: RENTAL_ZK_DCQL }),
+    );
+    expect(tierPointers(2, candidates[0]!.match, option)).toEqual(option.pointers);
+    const preview = disclosurePreview(2, zkVc, candidates[0]!.match, option);
+    expect(preview["given_name"]).toBe("JAMIE");
+    expect(preview["age_over_25"]).toMatch(/zero knowledge/);
+    expect(preview["birth_date"]).toBeUndefined();
+  });
+
+  it("is unavailable when the credential lacks a claim the ZK set requires", () => {
+    const query = structuredClone(RENTAL_ZK_DCQL.credentials[0]!);
+    query.claims!.push({
+      id: "middle_name",
+      path: ["credentialSubject", "driversLicense", "middle_name"],
+    });
+    query.claim_sets = [["middle_name", "commitment"]];
+    const option = zkAgeOption(query, {
+      vc: zkVc,
+      payload: { vc: zkVc, commitmentOpening: opening },
+    });
+    expect(option).toMatchObject({
+      available: false,
+      reason: expect.stringMatching(/middle_name/),
+    });
   });
 
   it("is unavailable when the verifier didn't ask for a predicate", () => {
@@ -516,6 +604,67 @@ describe("presentCredential", () => {
       };
       expect(bundle.years).toBe(18);
       expect(bundle.commitment).toBe(opening.commitment);
+      const zkResult = await verifyAgeProof({
+        proof: bundle.proof,
+        commitment: license["birthDateCommitment"] as string,
+        cutoffDays: bundle.cutoffDays,
+      });
+      expect(zkResult.verified).toBe(true);
+    },
+    120_000,
+  );
+
+  it(
+    "tier 2 at the rentals desk: identity claims ride alongside the commitment + proof",
+    async () => {
+      const req = request({ dcql_query: RENTAL_ZK_DCQL });
+      const { queryId, candidates } = matchCredentials(
+        [{ record: record(1), payload: { vc: zkVc, commitmentOpening: opening } }],
+        req,
+      );
+      const calls = capturePost();
+      await presentCredential({
+        request: req,
+        queryId,
+        candidate: candidates[0]!,
+        tier: 2,
+        masterSecret: MASTER_SECRET.slice(),
+      });
+
+      const vpToken = JSON.parse(calls[0]!.body.get("vp_token")!) as Record<
+        string,
+        VerifiablePresentation[]
+      >;
+      const vp = vpToken["utopia_dl_rental"]![0]!;
+      const verification = await verifyPresentation({
+        presentation: vp,
+        challenge: req.nonce,
+        domain: req.client_id,
+        expectedIssuer: issuer.controller,
+      });
+      expect(verification.error).toBeUndefined();
+      expect(verification.verified).toBe(true);
+
+      // The whole ZK claim_set is disclosed — and nothing outside it.
+      const subject = verification.credentials[0]?.credential
+        .credentialSubject as Record<string, unknown>;
+      const license = subject["driversLicense"] as Record<string, unknown>;
+      expect(license["given_name"]).toBe("JAMIE");
+      expect(license["family_name"]).toBe("VOSS");
+      expect(license["document_number"]).toBe("F111222333");
+      expect(license["birthDateCommitment"]).toBe(opening.commitment);
+      expect(license["birth_date"]).toBeUndefined();
+      expect(license["age_over_25"]).toBeUndefined();
+
+      // The proof is for the rentals threshold and verifies against the
+      // disclosed commitment.
+      const bundle = vp["zkAgeProof"] as {
+        proof: string;
+        cutoffDays: number;
+        years: number;
+        commitment: string;
+      };
+      expect(bundle.years).toBe(25);
       const zkResult = await verifyAgeProof({
         proof: bundle.proof,
         commitment: license["birthDateCommitment"] as string,

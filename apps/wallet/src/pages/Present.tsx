@@ -31,6 +31,7 @@ import {
   type ZkAgeOption,
 } from "../services/presentation";
 import { listCredentials, type CredentialPayload } from "../services/db";
+import { recordPresentation } from "../services/activity";
 import { inspect } from "../inspector/events";
 import { InlineUnlock } from "../components/InlineUnlock";
 import { StepList } from "../components/StepList";
@@ -59,12 +60,12 @@ function tierRows(zk: ZkAgeOption | null): {
     zk !== null && zk.available
       ? {
           tier: 2,
-          title: "Prove it without revealing anything",
-          detail: `A zero-knowledge proof that you're over ${zk.years}, computed against today's cutoff. The verifier sees an opaque commitment and one bit — proving takes a few seconds in this tab.`,
+          title: "Prove the age, never the date",
+          detail: `A zero-knowledge proof that you're over ${zk.years}, computed against today's cutoff. The verifier gets the claims listed below plus that one proven bit — your birthdate never leaves this wallet. Proving takes a few seconds in this tab.`,
         }
       : {
           tier: 2,
-          title: "Prove it without revealing anything",
+          title: "Prove the age, never the date",
           disabled: true,
           detail:
             zk?.reason ??
@@ -206,6 +207,29 @@ export function Present() {
         signal: lockSignal ?? undefined,
         onStep: setStep,
       });
+      // Log the ceremony for the cross-verifier exhibit (encrypted, local).
+      // Best-effort: the verifier already has its answer, so a storage
+      // failure must not turn a successful presentation into an error.
+      if (preview !== null && account !== null && vaultKey !== null) {
+        const holder = result.presentation.holder;
+        try {
+          await recordPresentation({
+            accountId: account.id,
+            vaultKey,
+            entry: {
+              verifierOrigin: preview.verifierOrigin,
+              verifierName: preview.verifierName,
+              presenterDid: typeof holder === "string" ? holder : "",
+              tier,
+              disclosed: disclosurePreview(tier, selected.vc, selected.match, zk ?? undefined),
+              ...(tier === 2 && zk !== null && zk.available ? { zkYears: zk.years } : {}),
+              at: Date.now(),
+            },
+          });
+        } catch {
+          // Exhibit only — never fail the share over it.
+        }
+      }
       setOutcome(result);
     } catch (err) {
       setError(describeError(err));

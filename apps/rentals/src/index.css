@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+/*
+ * Utopia Wheels design tokens — "ROUTE MARKER".
+ *
+ * Deliberately NOT Intaglio (see DESIGN.md: verifier demo sites are third
+ * parties in the story and must not reuse the wallet's civic identity), and
+ * deliberately the demo's one LIGHT app. Concept: official road furniture —
+ * the paper road map, the highway guide sign, the painted lane stripe.
+ * Guide-sign green carries the brand and the actions; lane-stripe yellow is
+ * a highlight ink, never text; the "verified" moment is a green sign panel
+ * with retroreflective white lettering.
+ *
+ * The Tailwind utility NAMES mirror the other apps (bg-canvas, text-ink,
+ * bg-accent, text-ok…) so components read identically across the monorepo —
+ * only the values differ. Here accent = guide-sign green, stripe = lane
+ * yellow (backgrounds/chips only: 1.7:1 as text — never write with it).
+ */
+
+:root {
+  color-scheme: light;
+
+  --uw-canvas: #f2efe4;
+  --uw-surface: #faf8ee;
+  --uw-raised: #ffffff;
+  --uw-overlay: rgb(29 43 37 / 0.45);
+  --uw-line: rgb(29 43 37 / 0.14);
+  --uw-line-strong: rgb(29 43 37 / 0.28);
+  --uw-ink: #1d2b25;
+  --uw-ink-dim: #44544b;
+  --uw-muted: #68786d;
+  /* Highway guide-sign green — brand + call to action. White on it clears 6.7:1. */
+  --uw-accent: #00694f;
+  --uw-accent-soft: rgb(0 105 79 / 0.1);
+  --uw-accent-contrast: #ffffff;
+  --uw-danger: #9c2f2f;
+  --uw-danger-soft: rgb(156 47 47 / 0.1);
+  /* The verified moment is the same sign green — one color means "go". */
+  --uw-ok: #00694f;
+  --uw-ok-soft: rgb(0 105 79 / 0.1);
+  /* Lane-stripe yellow: chips and rules only. Ink on it clears 8:1. */
+  --uw-stripe: #f2b705;
+  --uw-stripe-soft: rgb(242 183 5 / 0.18);
+}
+
+@theme {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+  /* Road-sign condensed for the wordmark and sign panels (FHWA energy). */
+  --font-display:
+    "Avenir Next Condensed", "Helvetica Neue Condensed", "Arial Narrow",
+    "Roboto Condensed", "Segoe UI", sans-serif;
+
+  --animate-rise: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade: fade 0.3s ease both;
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--uw-canvas);
+  --color-surface: var(--uw-surface);
+  --color-raised: var(--uw-raised);
+  --color-overlay: var(--uw-overlay);
+  --color-line: var(--uw-line);
+  --color-line-strong: var(--uw-line-strong);
+  --color-ink: var(--uw-ink);
+  --color-ink-dim: var(--uw-ink-dim);
+  --color-muted: var(--uw-muted);
+  --color-accent: var(--uw-accent);
+  --color-accent-soft: var(--uw-accent-soft);
+  --color-accent-contrast: var(--uw-accent-contrast);
+  --color-danger: var(--uw-danger);
+  --color-danger-soft: var(--uw-danger-soft);
+  --color-ok: var(--uw-ok);
+  --color-ok-soft: var(--uw-ok-soft);
+  --color-stripe: var(--uw-stripe);
+  --color-stripe-soft: var(--uw-stripe-soft);
+}
+
+body {
+  background-color: var(--uw-canvas);
+  color: var(--uw-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+}
+
+::selection {
+  background-color: var(--uw-accent);
+  color: var(--uw-accent-contrast);
+}
+
+:focus-visible {
+  outline: 2px solid var(--uw-accent);
+  outline-offset: 2px;
+}
+
+/*
+ * .center-line — the painted lane divider: yellow dashes down a strip of
+ * asphalt. Section divider; pure decoration.
+ */
+.center-line {
+  height: 6px;
+  border-radius: 3px;
+  background-color: #26302a;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--uw-stripe) 0 22px,
+    transparent 22px 40px
+  );
+  background-size: 100% 2px;
+  background-position: center;
+  background-repeat: repeat-x;
+}
+
+/*
+ * .guide-sign — the highway guide-sign panel: sign green with the inset
+ * retroreflective white edge line real signs carry. Reserved for the
+ * verified moment and the wordmark plate.
+ */
+.guide-sign {
+  background-color: var(--uw-accent);
+  color: var(--uw-accent-contrast);
+  border-radius: 0.9rem;
+  box-shadow:
+    inset 0 0 0 2px rgb(255 255 255 / 0.85),
+    inset 0 0 0 5px var(--uw-accent);
+}
+
+/*
+ * .mile-chip — mile-marker chip: lane-stripe yellow plate with asphalt ink.
+ * Yellow is a background here, never a text color.
+ */
+.mile-chip {
+  background-color: var(--uw-stripe);
+  color: var(--uw-ink);
+  border-radius: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Keep the rise/fade system, but stand still for reduced-motion users. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-fade {
+    animation: none;
+  }
+}

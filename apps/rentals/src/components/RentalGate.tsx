@@ -1,22 +1,18 @@
 /**
- * The age-verification panel: one verification session from start to
+ * The driver-verification panel: one verification session from start to
  * outcome.
  *
- * Sequence: create a session on the Worker → attempt the browser's Digital
- * Credentials API (the exhibit: web wallets can't answer it yet, so its
- * outcome is explained rather than hidden) → fall back to the OID4VP wallet
- * link + QR → poll the session until the wallet's direct_post lands →
- * render the verdict and, honestly, exactly what this shop learned.
+ * Sequence: create a session on the Worker → show the OID4VP wallet link +
+ * QR (the DC API exhibit lives at the shop; this counter goes straight to
+ * the fallback that actually works) → poll the session until the wallet's
+ * direct_post lands → render the verdict, exactly what this counter
+ * learned, and the cross-verifier exhibit: which of it could ever be
+ * correlated with another verifier's records, and which of it cannot.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
-import {
-  requestDcApiCredential,
-  walletPresentLink,
-  type DcApiOutcome,
-  type PresentationRequest,
-} from "@vgw/protocols";
+import { walletPresentLink, type PresentationRequest } from "@vgw/protocols";
 import { clientWalletOrigin } from "../walletOrigin";
 
 /** Mirrors the Worker's VerificationSessionBody (wire contract, not import). */
@@ -63,16 +59,16 @@ export interface ZkVerification {
 }
 
 /**
- * The tier-2 handover: the Worker verified signatures, issuer, and the
- * proof's public-input bindings, then recorded the proof for the shop's own
- * client to check — bb.js can't run on the free-tier edge runtime (no
- * runtime WASM compilation, 3 MiB script cap), and pretending otherwise
- * would defeat the exhibit. A self-hosted verifier would make this exact
- * call server-side; the e2e suite does, in Node.
+ * The tier-2 handover: the Worker verified signatures, issuer, identity
+ * claims, and the proof's public-input bindings, then recorded the proof
+ * for the rentals client to check — bb.js can't run on the free-tier edge
+ * runtime (no runtime WASM compilation, 3 MiB script cap), and pretending
+ * otherwise would defeat the exhibit. A self-hosted verifier would make
+ * this exact call server-side; the e2e suite does, in Node.
  */
 async function verifyZkPayload(zk: ZkPayload): Promise<ZkVerification> {
   try {
-    // The /verify subpath keeps the shop's build free of the PROVING stack
+    // The /verify subpath keeps this build free of the PROVING stack
     // (noir_js + ACVM WASM) — verifiers verify, wallets prove.
     const { verifyAgeProof } = await import("@vgw/zk/verify");
     const result = await verifyAgeProof({
@@ -118,7 +114,7 @@ const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 type Phase =
   | { kind: "starting" }
   | { kind: "start-failed"; error: string }
-  | { kind: "awaiting"; session: VerificationSession; dcApi: DcApiOutcome | null }
+  | { kind: "awaiting"; session: VerificationSession }
   | { kind: "resumed"; sessionId: string }
   | { kind: "zk-verifying"; outcome: GateOutcome; session: VerificationSession | null }
   | {
@@ -129,19 +125,6 @@ type Phase =
       zk?: ZkVerification;
     }
   | { kind: "timed-out" };
-
-function describeDcApi(outcome: DcApiOutcome): string {
-  switch (outcome.outcome) {
-    case "unsupported":
-      return "This browser doesn't expose the Digital Credentials API — falling back to the wallet link.";
-    case "declined":
-      return "The browser's credential sheet was dismissed or offered no matching wallet — falling back to the wallet link.";
-    case "error":
-      return `The Digital Credentials API answered with an error (${outcome.message}) — falling back to the wallet link.`;
-    case "response":
-      return "A platform wallet answered over the DC API — this demo verifies the OID4VP fallback path, so continue with the wallet link.";
-  }
-}
 
 /**
  * Poll a session's status URL until it leaves `pending`, the timeout hits,
@@ -218,7 +201,7 @@ function QrCode({ value }: { value: string }) {
 /** Collapsible raw-JSON exhibit — every app in the demo shows its wire traffic. */
 function Inspector({ title, data }: { title: string; data: unknown }) {
   return (
-    <details className="group mt-2 rounded-xl border border-line bg-canvas">
+    <details className="group mt-2 rounded-xl border border-line bg-surface">
       <summary className="cursor-pointer px-3 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-muted group-open:border-b group-open:border-line">
         {title}
       </summary>
@@ -232,15 +215,15 @@ function Inspector({ title, data }: { title: string; data: unknown }) {
 /** The "what did the verifier actually learn" table — the point of the demo. */
 function LearnedPanel({ outcome }: { outcome: GateOutcome }) {
   const entries = Object.entries(outcome.disclosed);
-  const presenterDid =
-    outcome.status === "verified" ? presenterDidFromVpToken(outcome.vpToken) : null;
   return (
-    <div className="mt-4 rounded-2xl border border-line bg-canvas p-4 text-left">
+    <div className="mt-4 rounded-2xl border border-line bg-surface p-4 text-left">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
-        What The Nightcap learned
+        What Utopia Wheels learned
       </p>
       {entries.length === 0 ? (
-        <p className="mt-2 text-[13px] text-ink-dim">Nothing — the presentation failed before disclosure.</p>
+        <p className="mt-2 text-[13px] text-ink-dim">
+          Nothing — the presentation failed before disclosure.
+        </p>
       ) : (
         <dl className="mt-2 space-y-1.5">
           {entries.map(([claim, value]) => (
@@ -253,20 +236,6 @@ function LearnedPanel({ outcome }: { outcome: GateOutcome }) {
           ))}
         </dl>
       )}
-      {presenterDid !== null && (
-        <div className="mt-3 border-t border-line pt-3">
-          <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
-            The key that signed it
-          </p>
-          <p className="mt-1 break-all font-mono text-[11px] text-ink-dim">{presenterDid}</p>
-          <p className="mt-1 text-[12px] leading-relaxed text-muted">
-            A pairwise DID that exists for this shop only — other verifiers
-            (say, the rental counter across town) see a different one derived
-            from the same wallet, so their records and ours can't be joined by
-            key. Only the disclosed values above could ever correlate.
-          </p>
-        </div>
-      )}
       <p className="mt-3 border-t border-line pt-3 text-[12px] leading-relaxed text-muted">
         {outcome.reason}
       </p>
@@ -275,24 +244,72 @@ function LearnedPanel({ outcome }: { outcome: GateOutcome }) {
 }
 
 /**
- * Tier 2's "where did verification run" exhibit — the demo's teaching point
- * split honestly across the two runtimes that did the work.
+ * The cross-verifier exhibit — M5's teaching point. This counter knows who
+ * you are (a rental agreement needs a name); the demo's claim is narrower
+ * and stronger: NOTHING in the cryptography lets this counter and the shop
+ * link their records. The only correlation handles that exist are values
+ * you explicitly chose to disclose to both.
+ */
+function CorrelationPanel({ outcome }: { outcome: GateOutcome }) {
+  const presenterDid = presenterDidFromVpToken(outcome.vpToken);
+  return (
+    <div className="mt-4 rounded-2xl border border-line bg-surface p-4 text-left">
+      <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+        Could this visit be linked to your shop visit?
+      </p>
+      <dl className="mt-2 space-y-2 text-[12px] leading-relaxed">
+        {presenterDid !== null && (
+          <div>
+            <dt className="font-semibold text-ink">The key that signed this presentation</dt>
+            <dd className="break-all font-mono text-[11px] text-ink-dim">{presenterDid}</dd>
+            <dd className="mt-1 text-ink-dim">
+              is a pairwise DID your wallet derived for{" "}
+              <span className="font-mono text-[11px]">this origin only</span>. The
+              Nightcap saw a different one, derived from the same passkey — the
+              two can't be matched.
+            </dd>
+          </div>
+        )}
+        <div>
+          <dt className="font-semibold text-ink">The proof bytes</dt>
+          <dd className="text-ink-dim">
+            are a fresh BBS derivation — every presentation of the same license is
+            cryptographically unlinkable to every other one.
+          </dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-ink">What COULD correlate</dt>
+          <dd className="text-ink-dim">
+            only the claim values above. This counter needed your name and license
+            number for the rental agreement; the shop asked for neither — so even
+            if the two compared notes, there is nothing to join on. Your wallet's
+            home screen shows the two verifiers' views side by side.
+          </dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
+/**
+ * Tier 2's "where did verification run" exhibit — the honest split across
+ * the two runtimes that did the work, same as the shop's.
  */
 function ZkExhibit({ outcome, zk }: { outcome: GateOutcome; zk?: ZkVerification }) {
   const payload = outcome.status === "verified" ? outcome.zk : undefined;
   return (
-    <div className="mt-4 rounded-2xl border border-line bg-canvas p-4 text-left">
+    <div className="mt-4 rounded-2xl border border-line bg-surface p-4 text-left">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
         Zero-knowledge check · who verified what
       </p>
       <dl className="mt-2 space-y-1.5 text-[12px] leading-relaxed">
         <div>
-          <dt className="font-semibold text-ink">The Nightcap's Worker verified</dt>
+          <dt className="font-semibold text-ink">Utopia Wheels' Worker verified</dt>
           <dd className="text-ink-dim">
-            the DMV's BBS signature over the disclosed commitment, the wallet's
+            the DMV's BBS signature over the disclosed claims, the wallet's
             presentation signature (nonce + audience → no replay), that the proof's
-            commitment IS the one the DMV signed, and that its cutoff matches today's
-            18+ policy.
+            commitment IS the one the DMV signed, and that its cutoff matches
+            today's 25+ policy.
           </dd>
         </div>
         <div>
@@ -304,7 +321,7 @@ function ZkExhibit({ outcome, zk }: { outcome: GateOutcome; zk?: ZkVerification 
               <>
                 the UltraHonk proof itself ({payload?.scheme}, circuit{" "}
                 <span className="font-mono">{payload?.circuit}</span>) in {zk.verifyMs} ms,
-                against the shop's built-in verification key{" "}
+                against the site's built-in verification key{" "}
                 <span className="font-mono break-all">sha256:{zk.vkHash.slice(0, 16)}…</span>
               </>
             ) : (
@@ -314,12 +331,14 @@ function ZkExhibit({ outcome, zk }: { outcome: GateOutcome; zk?: ZkVerification 
         </div>
       </dl>
       <p className="mt-3 border-t border-line pt-3 text-[12px] leading-relaxed text-muted">
-        Why split? The proof verifier is ~10 MB of WASM that Cloudflare's free-tier
-        Worker can neither ship nor instantiate at runtime — so the shop's own client
-        runs it (a self-hosted verifier would make the same call server-side, as this
-        demo's e2e suite does in Node). Unlike the age_over_18 flag — frozen at
-        issuance for cutoffs the DMV guessed in advance — this proof was generated
-        against <em>today's</em> cutoff, from a birthdate that never left the wallet.
+        Same commitment as the shop's 18+ check, different cutoff: precomputed
+        age flags freeze the thresholds the DMV guessed at issuance, but the ZK
+        tier proves ANY cutoff from one committed birthdate — this proof was
+        generated against <em>today's</em> over-25 line, and the date itself
+        never left the wallet. The proof verifier is ~10 MB of WASM the
+        free-tier Worker can neither ship nor instantiate, so this page runs it
+        (a self-hosted verifier would make the same call server-side, as the
+        e2e suite does in Node).
       </p>
       {zk !== undefined && zk.publicInputs.length > 0 && (
         <Inspector
@@ -331,7 +350,7 @@ function ZkExhibit({ outcome, zk }: { outcome: GateOutcome; zk?: ZkVerification 
   );
 }
 
-export function AgeGate({
+export function RentalGate({
   resumeSessionId,
   onVerdict,
 }: {
@@ -359,15 +378,7 @@ export function AgeGate({
       });
       return;
     }
-    // The DC API attempt is an exhibit, not a gate: whatever it reports, the
-    // OID4VP fallback below is the path that actually completes.
-    setPhase({ kind: "awaiting", session, dcApi: null });
-    const dcApi = await requestDcApiCredential(session.request);
-    setPhase((current) =>
-      current?.kind === "awaiting" && current.session.session_id === session.session_id
-        ? { ...current, dcApi }
-        : current,
-    );
+    setPhase({ kind: "awaiting", session });
   }, [onVerdict]);
 
   const statusUrl =
@@ -424,16 +435,19 @@ export function AgeGate({
 
   if (phase === null) {
     return (
-      <div className="rounded-3xl border border-line bg-surface p-6 text-center">
+      <div className="rounded-3xl border border-line bg-raised p-6 text-center">
         <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
-          Age check · 18+
+          Driver check · name + license + 25+
         </p>
-        <h2 className="mt-2 font-display text-2xl text-ink">
-          Prove it without showing it.
+        <h2 className="mt-2 font-display text-2xl font-semibold uppercase tracking-[0.02em] text-ink">
+          Three answers. Not your life story.
         </h2>
         <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-dim">
-          The Nightcap asks your wallet one question — <span className="font-mono">age_over_18</span>.
-          Your name, birthdate and license number stay in your pocket.
+          The rental agreement needs your{" "}
+          <span className="font-mono text-[12px]">name</span>, your{" "}
+          <span className="font-mono text-[12px]">license number</span>, and proof
+          you're over 25. Your birthdate, address, and everything else stay in
+          your pocket.
         </p>
         <button
           type="button"
@@ -445,8 +459,8 @@ export function AgeGate({
         {walletOrigin === null && (
           <p className="mx-auto mt-4 max-w-md rounded-xl bg-danger-soft px-4 py-3 text-[12px] leading-relaxed text-danger">
             No wallet origin is configured for this deployment (VITE_WALLET_ORIGIN) —
-            the verification link can't be built. Append <span className="font-mono">?wallet=&lt;origin&gt;</span> to
-            override.
+            the verification link can't be built. Append{" "}
+            <span className="font-mono">?wallet=&lt;origin&gt;</span> to override.
           </p>
         )}
       </div>
@@ -455,7 +469,7 @@ export function AgeGate({
 
   if (phase.kind === "starting") {
     return (
-      <div className="rounded-3xl border border-line bg-surface p-6 text-center text-[13px] text-ink-dim">
+      <div className="rounded-3xl border border-line bg-raised p-6 text-center text-[13px] text-ink-dim">
         Starting a verification session…
       </div>
     );
@@ -463,7 +477,7 @@ export function AgeGate({
 
   if (phase.kind === "start-failed") {
     return (
-      <div className="rounded-3xl border border-line bg-surface p-6 text-center">
+      <div className="rounded-3xl border border-line bg-raised p-6 text-center">
         <p className="text-[13px] text-danger">
           Couldn't start the verification session: {phase.error}
         </p>
@@ -480,7 +494,7 @@ export function AgeGate({
 
   if (phase.kind === "resumed") {
     return (
-      <div className="rounded-3xl border border-line bg-surface p-6 text-center" aria-live="polite">
+      <div className="rounded-3xl border border-line bg-raised p-6 text-center" aria-live="polite">
         <p className="text-[13px] text-ink-dim">Checking your verification…</p>
       </div>
     );
@@ -488,16 +502,17 @@ export function AgeGate({
 
   if (phase.kind === "zk-verifying") {
     return (
-      <div className="rounded-3xl border border-line bg-surface p-6 text-center" aria-live="polite">
+      <div className="rounded-3xl border border-line bg-raised p-6 text-center" aria-live="polite">
         <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
-          Age check · zero-knowledge proof
+          Driver check · zero-knowledge proof
         </p>
         <p className="mt-3 text-[13px] text-ink-dim">
           Verifying the UltraHonk proof in this browser…
         </p>
         <p className="mx-auto mt-2 max-w-md text-[12px] leading-relaxed text-muted">
-          The Worker already checked the signatures and that the proof is about the
-          commitment the DMV signed — the proof itself is checked right here.
+          The Worker already checked the signatures, your identity claims, and
+          that the proof is about the commitment the DMV signed — the proof
+          itself is checked right here.
         </p>
       </div>
     );
@@ -505,7 +520,7 @@ export function AgeGate({
 
   if (phase.kind === "timed-out") {
     return (
-      <div className="rounded-3xl border border-line bg-surface p-6 text-center">
+      <div className="rounded-3xl border border-line bg-raised p-6 text-center">
         <p className="text-[13px] text-ink-dim">
           No response arrived within five minutes — the request expired.
         </p>
@@ -523,21 +538,10 @@ export function AgeGate({
   if (phase.kind === "awaiting") {
     const link = walletLink(phase.session);
     return (
-      <div className="rounded-3xl border border-line bg-surface p-6" aria-live="polite">
+      <div className="rounded-3xl border border-line bg-raised p-6" aria-live="polite">
         <p className="text-center font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
-          Age check · waiting for your wallet
+          Driver check · waiting for your wallet
         </p>
-
-        {phase.dcApi !== null && (
-          <p className="mx-auto mt-3 max-w-lg rounded-xl bg-accent-soft px-4 py-3 text-[12px] leading-relaxed text-ink-dim">
-            <span className="font-semibold text-ink">Digital Credentials API:</span>{" "}
-            {describeDcApi(phase.dcApi)}{" "}
-            <span className="text-muted">
-              (Browser-native wallet selection exists, but web wallets can't register as
-              providers yet — that gap is part of this exhibit.)
-            </span>
-          </p>
-        )}
 
         <div className="mt-5 flex flex-col items-center gap-5 sm:flex-row sm:justify-center">
           {link !== null && (
@@ -563,8 +567,8 @@ export function AgeGate({
         </div>
 
         <p className="mt-5 text-center text-[12px] text-muted">
-          This page keeps checking for the wallet's response — cross-device answers land
-          here automatically.
+          This page keeps checking for the wallet's response — cross-device answers
+          land here automatically.
         </p>
         <Inspector title="OID4VP authorization request" data={phase.session.request} />
       </div>
@@ -580,24 +584,29 @@ export function AgeGate({
   const denied = outcome.status === "verified" && outcome.verdict === "denied";
   const zkFailed = isZkOutcome && zk?.verified !== true;
   return (
-    <div className="rounded-3xl border border-line bg-surface p-6 text-center" aria-live="polite">
+    <div className="rounded-3xl border border-line bg-raised p-6 text-center" aria-live="polite">
       {allowed && (
-        <>
-          <p className="neon font-mono text-lg font-semibold uppercase tracking-[0.3em]">
-            ● Open for you
+        <div className="guide-sign mx-auto max-w-md px-6 py-5">
+          <p className="font-mono text-[11px] uppercase tracking-[0.3em] opacity-90">
+            Exit 25 · driver verified
           </p>
-          <h2 className="mt-2 font-display text-2xl text-ink">
-            {isZkOutcome ? "Proven — 18 or over. Nothing else." : "Verified — 18 or over."}
+          <h2 className="mt-1.5 font-display text-2xl font-semibold uppercase tracking-[0.03em]">
+            Cleared for pickup
           </h2>
-        </>
+          <p className="mt-1 text-[12px] opacity-90">
+            {isZkOutcome
+              ? "Over 25 — proven in zero knowledge, birthdate not included."
+              : "Over 25 — license on file."}
+          </p>
+        </div>
       )}
       {denied && (
         <>
           <p className="font-mono text-lg font-semibold uppercase tracking-[0.3em] text-danger">
-            ● No sale
+            ● Not today
           </p>
-          <h2 className="mt-2 font-display text-2xl text-ink">
-            The license says not yet.
+          <h2 className="mt-2 font-display text-2xl font-semibold uppercase tracking-[0.03em] text-ink">
+            The license says under 25.
           </h2>
         </>
       )}
@@ -617,6 +626,8 @@ export function AgeGate({
       )}
 
       <LearnedPanel outcome={outcome} />
+
+      {outcome.status === "verified" && <CorrelationPanel outcome={outcome} />}
 
       {isZkOutcome && <ZkExhibit outcome={outcome} zk={zk} />}
 

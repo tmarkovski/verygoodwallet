@@ -9,6 +9,7 @@ import { useSession } from "../session";
 import { listCredentials, type AccountRecord, type CredentialRecord } from "../services/db";
 import { addDemoCredential } from "../services/demo";
 import { CredentialCard } from "../components/CredentialCard";
+import { VerifierViews } from "../components/VerifierViews";
 import { Button, ErrorNote, PrfBadge, SectionTitle, Spinner, describeError } from "../components/ui";
 import emblem from "../assets/utopia-emblem.png";
 
@@ -207,6 +208,8 @@ function CredentialList() {
           ))}
         </ul>
       )}
+
+      <VerifierViews />
     </div>
   );
 }

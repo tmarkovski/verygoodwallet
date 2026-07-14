@@ -9,14 +9,14 @@ import { useSession } from "../session";
 import { DEMO_ISSUER_ORIGIN } from "../services/demo";
 
 /**
- * Origins shown as branches. The shop entry matches what /present actually
- * derives against today (presenter branches are keyed by the verifier's
- * exact origin); rentals is the planned M5 verifier.
+ * Origins shown as branches — the two deployed verifiers, matching what
+ * /present actually derives against (presenter branches are keyed by the
+ * verifier's exact origin). Both move to custom domains at the M6 cutover.
  */
 const ISSUER_ORIGINS = [DEMO_ISSUER_ORIGIN];
 const VERIFIER_ORIGINS = [
   "https://vgw-shop.t7m8.workers.dev",
-  "rentals.verygoodwallet.com",
+  "https://vgw-rentals.t7m8.workers.dev",
 ];
 
 function Node({ node, root = false }: { node: DerivationNode; root?: boolean }) {

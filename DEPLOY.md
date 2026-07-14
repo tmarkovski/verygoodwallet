@@ -11,6 +11,7 @@ GitHub Pages until cutover.
 | New wallet (`apps/wallet/`) | Cloudflare Worker `vgw-wallet` at `vgw-wallet.<account>.workers.dev` | `.github/workflows/deploy-wallet.yml` (push to `main`, or manual `workflow_dispatch`) |
 | Utopia DMV issuer (`apps/dmv/`) | Cloudflare Worker `vgw-dmv` at `vgw-dmv.<account>.workers.dev` | `.github/workflows/deploy-dmv.yml` (push to `main`, or manual `workflow_dispatch`) |
 | The Nightcap verifier (`apps/shop/`) | Cloudflare Worker `vgw-shop` at `vgw-shop.<account>.workers.dev` | `.github/workflows/deploy-shop.yml` (push to `main`, or manual `workflow_dispatch`) |
+| Utopia Wheels verifier (`apps/rentals/`) | Cloudflare Worker `vgw-rentals` at `vgw-rentals.<account>.workers.dev` | `.github/workflows/deploy-rentals.yml` (push to `main`, or manual `workflow_dispatch`) |
 
 Until DNS moves and M6 cutover happens, the new wallet is only reachable on its
 `workers.dev` URL. The apex domain keeps pointing at GitHub Pages.
@@ -233,6 +234,43 @@ UltraHonk proof round-trips, the Worker records it, and the suite verifies
 the stored payload with the same `@vgw/zk` call the shop client makes.
 (Skipped without `VGW_E2E=1`.)
 
+## Deploying the Utopia Wheels verifier (rentals)
+
+Identical shape to the shop — one Hono OID4VP Worker + static UI +
+`VerificationSessions` Durable Object — deployed by **Deploy Rentals**
+(`deploy-rentals.yml`) on every push to `main`, with the same
+`wallet_origin`/`dmv_origin` inputs and the same deploy-time
+`TRUSTED_ISSUER_DID` discovery. What differs is only the policy: the rentals
+DCQL profile requires `given_name` + `family_name` + `document_number` in
+every claim_set alternative, and gates on **over-25** (age_over_25 flag /
+birth_date fallback / ZK predicate over the same birthdate commitment with
+`vgw_zk.years: 25`).
+
+The same consequences follow: rotating the DMV's `ISSUER_SEED` requires
+redeploying the rentals Worker too (its issuer pin is discovered at deploy
+time), and the `TOKEN_SECRET` Worker secret should be set after the first
+deploy, from `apps/rentals/`:
+
+```sh
+openssl rand -hex 32 | pnpm exec wrangler secret put TOKEN_SECRET
+```
+
+### Live end-to-end check (rentals)
+
+With all three dev servers running (`pnpm dev:dmv`, `pnpm dev:shop`,
+`pnpm dev:rentals` — the shop is needed for the cross-verifier test):
+
+```sh
+VGW_E2E=1 pnpm --filter @vgw/rentals test
+```
+
+runs `apps/rentals/worker/e2e.test.ts` — the over-25 clearance with identity
+disclosed, the 22-year-old denial (over 18 is not over 25), a replay
+rejection, the tier-2 over-25 proof round trip, the live cutoff-policy
+rejection, and the M5 unlinkability exhibit end to end: one credential
+presented to both live verifiers, asserting each recorded a different
+pairwise presenter DID and that no disclosed value appears in both records.
+
 ### ZK circuit artifacts (packages/zk)
 
 The tier-2 circuit ships as checked-in artifacts (`packages/zk/artifacts/`):
@@ -245,16 +283,10 @@ pnpm --filter @vgw/zk compile
 ```
 
 A test recompiles the circuit and fails CI if the checked-in artifact is
-stale. Note the trust split baked into the design: the shop Worker validates
-everything about a tier-2 presentation EXCEPT the UltraHonk proof (Workers
-cannot instantiate WASM from bytes, and bb.js wouldn't fit the free plan's
-3 MiB script cap); the proof itself is verified by the shop's client against
-the verification key bundled into the shop build. Redeploying the shop after
-regenerating artifacts keeps prover and verifier in agreement.
-
-## Future apps (per PLAN.md)
-
-Utopia Wheels (`vgw-rentals`, `rentals.verygoodwallet.com`) deploys the same
-way as the shop — one OID4VP Worker + assets, subdomain custom domain once
-DNS is on Cloudflare (mappable before the apex cutover, since subdomains
-don't collide with GitHub Pages).
+stale. Note the trust split baked into the design: the verifier Workers
+validate everything about a tier-2 presentation EXCEPT the UltraHonk proof
+(Workers cannot instantiate WASM from bytes, and bb.js wouldn't fit the free
+plan's 3 MiB script cap); the proof itself is verified by each verifier's
+client against the verification key bundled into its build. Redeploying the
+shop and rentals Workers after regenerating artifacts keeps prover and
+verifiers in agreement.
