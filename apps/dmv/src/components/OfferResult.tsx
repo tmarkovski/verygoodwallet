@@ -30,13 +30,13 @@ export function OfferResult({
       return;
     }
     let cancelled = false;
-    // Rendered at 2x the display size for crisp modules; petrol-on-paper so
-    // the code stays scannable (QR needs dark-on-light) inside the dark UI.
+    // Rendered at 2x the display size for crisp modules; clerk ink on white
+    // keeps the code scannable and belongs to the DMV's paper UI.
     QRCode.toDataURL(walletLink, {
       errorCorrectionLevel: "M",
       margin: 2,
       width: 512,
-      color: { dark: "#0c1f21", light: "#f6f3ea" },
+      color: { dark: "#172b36", light: "#ffffff" },
     })
       .then((url) => {
         if (!cancelled) setQrDataUrl(url);
@@ -52,9 +52,9 @@ export function OfferResult({
   return (
     <section className="animate-rise mt-6 rounded-3xl border border-line bg-surface p-6">
       <div className="flex items-center gap-4">
-        <span aria-hidden="true" className="seal-authority size-10 shrink-0" />
+        <span aria-hidden="true" className="issuance-stamp size-10 shrink-0" />
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gold">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stamp">
             License issued
           </p>
           <p className="mt-0.5 text-sm text-ink-dim">

@@ -26,7 +26,7 @@ interface OfferResponseBody {
 }
 
 const INPUT_CLASS =
-  "mt-1.5 w-full rounded-xl border border-line-strong bg-canvas px-4 py-2.5 text-sm text-ink placeholder:text-muted";
+  "mt-1.5 w-full rounded-xl border border-line-strong bg-raised px-4 py-2.5 text-sm text-ink placeholder:text-muted";
 
 function Field({
   id,
@@ -110,9 +110,9 @@ export default function App() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="border-b border-line">
+      <header className="border-b border-line bg-surface">
         <div className="mx-auto flex w-full max-w-xl items-center gap-4 px-5 py-5">
-          <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-gold-soft text-gold">
+          <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-authority-soft text-authority">
             {/* Utopia crest — shield with star */}
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path
@@ -128,7 +128,7 @@ export default function App() {
             </svg>
           </span>
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-gold">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-authority">
               State of Utopia
             </p>
             <h1 className="text-lg font-semibold tracking-tight">
@@ -150,7 +150,7 @@ export default function App() {
                 key={`${persona.givenName}-${persona.familyName}`}
                 type="button"
                 onClick={() => applyPersona(persona)}
-                className="rounded-full border border-line-strong px-3 py-1.5 text-xs text-ink transition-colors hover:bg-surface active:scale-[0.98]"
+                className="rounded-full border border-line-strong bg-surface px-3 py-1.5 text-xs text-ink transition-colors hover:border-accent/50 hover:bg-accent-soft active:scale-[0.98]"
               >
                 {persona.givenName} {persona.familyName}
                 <span className="ml-1.5 text-muted">{persona.note}</span>

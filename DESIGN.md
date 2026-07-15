@@ -7,8 +7,9 @@ engraver's gold for authority.** The State of Utopia, in currency form.
 
 Canonical implementation: `apps/wallet/src/index.css` (tokens + primitives) and
 `apps/wallet/src/services/color.ts` (card engraving tints). This document is the
-reference for extending the identity to other surfaces (the Utopia DMV issuer site
-shares this civic identity; the demo verifier sites get deliberately distinct brands).
+reference for extending the identity to other surfaces (the Utopia DMV issuer keeps
+a few civic cues but has its own public-counter palette; the verifier sites get
+deliberately distinct brands).
 
 ## Principles
 
@@ -85,8 +86,10 @@ No ambient/looping animation — engraved things do not shimmer.
 
 ## Extending to new surfaces
 
-- **Utopia DMV (issuer)**: same tokens; may add its own crest/seal but must follow the
-  gold-is-authority and seal-red-is-action rules.
+- **Utopia DMV (issuer)**: a related but distinct "Civic Counter" identity — cool
+  blue-gray stock, white forms, cobalt clerk ink, and an oxblood issuance stamp.
+  It deliberately avoids both the wallet's dark Intaglio world and the landing
+  guide's warm passport paper, navy cover, gold foil, and serif typography.
 - **Verifier demo sites (Nightcap, Utopia Wheels)**: intentionally different brands
   (they are third parties in the story) — do not reuse Intaglio tokens; only the
   embedded credential cards keep their petrol faces, since the card belongs to the wallet.

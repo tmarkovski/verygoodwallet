@@ -1,74 +1,41 @@
 @import "tailwindcss";
 
 /*
- * Utopia DMV design tokens — INTAGLIO (shared civic identity).
+ * Utopia DMV design tokens — "CIVIC COUNTER".
  *
- * The token blocks and the .seal-authority primitive are copied verbatim
- * from apps/wallet/src/index.css (see DESIGN.md); the duplication is a
- * deliberate, documented tradeoff until a shared tokens package exists.
- * The .guilloche card face is intentionally NOT copied — cards belong to
- * the wallet; the DMV is the government counter that issues them.
+ * The issuer should feel related to the wallet, but not like another view
+ * inside it. This is a cool public-service counter: blue-gray document stock,
+ * white forms, cobalt clerk ink, and an oxblood issuance stamp. It deliberately
+ * avoids the demo guide's warm passport paper, navy cover, gold foil, and serif
+ * typography. The credential itself keeps the wallet's Intaglio identity.
  */
 
 :root {
-  color-scheme: dark;
-
-  --vgw-canvas: #0c1f21;
-  --vgw-surface: #12292c;
-  --vgw-raised: #173437;
-  --vgw-overlay: rgb(4 12 13 / 0.72);
-  --vgw-line: rgb(201 168 106 / 0.16);
-  --vgw-line-strong: rgb(201 168 106 / 0.3);
-  --vgw-ink: #ece7d3;
-  --vgw-ink-dim: #c2bfae;
-  --vgw-muted: #8fa39b;
-  /* Seal red. Deepened from the mockup's #d64545 so cream text on a red
-     button (and ::selection) clears 4.5:1. */
-  --vgw-accent: #c93b3b;
-  --vgw-accent-soft: rgb(201 59 59 / 0.14);
-  --vgw-accent-contrast: #fdf6ee;
-  /* Destructive red — shares the seal-red family, so destructive actions
-     always carry explicit labels. Lightened from oxblood #b03636, which
-     sat at ~2.3:1 as text on petrol; the soft wash keeps the oxblood base. */
-  --vgw-danger: #e07e7e;
-  --vgw-danger-soft: rgb(176 54 54 / 0.14);
-  /* Banknote verdigris, lifted from #3d8f6a for AA badge text on ok-soft. */
-  --vgw-ok: #4fae83;
-  --vgw-ok-soft: rgb(79 174 131 / 0.12);
-  /* Engraver's gold — authority marks only. */
-  --vgw-gold: #c9a86a;
-  --vgw-gold-soft: rgb(201 168 106 / 0.14);
-}
-
-/*
- * Light "banknote paper" world — parked for a future explicit theme toggle.
- * Deliberately NOT wired to `prefers-color-scheme`: the DMV presents the
- * dark Intaglio identity to everyone until a UI switch sets
- * `data-theme="light"` on <html>. No such toggle exists yet.
- */
-:root[data-theme="light"] {
   color-scheme: light;
 
-  --vgw-canvas: #ece8db;
-  --vgw-surface: #f6f3ea;
-  --vgw-raised: #fdfbf4;
-  --vgw-overlay: rgb(25 40 38 / 0.4);
-  --vgw-line: rgb(23 48 45 / 0.14);
-  --vgw-line-strong: rgb(23 48 45 / 0.26);
-  --vgw-ink: #16302e;
-  --vgw-ink-dim: #46605c;
-  --vgw-muted: #6d827c;
-  --vgw-accent: #b93a3a;
-  --vgw-accent-soft: rgb(185 58 58 / 0.1);
-  --vgw-accent-contrast: #fdf6ee;
-  --vgw-danger: #9c2f2f;
-  --vgw-danger-soft: rgb(156 47 47 / 0.1);
-  /* Deepened from #2e7d5b / #8f7434 so 11px badge + eyebrow text stays AA
-     on the paper surfaces. */
-  --vgw-ok: #29704f;
-  --vgw-ok-soft: rgb(41 112 79 / 0.1);
-  --vgw-gold: #7a6128;
-  --vgw-gold-soft: rgb(143 116 52 / 0.12);
+  --dmv-canvas: #e3ebef;
+  --dmv-surface: #f5f8f9;
+  --dmv-raised: #ffffff;
+  --dmv-overlay: rgb(23 43 54 / 0.42);
+  --dmv-line: rgb(23 43 54 / 0.14);
+  --dmv-line-strong: rgb(23 43 54 / 0.27);
+  --dmv-ink: #172b36;
+  --dmv-ink-dim: #405560;
+  --dmv-muted: #556a75;
+  /* Cobalt clerk ink — navigation, focus, and primary actions. */
+  --dmv-accent: #1f6280;
+  --dmv-accent-soft: rgb(31 98 128 / 0.1);
+  --dmv-accent-contrast: #ffffff;
+  /* Oxblood is reserved for errors and the physical issuance stamp. */
+  --dmv-danger: #96382f;
+  --dmv-danger-soft: rgb(150 56 47 / 0.1);
+  --dmv-stamp: #a43f32;
+  --dmv-stamp-soft: rgb(164 63 50 / 0.11);
+  /* State marks use a quieter slate blue than interactive cobalt. */
+  --dmv-authority: #31586b;
+  --dmv-authority-soft: rgb(49 88 107 / 0.11);
+  --dmv-ok: #2d6b55;
+  --dmv-ok-soft: rgb(45 107 85 / 0.1);
 }
 
 @theme {
@@ -104,55 +71,57 @@
 }
 
 @theme inline {
-  --color-canvas: var(--vgw-canvas);
-  --color-surface: var(--vgw-surface);
-  --color-raised: var(--vgw-raised);
-  --color-overlay: var(--vgw-overlay);
-  --color-line: var(--vgw-line);
-  --color-line-strong: var(--vgw-line-strong);
-  --color-ink: var(--vgw-ink);
-  --color-ink-dim: var(--vgw-ink-dim);
-  --color-muted: var(--vgw-muted);
-  --color-accent: var(--vgw-accent);
-  --color-accent-soft: var(--vgw-accent-soft);
-  --color-accent-contrast: var(--vgw-accent-contrast);
-  --color-danger: var(--vgw-danger);
-  --color-danger-soft: var(--vgw-danger-soft);
-  --color-ok: var(--vgw-ok);
-  --color-ok-soft: var(--vgw-ok-soft);
-  --color-gold: var(--vgw-gold);
-  --color-gold-soft: var(--vgw-gold-soft);
+  --color-canvas: var(--dmv-canvas);
+  --color-surface: var(--dmv-surface);
+  --color-raised: var(--dmv-raised);
+  --color-overlay: var(--dmv-overlay);
+  --color-line: var(--dmv-line);
+  --color-line-strong: var(--dmv-line-strong);
+  --color-ink: var(--dmv-ink);
+  --color-ink-dim: var(--dmv-ink-dim);
+  --color-muted: var(--dmv-muted);
+  --color-accent: var(--dmv-accent);
+  --color-accent-soft: var(--dmv-accent-soft);
+  --color-accent-contrast: var(--dmv-accent-contrast);
+  --color-danger: var(--dmv-danger);
+  --color-danger-soft: var(--dmv-danger-soft);
+  --color-stamp: var(--dmv-stamp);
+  --color-stamp-soft: var(--dmv-stamp-soft);
+  --color-authority: var(--dmv-authority);
+  --color-authority-soft: var(--dmv-authority-soft);
+  --color-ok: var(--dmv-ok);
+  --color-ok-soft: var(--dmv-ok-soft);
 }
 
 body {
-  background-color: var(--vgw-canvas);
-  color: var(--vgw-ink);
+  background-color: var(--dmv-canvas);
+  color: var(--dmv-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   min-height: 100dvh;
 }
 
 ::selection {
-  background-color: var(--vgw-accent);
-  color: var(--vgw-accent-contrast);
+  background-color: var(--dmv-accent);
+  color: var(--dmv-accent-contrast);
 }
 
 :focus-visible {
-  outline: 2px solid var(--vgw-accent);
+  outline: 2px solid var(--dmv-accent);
   outline-offset: 2px;
 }
 
 /*
- * .seal-authority — the red engraved seal, the mark of authority. At the
- * DMV it stamps the issuance moment. Size comes from the consumer.
+ * .issuance-stamp — the only Intaglio-adjacent moment on the DMV surface:
+ * an oxblood clerk stamp confirming that a credential was issued.
  */
-.seal-authority {
+.issuance-stamp {
   border-radius: 50%;
-  background: repeating-conic-gradient(#d64545 0 8deg, #b03636 8deg 16deg);
+  background: repeating-conic-gradient(#b84a3c 0 8deg, #8d3128 8deg 16deg);
   opacity: 0.9;
   box-shadow:
-    inset 0 0 0 3px #0f2629,
-    inset 0 0 0 4px #d64545;
+    inset 0 0 0 3px var(--dmv-surface),
+    inset 0 0 0 4px #b84a3c;
 }
 
 /* Keep the rise/fade system, but stand still for reduced-motion users. */

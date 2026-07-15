@@ -80,8 +80,8 @@ const CAST: {
     role: "The issuer",
     line: "Issues a BBS-signed driver's license over OID4VCI — and never learns where it gets used.",
     href: SITE_ORIGINS.dmv,
-    band: "#0c1f21",
-    bandText: "#d4b264",
+    band: "#1f6280",
+    bandText: "#ffffff",
   },
   {
     name: "The Nightcap",
