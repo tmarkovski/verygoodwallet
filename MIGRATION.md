@@ -125,10 +125,16 @@ Every decision below has a reason; to overturn one, overturn the reason.
    fallback — dropping the PoP collapses (c)→(a) with no rework.
 4. **Land the core migration (N0–N4) before the new showcases (N5–N6).** N0–N4 are a strict upgrade
    of the existing age story; the new capabilities build on a stable base.
-5. **Consume credkit as published, versioned packages** (credkit becomes a **public repo**). VGW deps
-   `@credkit/*` like any dependency and pins one version; the monorepo-merge alternative (§11) is
-   rejected — it couples two release cadences. Source-publish is viable (Vite/esbuild compile
-   credkit's TS `main`), subject to the `.js`→`.ts` bundler note in Appendix C.
+5. **Consume credkit as Git dependencies pinned to one commit sha from the public repo**
+   (github.com/tmarkovski/credkit) — decided 2026-07-16, validated the same day (§11, Appendix C
+   addendum), superseding this decision's earlier npm-publish wording. VGW package.json deps name
+   the plain lockstep version; a single `pnpm-workspace.yaml` `overrides` block rewrites every
+   `@credkit/*` spec — including the `workspace:*` specs inside credkit's git-dep tarballs, which
+   pnpm does not convert at pack time — to `github:tmarkovski/credkit#<sha>&path:/packages/<name>`.
+   One sha, one place, bumped deliberately. The monorepo-merge alternative (§11) stays rejected — it
+   couples two release cadences; npm publish stays available later without rework (manifests are
+   publish-ready since credkit `8fdb3cf`). Source-publish holds (Vite/esbuild compile credkit's TS
+   `main`), subject to the `.js`→`.ts` bundler note in Appendix C.
 
 ---
 
@@ -414,26 +420,35 @@ freshness-option a, kept under c — §3.3); `deriveHolderSeed`/`derivePresenter
 
 ---
 
-## 11. Consuming credkit: publish (DECIDED)
+## 11. Consuming credkit: pinned Git dependencies (DECIDED, validated)
 
-**Decision: credkit is published as versioned packages from a public repo; VGW deps `@credkit/*`
-normally and pins one version.** (The monorepo-merge alternative is rejected — §3.5.)
+**Decision (2026-07-16, superseding the earlier npm-publish wording): credkit stays a public
+source-only repo, and VGW consumes `@credkit/*` as Git dependencies pinned to one commit sha.**
+(The monorepo-merge alternative stays rejected — §3.5; npm publish remains available later without
+rework.)
 
-Today credkit is a source-only, private workspace: every package is `private: true`,
-`version: 0.0.0`, `main: ./src/index.ts`, wired to siblings by `workspace:*` (which resolves only
-inside credkit's own workspace — so VGW cannot `file:`-link one package). Publishing therefore has
-credkit-side prerequisites, done once before N2:
+Done in credkit `8fdb3cf` (one commit, before N1): every `@credkit/*` manifest dropped
+`private: true`, adopted lockstep `0.1.0`, and gained `license` (Unlicense), `files: ["src"]`,
+`repository` (+`directory`), `engines`, `sideEffects: false`. `main` still points at `src/index.ts`
+— source-publish holds; a built `dist` becomes interesting only if credkit later publishes to npm
+for non-Vite consumers.
 
-- Drop `private: true`; adopt real semver on every `@credkit/*` package; keep `main: src/index.ts`
-  (source-publish) so consumers bundle the TS, **or** add a build step emitting `dist/*.js` + `.d.ts`
-  and point `exports`/`main`/`types` at it. Source-publish is simpler and Vite/esbuild handle it; a
-  built `dist` removes the `.js`→`.ts` bundler note (Appendix C) for all consumers, so lean to `dist`
-  if credkit gains non-Vite consumers.
-- Pin **one ciphersuite era** (`credkit-bbs-sha-2026` vs `-shake-2026`) in the release line before any
-  credential is issued — it is forever for cross-credential equality (§4, FINDINGS §16).
-- Publish `@credkit/{bbs,range,proofs,cryptosuite}` together at a lockstep version; VGW pins that exact
-  version and bumps deliberately (the golden-vector discipline: layout changes bump the version, never
-  edit hex — FINDINGS §12).
+Mechanics on the VGW side (validated end-to-end — Appendix C addendum):
+
+- **The pin lives in exactly one place**: a `pnpm-workspace.yaml` `overrides` block maps all four
+  `@credkit/*` names to `github:tmarkovski/credkit#<sha>&path:/packages/<name>`. Overrides rewrite
+  every spec before resolution — including the `workspace:*` specs inside credkit's git-dep tarballs
+  (pnpm does not convert those at pack time) and the plain `"0.1.0"` version specs VGW's package.json
+  deps carry. Bump the sha there and nowhere else.
+- `tooling/credkit-ts-resolver.ts` remaps credkit's `.js` import specifiers to the `.ts` sources; it
+  is registered in the four app vite configs and every vitest config whose tests reach credkit,
+  alongside vitest `server.deps.inline: [/@credkit\//]` (vitest would otherwise hand the TS source to
+  raw Node) and dev-mode `optimizeDeps.exclude` for all four packages (prebundling bypasses resolveId
+  plugins).
+- **The ciphersuite era is pinned: `credkit-bbs-sha-2026`** (decided 2026-07-16) — forever, for
+  cross-credential equality (§4, FINDINGS §16).
+- Version bumps follow the golden-vector discipline: layout changes bump the pinned sha/version,
+  never edit hex (FINDINGS §12).
 
 The **public repo** also simplifies §8's verifier params story: the range/set alphabets and any shared
 encoder registry can be referenced/published openly rather than embedded per deployment.
@@ -444,7 +459,7 @@ encoder registry can be referenced/published openly rather than embedded per dep
 
 | Stage | Deliverable |
 |---|---|
-| **N0** | ✅ Worker-viability proven under workerd (spike result below); consumption **decided** — publish credkit as public packages (§11). Remaining: credkit publish prerequisites, then VGW pins a version. Full `issueCredential`/`verifyProof` under workerd deferred to N2/N3 (needs a document loader + the pinned VP envelope) |
+| **N0** | ✅ Complete. Worker-viability proven under workerd (spike below); consumption decided **and validated** — Git deps pinned by sha via pnpm overrides (§11, Appendix C addendum); credkit `8fdb3cf` is consumable and VGW is wired (resolver plugin, vitest inlining, optimizeDeps excludes) with the full typecheck/test/build/smoke pipeline green. Full `issueCredential`/`verifyProof` under workerd deferred to N2/N3 (needs a document loader + the pinned VP envelope) |
 | **N1** | Link secret in `@vgw/keys` (`deriveLinkSecret`); issuer key via `@credkit/bbs` `keyGen` |
 | **N2** | DMV reissues the DL with credkit + the `date1900` twin; change vDL `birth_date` to `xsd:date`; pass VGW's offline loader through issuance; OID4VCI request carries the commitment-with-proof as an extension (freshness a-vs-c decided here, §3.3); drop Poseidon + opening; wallet threads the master-derived link secret and persists per-credential `secretProverBlind` |
 | **N3** | Wallet `deriveProof`; shop/rentals **server-side** verification through the vc-kit policy facade; add the `did:key:zUC7…` ↔ raw G2 trust-anchor bridge; preserve expected issuer, verification-method ownership, and validity checks; pass the offline loader; generalize the DCQL predicate extension; publish range params; delete client bb.js |
@@ -494,16 +509,18 @@ risk. Spike harness kept under the session scratchpad (`credkit-spike/`), not co
   reusing OID4VP's evolving predicate proposals) — an N3 design pass.
 - Whether the `/.well-known/credkit-params` alphabet is served static or minted-then-cached, and how
   the holder pins it against the tracking-tag risk in practice.
-- Whether `credkit-bbs-sha-2026` or `-shake-2026` is the pinned era (once chosen, it is forever for
-  cross-credential equality) — decided at credkit publish time (§11).
-- Whether credkit source-publishes (`main: src/index.ts`) or ships a built `dist` (§11).
-- OID4VCI request freshness (§3.3): **leaning (c)** — keep the standard `proof_type: jwt` PoP and have
-  it sign the commitment digest, so it attests liveness of a party holding the commitment (a bare PoP
-  binds a key to nothing in credkit's link-secret model). The PoP key stays **pairwise per issuer** (its
-  `kid` is issuer-visible, so a reused key is a cross-issuer handle). Neither (a) nor (c) proves fresh
-  *knowledge* of the link secret — the commitment is public and its PoK carries no nonce. (a) —
-  token-only, no PoP — is the fallback. Confirmed at N2; the commitment-as-extension framing keeps (c)
-  additive, so nothing before N2 depends on the choice.
+- ~~Whether `credkit-bbs-sha-2026` or `-shake-2026` is the pinned era~~ — **decided 2026-07-16:
+  `credkit-bbs-sha-2026`**, forever (cross-credential equality never crosses eras; §11).
+- ~~Whether credkit source-publishes or ships a built `dist`~~ — **resolved by the Git-dependency
+  channel (§11): source-publish.** A `dist` build returns to the table only if credkit later
+  publishes to npm for non-Vite consumers.
+- OID4VCI request freshness (§3.3): **decided (c), 2026-07-16 — ahead of the N2 checkpoint** — keep
+  the standard `proof_type: jwt` PoP and have it sign the commitment digest, so it attests liveness
+  of a party holding the commitment (a bare PoP binds a key to nothing in credkit's link-secret
+  model). The PoP key stays **pairwise per issuer** (its `kid` is issuer-visible, so a reused key is
+  a cross-issuer handle). Neither (a) nor (c) proves fresh *knowledge* of the link secret — the
+  commitment is public and its PoK carries no nonce. (a) — token-only, no PoP — remains the fallback
+  shape ((c) collapses to it with no rework). Implementation lands at N2.
 - Whether to session/authorization-bind the holder commitment (e.g. to the OID4VCI authorization code or
   PKCE verifier), so an intercepted or replayed commitment cannot be injected into a different request.
   That strengthens anti-replay but does **not** by itself upgrade possession of the public commitment to
@@ -575,6 +592,7 @@ also vendors the vDL, AAMVA, VGW, security, and resident contexts.
 - Shop verifier — `apps/shop/worker/policy.ts` `assertAgeProofBundle`/`ageCutoffDays`/`normalizeFieldHex` (~18), `evaluateZkAgePolicy`/`zk_pending` (~84); `apps/shop/src/components/AgeGate.tsx` client `verifyAgeProof` (~78), `allowed` gate (~585), `ZkExhibit` (~282).
 - Rentals verifier — `apps/rentals/worker/policy.ts` (~26; `evaluateZkRoute` ~187; years 25); `apps/rentals/src/components/RentalGate.tsx` client verify (~74), `ZkExhibit` (~301), correlation caveat (~282).
 - Issuance commitment — `apps/dmv/worker/index.ts` `createCommitment` (~435), `vgw_commitment_opening` (~457); wallet `services/issuance.ts` opening store/validate (~307, ~519), `services/demo.ts` (~80).
+- **Unlisted consumer (N0 survey):** `apps/dmv/worker/offers.ts:10,74` imports `daysSinceEpoch` to validate offered birth dates. When `commitment.ts` dies (N4), keep a local calendar-date validator (or credkit's `date1900` round-trip) — offer validation must not silently vanish.
 
 **Replace (crypto bodies → credkit)**
 - `packages/vc-kit/src/bbs.ts` — delegate `signCredential`(~66)/`deriveCredential`(~102) to `issueCredential` / `deriveProof`+`presentGraph`; keep `DEFAULT_MANDATORY_POINTERS=['/issuer','/validFrom','/validUntil']`(~40). `verifyCredential`(~148) becomes a policy adapter over `verifyProof`/`verifyGraph`, retaining exact expected-issuer, verification-method-controller, and `checkValidityPeriod` behavior instead of returning Credkit's cryptographic boolean directly.
@@ -600,7 +618,7 @@ also vendors the vDL, AAMVA, VGW, security, and resident contexts.
 
 **Keys edits**
 - `packages/keys/src/hierarchy.ts` — keep `PRF_EVAL_INPUT="vgw/v1/master-secret"`(~21); ADD `deriveLinkSecret(master)` under a new **non-origin-scoped** info `vgw/v1/link-secret`; REPLACE `deriveHolderSeed`(~76) with `deriveIssuancePopSeed(master, issuerOrigin)` under pairwise info `vgw/v1/issuance-pop:<issuer-origin>` when option (c) is selected; `derivePresenterSeed`(~87) is vestigial.
-- `packages/keys/src/vault.ts` — the versioned per-credential envelope is `{ version: 3, vc, secretProverBlind: <base64url> }` (**not** `linkSecret` — it is re-derived from the PRF, §6). Watch the encoding: `secretProverBlind` is a **bigint scalar** (`Scalar = bigint`, `credkit/packages/bbs/src/core.ts:18`), and `encryptJson` calls `JSON.stringify`, which *throws* on a bigint. Encode it at the persistence boundary — `i2osp(secretProverBlind, 32)` → base64url, reusing `@credkit/bbs`'s `i2osp`/`os2ip` (`utils.ts:25,38`) rather than a hand-rolled encoder — and `os2ip` + range-check (`< r`) on read. `encryptJson`/`decryptJson` themselves stay JSON-only; scalars never reach them raw.
+- `packages/keys/src/vault.ts` — the versioned per-credential envelope is `{ version: 3, vc, secretProverBlind: <base64url> }` (**not** `linkSecret` — it is re-derived from the PRF, §6). Watch the encoding: `secretProverBlind` is a **bigint scalar** (`Scalar = bigint`, `credkit/packages/bbs/src/core.ts:18`), and `encryptJson` calls `JSON.stringify`, which *throws* on a bigint. Encode it at the persistence boundary — `i2osp(secretProverBlind, 32)` → base64url, reusing `@credkit/bbs`'s `i2osp`/`os2ip` (`utils.ts:25,38`) rather than a hand-rolled encoder — and `os2ip` + range-check (`< r`) on read. `encryptJson`/`decryptJson` themselves stay JSON-only; scalars never reach them raw. Version-naming note (N0 survey): no versioned envelope exists today — the unversioned `CredentialPayload { vc, commitmentOpening? }` sits in `apps/wallet/src/services/db.ts:46-49`, and the only live version constant is IndexedDB `DB_VERSION = 2` (`db.ts:99`). The envelope's `version: 3` and any DB_VERSION bump are two distinct versions; name both explicitly at N2.
 - `apps/wallet/src/services/db.ts` — the stored payload today is opaque AES-GCM ciphertext for `{ vc, commitmentOpening? }`; an IndexedDB `upgrade` callback has no vault key and therefore cannot transform that JSON, and legacy bbs-2023 credentials contain no Credkit blind to add. Treat them as incompatible at the N2 cutover and require reissuance (a v3 upgrade may retire/clear those credential records, but must not pretend to rewrite them). New writes use the versioned encoded-blind envelope above; decode and validate it only after wallet unlock.
 
 **New (N5)**
@@ -638,3 +656,26 @@ const tsFromJs = { name: 'ts-from-js', setup(b) { b.onResolve({ filter: /\.js$/ 
 }); } };
 ```
 Run under workerd via miniflare 4: `new Miniflare({ modules: true, script, compatibilityFlags: ['nodejs_compat'] })` → `dispatchFetch`. VGW's worker build (Vite + `@cloudflare/vite-plugin`) needs the equivalent `.js`→`.ts` resolution for credkit source, **or** credkit publishes a built `dist` and the problem disappears. Repro harness lived in the session scratchpad (`credkit-spike/`), not committed.
+
+### N0b addendum — Git-dependency consumption (validated 2026-07-16)
+
+pnpm (≥10) installs a credkit package straight from the public repo:
+`github:tmarkovski/credkit#<sha>&path:/packages/<name>`. Two facts the experiment nailed down:
+
+1. **pnpm does NOT convert `workspace:*` at git-dep pack time** — the tarball manifest still says
+   `workspace:*`. A `pnpm-workspace.yaml` `overrides` block mapping all four `@credkit/*` names to
+   the git specs rewrites those (and any plain version specs) before resolution, so the whole
+   dependency chain resolves from GitHub. `pnpm why @credkit/proofs` confirms
+   `@credkit/cryptosuite 0.1.0 → @credkit/proofs 0.1.0`.
+2. **`files: ["src"]` is honored** — tarballs carry only `src/` + manifest (+README), no test
+   fixtures.
+
+The Appendix C esbuild plugin bundled the git-dep source — including the cryptosuite's jsonld graph
+and its `with { type: "json" }` import attribute — at **544 KiB**, and the bundle executed
+`keyGen` (96-byte G2), `createHolderBinding` (144-byte commitment-with-proof), and
+`encodePresentationHeader` under plain Node. In VGW the resolver lives at
+`tooling/credkit-ts-resolver.ts` (registered in the four app vite configs and the five affected
+vitest configs); vitest additionally needs `server.deps.inline: [/@credkit\//]` so the TS source
+rides the vite pipeline instead of a raw Node import, and dev mode needs `optimizeDeps.exclude` for
+all four packages (prebundling bypasses resolveId plugins). Harness: session scratchpad
+(`gitdep-test/`), not committed.

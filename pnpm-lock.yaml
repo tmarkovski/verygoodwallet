@@ -4,6 +4,12 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@credkit/bbs': github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/bbs
+  '@credkit/range': github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/range
+  '@credkit/proofs': github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/proofs
+  '@credkit/cryptosuite': github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/cryptosuite
+
 importers:
 
   .: {}
@@ -356,6 +362,9 @@ importers:
 
   packages/vc-kit:
     dependencies:
+      '@credkit/bbs':
+        specifier: github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/bbs
+        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs
       '@digitalbazaar/bbs-2023-cryptosuite':
         specifier: ^2.0.1
         version: 2.0.1
@@ -383,6 +392,9 @@ importers:
       '@digitalbazaar/security-document-loader':
         specifier: ^3.2.0
         version: 3.2.0
+      '@scure/base':
+        specifier: ^2.2.0
+        version: 2.2.0
       jsonld-signatures:
         specifier: ^11.6.0
         version: 11.6.0
@@ -477,6 +489,11 @@ packages:
     engines: {node: '>=16'}
     cpu: [x64]
     os: [win32]
+
+  '@credkit/bbs@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs':
+    resolution: {path: /packages/bbs, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2}
+    version: 0.1.0
+    engines: {node: '>=20'}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -1878,6 +1895,11 @@ snapshots:
 
   '@cloudflare/workerd-windows-64@1.20260708.1':
     optional: true
+
+  '@credkit/bbs@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs':
+    dependencies:
+      '@noble/curves': 2.2.0
+      '@noble/hashes': 2.2.0
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:

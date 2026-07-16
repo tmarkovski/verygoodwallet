@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { cloudflare } from "@cloudflare/vite-plugin";
+import { credkitTsResolver } from "../../tooling/credkit-ts-resolver";
 
 // The cloudflare plugin reads wrangler.jsonc: `vite dev` runs the Worker and
 // the React UI together on one origin; `vite build` emits a deployable
@@ -10,7 +11,7 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 // Port 5176 (strict) so the wallet (5173), the DMV (5174), the shop (5175)
 // and the rentals site run side by side.
 export default defineConfig({
-  plugins: [react(), tailwindcss(), cloudflare()],
+  plugins: [credkitTsResolver(), react(), tailwindcss(), cloudflare()],
   environments: {
     // Same workerd startup workaround as apps/dmv and apps/shop: pin
     // import.meta.url for @digitalbazaar/credentials-context's module-scope
@@ -25,8 +26,10 @@ export default defineConfig({
   optimizeDeps: {
     // The rentals client lazy-loads bb.js for UltraHonk verification;
     // esbuild prebundling would relocate its JS away from the WASM it
-    // fetches relative to import.meta.url (dev-mode only issue).
-    exclude: ["@aztec/bb.js"],
+    // fetches relative to import.meta.url (dev-mode only issue). @credkit/*
+    // is TS source (.js specifiers) served through the resolver plugin
+    // pipeline, which dev prebundling would bypass.
+    exclude: ["@aztec/bb.js", "@credkit/bbs", "@credkit/range", "@credkit/proofs", "@credkit/cryptosuite"],
   },
   server: {
     port: 5176,

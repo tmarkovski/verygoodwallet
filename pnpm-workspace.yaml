@@ -1,3 +1,15 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+# THE credkit pin (MIGRATION.md §11): @credkit/* is consumed as Git
+# dependencies from the public repo, pinned to one commit sha. package.json
+# deps name the plain version ("0.1.0"); these overrides rewrite every
+# @credkit/* spec — including the workspace:* specs credkit's own packages
+# use internally, which pnpm leaves unconverted in git-dep tarballs — to the
+# pinned git spec before resolution. Bump the sha here and nowhere else.
+overrides:
+  "@credkit/bbs": "github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/bbs"
+  "@credkit/range": "github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/range"
+  "@credkit/proofs": "github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/proofs"
+  "@credkit/cryptosuite": "github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/cryptosuite"

@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { cloudflare } from "@cloudflare/vite-plugin";
+import { credkitTsResolver } from "../../tooling/credkit-ts-resolver";
 
 // The cloudflare plugin reads wrangler.jsonc: `vite dev` runs the Worker and
 // the React UI together on one origin; `vite build` emits a deployable
@@ -9,7 +10,13 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 //
 // Port 5174 (strict) so the wallet (5173) and the DMV run side by side.
 export default defineConfig({
-  plugins: [react(), tailwindcss(), cloudflare()],
+  plugins: [credkitTsResolver(), react(), tailwindcss(), cloudflare()],
+  optimizeDeps: {
+    // @credkit/* is TS source (.js specifiers); dev prebundling runs its own
+    // esbuild without the resolver plugin, so serve it through the plugin
+    // pipeline instead.
+    exclude: ["@credkit/bbs", "@credkit/range", "@credkit/proofs", "@credkit/cryptosuite"],
+  },
   environments: {
     // The Worker bundle pulls in @digitalbazaar/credentials-context, whose
     // module scope runs `new URL(..., import.meta.url)` for context metadata
