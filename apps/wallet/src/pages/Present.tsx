@@ -5,7 +5,12 @@
  * request in the query string. The page shows who is asking and for what
  * BEFORE any key material is touched, matches the DCQL query against the
  * vault, and offers the demo's disclosure-tier picker: full disclosure,
- * selective disclosure, or the credkit range predicate over the hidden twin.
+ * selective disclosure, or the credkit predicate proofs over hidden twins.
+ *
+ * Composite requests (multi-query / equality-linked, N5b) get a different
+ * consent: the request's shape is FIXED — per-statement sections show what
+ * each credential proves and discloses, plus one linkage line when the
+ * verifier demands the statements belong to one holder. No tier picker.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -16,22 +21,30 @@ import { decryptJson } from "@vgw/keys";
 import type { VerifiableCredential } from "@vgw/vc-kit";
 import { isInsecureIssuerOrigin } from "../services/issuance";
 import {
+  compositePresentationSteps,
+  compositeStatements,
   disclosurePreview,
   hasEmbeddedSubjectId,
   matchCredentials,
   parsePresentParams,
   predicateOption,
+  presentComposite,
   presentCredential,
   presentationSteps,
   previewPresentationRequest,
   type CandidateCredential,
+  type CompositeStatement,
   type DisclosureTier,
+  type MatchedRequest,
   type PredicateOption,
   type PresentCredentialResult,
   type PresentationStep,
-  type QueryCandidates,
 } from "../services/presentation";
-import { listCredentials, type CredentialPayload } from "../services/db";
+import {
+  listCredentials,
+  type CredentialPayload,
+  type CredentialRecord,
+} from "../services/db";
 import { recordPresentation } from "../services/activity";
 import { inspect } from "../inspector/events";
 import { InlineUnlock } from "../components/InlineUnlock";
@@ -63,9 +76,11 @@ function tierRows(predicate: PredicateOption | null): {
       ? {
           tier: 2,
           title: "Prove the answer, never the value",
-          detail: `A range proof over the hidden ${
-            predicate.range.map((claim) => claim.description).join("; ") || "value"
-          } — the verifier learns that one bit against its own live cutoff and verifies it entirely on its server. Disclosed alongside: ${
+          detail: `A proof over the hidden ${
+            [...predicate.range, ...predicate.membership]
+              .map((claim) => claim.description)
+              .join("; ") || "value"
+          } — the verifier learns that one bit against its own live requirement and verifies it entirely on its server. Disclosed alongside: ${
             predicate.pointers.length === 0
               ? "nothing beyond the issuer's mandatory fields"
               : "only the claims listed below"
@@ -77,7 +92,7 @@ function tierRows(predicate: PredicateOption | null): {
           disabled: true,
           detail:
             (predicate !== null && !predicate.available ? predicate.reason : undefined) ??
-            "A range predicate over a hidden value — unavailable for this request.",
+            "A predicate proof over a hidden value — unavailable for this request.",
         },
   ];
 }
@@ -123,6 +138,98 @@ function DisclosureList({ entries }: { entries: Record<string, unknown> }) {
   );
 }
 
+/**
+ * The composite consent/recap body: one section per statement (credential,
+ * what's proven, what's disclosed) plus the linkage line when the verifier
+ * demands the statements belong to one holder.
+ */
+function CompositeSections({
+  statements,
+  linked,
+}: {
+  statements: CompositeStatement[];
+  linked: boolean;
+}) {
+  return (
+    <div className="mt-3 space-y-3">
+      {statements.map((statement, index) => (
+        <div
+          key={statement.queryId}
+          className="rounded-2xl border border-line bg-canvas p-4"
+        >
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-sm font-medium text-ink">
+              {statement.candidate.record.meta.name}
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+              statement {index + 1} of {statements.length}
+            </span>
+          </div>
+          {statement.proven.length > 0 && (
+            <div className="mt-2.5">
+              <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+                Proves — the values stay hidden
+              </p>
+              <ul className="mt-1.5 space-y-1">
+                {statement.proven.map((line) => (
+                  <li key={line} className="text-[12px] leading-relaxed text-ink-dim">
+                    {line}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="mt-2.5">
+            <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+              Discloses
+            </p>
+            <div className="mt-1.5">
+              <DisclosureList entries={statement.disclosed} />
+            </div>
+          </div>
+          {hasEmbeddedSubjectId(statement.candidate.vc) && (
+            <p className="mt-2.5 rounded-xl bg-danger-soft px-3 py-2.5 text-[12px] leading-relaxed text-danger">
+              This credential embeds a subject identifier, and the proof math
+              reveals it — re-issuing at the Utopia DMV restores unlinkable
+              presentations.
+            </p>
+          )}
+        </div>
+      ))}
+      {linked && (
+        <p className="rounded-xl bg-accent-soft px-3 py-2.5 text-[12px] leading-relaxed text-ink">
+          Linked: these {statements.length === 2 ? "two credentials" : "credentials"} will
+          be proven to belong to <span className="font-semibold">one holder</span> — through
+          the wallet's hidden link secret, without revealing who that holder is.
+        </p>
+      )}
+      <p className="text-[12px] leading-relaxed text-muted">
+        Plus each issuer's mandatory fields: who issued it and its validity
+        window.
+      </p>
+    </div>
+  );
+}
+
+/** Merge a composite plan into one claim→value map for the activity log. */
+function compositeDisclosurePreview(
+  statements: CompositeStatement[],
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const statement of statements) {
+    Object.assign(merged, statement.disclosed);
+    for (const claim of statement.predicate?.range ?? []) {
+      merged[claim.pointer.slice(claim.pointer.lastIndexOf("/") + 1)] =
+        `proven, not shown: ${claim.description} — the value never leaves this wallet`;
+    }
+    for (const claim of statement.predicate?.membership ?? []) {
+      merged[claim.pointer.slice(claim.pointer.lastIndexOf("/") + 1)] =
+        `proven, not shown: ${claim.description}`;
+    }
+  }
+  return merged;
+}
+
 export function Present() {
   const [searchParams] = useSearchParams();
   const {
@@ -153,8 +260,10 @@ export function Present() {
     }
   }, [preview]);
 
-  const [matches, setMatches] = useState<QueryCandidates | null>(null);
+  const [matches, setMatches] = useState<MatchedRequest | null>(null);
   const [matchError, setMatchError] = useState<string | null>(null);
+  /** Set when the request itself can't be answered (missing credential, unsupported linkage). */
+  const [unanswerable, setUnanswerable] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [tier, setTier] = useState<DisclosureTier>(1);
   const [running, setRunning] = useState(false);
@@ -168,30 +277,42 @@ export function Present() {
     let cancelled = false;
     setMatches(null);
     setMatchError(null);
+    setUnanswerable(null);
     void (async () => {
+      let decrypted: { record: CredentialRecord; payload: CredentialPayload }[];
       try {
         const records = await listCredentials(account.id);
-        const decrypted = await Promise.all(
+        decrypted = await Promise.all(
           records.map(async (record) => ({
             record,
             payload: await decryptJson<CredentialPayload>(vaultKey, record.payload),
           })),
         );
+      } catch (err) {
+        if (!cancelled) setMatchError(describeError(err));
+        return;
+      }
+      try {
         const result = matchCredentials(decrypted, params.request);
         if (!cancelled) {
           setMatches(result);
-          setSelectedId(result.candidates[0]?.record.id ?? null);
+          setSelectedId(result.queries[0]?.candidates[0]?.record.id ?? null);
           inspect.emit({
             label: "DCQL query matched against vault",
             data: {
-              queryId: result.queryId,
-              candidates: result.candidates.length,
-              query: result.query,
+              composite: result.composite,
+              queries: result.queries.map((entry) => ({
+                queryId: entry.queryId,
+                candidates: entry.candidates.length,
+              })),
+              query: params.request.dcql_query,
             },
           });
         }
       } catch (err) {
-        if (!cancelled) setMatchError(describeError(err));
+        // The vault is fine — the REQUEST is unanswerable (a composite query
+        // this wallet holds no credential for, or an unsupported linkage).
+        if (!cancelled) setUnanswerable(describeError(err));
       }
     })();
     return () => {
@@ -199,47 +320,87 @@ export function Present() {
     };
   }, [params, account, vaultKey]);
 
+  const composite = matches !== null && matches.composite;
+  /** The single credential query, when the request is not composite. */
+  const single = matches !== null && !matches.composite ? matches.queries[0]! : null;
+
   const selected: CandidateCredential | null =
-    matches?.candidates.find((c) => c.record.id === selectedId) ?? null;
+    single?.candidates.find((c) => c.record.id === selectedId) ?? null;
 
   // Tier 2 availability is per-candidate; a switch to an ineligible
   // credential falls back to selective disclosure rather than a dead button.
   const predicate: PredicateOption | null =
-    matches !== null && selected !== null ? predicateOption(matches.query, selected) : null;
+    single !== null && selected !== null ? predicateOption(single.query, selected) : null;
   const predicateAvailable = predicate !== null && predicate.available;
   useEffect(() => {
     if (!predicateAvailable) setTier((current) => (current === 2 ? 1 : current));
   }, [predicateAvailable]);
 
+  // The composite plan: first candidate auto-picked per query (the service
+  // notes why), resolved once for consent, ceremony, and recap alike.
+  const compositePlan = useMemo<
+    { statements: CompositeStatement[] } | { error: string } | null
+  >(() => {
+    if (matches === null || !matches.composite) return null;
+    try {
+      return { statements: compositeStatements(matches) };
+    } catch (err) {
+      return { error: describeError(err) };
+    }
+  }, [matches]);
+  const compositeStatementsResolved =
+    compositePlan !== null && "statements" in compositePlan ? compositePlan.statements : null;
+  const compositeLinked =
+    params.kind === "request" &&
+    (params.request.dcql_query.vgw_equalities?.length ?? 0) > 0;
+  const compositeFetchesParams =
+    compositeStatementsResolved?.some((statement) => statement.predicate !== undefined) ??
+    false;
+
   const share = async () => {
     if (
       params.kind !== "request" ||
       matches === null ||
-      selected === null ||
       masterSecret === null ||
       running
     ) {
       return;
     }
+    if (!composite && selected === null) return;
+    if (composite && compositeStatementsResolved === null) return;
     setRunning(true);
     setError(null);
     setStep(null);
     try {
-      const result = await presentCredential({
-        request: params.request,
-        queryId: matches.queryId,
-        candidate: selected,
-        tier,
-        masterSecret,
-        signal: lockSignal ?? undefined,
-        onStep: setStep,
-      });
+      const result = composite
+        ? await presentComposite({
+            request: params.request,
+            matches,
+            masterSecret,
+            signal: lockSignal ?? undefined,
+            onStep: setStep,
+          })
+        : await presentCredential({
+            request: params.request,
+            queryId: single!.queryId,
+            candidate: selected!,
+            tier,
+            masterSecret,
+            signal: lockSignal ?? undefined,
+            onStep: setStep,
+          });
       // Log the ceremony for the cross-verifier exhibit (encrypted, local).
       // Best-effort: the verifier already has its answer, so a storage
       // failure must not turn a successful presentation into an error.
       if (preview !== null && account !== null && vaultKey !== null) {
-        const predicateYears =
-          tier === 2 && predicate !== null && predicate.available
+        const disclosed = composite
+          ? compositeDisclosurePreview(compositeStatementsResolved!)
+          : disclosurePreview(tier, selected!.vc, selected!.match, predicate ?? undefined);
+        const predicateYears = composite
+          ? compositeStatementsResolved!
+              .flatMap((statement) => statement.predicate?.range ?? [])
+              .find((claim) => claim.years !== undefined)?.years
+          : tier === 2 && predicate !== null && predicate.available
             ? predicate.range.find((claim) => claim.years !== undefined)?.years
             : undefined;
         try {
@@ -252,13 +413,10 @@ export function Present() {
               // The credkit VP carries NO holder identifier — record that
               // honestly rather than a key nobody saw.
               presenterDid: "",
-              tier,
-              disclosed: disclosurePreview(
-                tier,
-                selected.vc,
-                selected.match,
-                predicate ?? undefined,
-              ),
+              // A composite is the predicate route by construction (its
+              // shape is fixed by the verifier's vgw_predicates).
+              tier: composite ? 2 : tier,
+              disclosed,
               ...(predicateYears !== undefined ? { zkYears: predicateYears } : {}),
               at: Date.now(),
             },
@@ -336,17 +494,29 @@ export function Present() {
             or identifier of any kind. The inspector holds every message that
             crossed the wire.
           </p>
-          {selected !== null && (
+          {composite && compositeStatementsResolved !== null ? (
             <div className="mt-4 rounded-2xl border border-line bg-canvas p-4">
               <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
-                What was disclosed (tier {tier})
+                What was shared (one linked presentation)
               </p>
-              <div className="mt-2">
-                <DisclosureList
-                  entries={disclosurePreview(tier, selected.vc, selected.match, predicate ?? undefined)}
-                />
-              </div>
+              <CompositeSections
+                statements={compositeStatementsResolved}
+                linked={compositeLinked}
+              />
             </div>
+          ) : (
+            selected !== null && (
+              <div className="mt-4 rounded-2xl border border-line bg-canvas p-4">
+                <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+                  What was disclosed (tier {tier})
+                </p>
+                <div className="mt-2">
+                  <DisclosureList
+                    entries={disclosurePreview(tier, selected.vc, selected.match, predicate ?? undefined)}
+                  />
+                </div>
+              </div>
+            )
           )}
         </div>
         <div className="mt-5 flex gap-2">
@@ -376,7 +546,7 @@ export function Present() {
     <div className="mx-auto max-w-md animate-rise">
       <SectionTitle>Verification request</SectionTitle>
       <h1 className="mt-1 text-2xl font-semibold tracking-tight">
-        Share a credential
+        {composite ? "Share a linked presentation" : "Share a credential"}
       </h1>
 
       {preview !== null && (
@@ -401,9 +571,9 @@ export function Present() {
           )}
 
           <p className="mt-4 text-[13px] leading-relaxed text-ink-dim">
-            Sharing derives a one-off proof from your stored credential and
-            sends it directly to the verifier. The issuer is never contacted
-            and never learns where you presented.
+            Sharing derives a one-off proof from your stored credential
+            {composite ? "s" : ""} and sends it directly to the verifier. The
+            issuer is never contacted and never learns where you presented.
           </p>
         </div>
       )}
@@ -422,30 +592,83 @@ export function Present() {
       ) : locked ? (
         <InlineUnlock accounts={accounts} />
       ) : running ? (
-        <StepList title="Presenting" steps={presentationSteps(tier)} current={step} />
+        <StepList
+          title="Presenting"
+          steps={
+            composite
+              ? compositePresentationSteps(compositeFetchesParams)
+              : presentationSteps(tier)
+          }
+          current={step}
+        />
       ) : matchError !== null ? (
         <div className="mt-6">
           <ErrorNote>Couldn't check your credentials: {matchError}</ErrorNote>
+        </div>
+      ) : unanswerable !== null ? (
+        <div className="mt-6 rounded-3xl border border-dashed border-line-strong p-5 text-sm leading-relaxed text-ink-dim">
+          {unanswerable}
         </div>
       ) : matches === null ? (
         <div className="flex justify-center pt-10 text-muted">
           <Spinner />
         </div>
-      ) : matches.candidates.length === 0 ? (
+      ) : composite ? (
+        compositePlan !== null && "error" in compositePlan ? (
+          <div className="mt-6 rounded-3xl border border-dashed border-line-strong p-5 text-sm leading-relaxed text-ink-dim">
+            {compositePlan.error}
+          </div>
+        ) : (
+          <>
+            <div className="mt-6">
+              <SectionTitle>What this request proves</SectionTitle>
+              <p className="mt-2 text-[12px] leading-relaxed text-muted">
+                This verifier asks for {compositeStatementsResolved!.length} credentials
+                in one linked presentation. The request's shape is fixed — no
+                disclosure tiers: each credential proves exactly what's listed,
+                and nothing else leaves this wallet.
+              </p>
+              <CompositeSections
+                statements={compositeStatementsResolved!}
+                linked={compositeLinked}
+              />
+            </div>
+
+            <div className="mt-6">
+              {error !== null && (
+                <div className="mb-4">
+                  <ErrorNote>{error}</ErrorNote>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button onClick={() => void share()}>
+                  {error !== null ? "Try again" : "Share"}
+                </Button>
+                <Link
+                  to="/"
+                  className="inline-flex items-center rounded-2xl border border-line px-4 text-sm text-ink-dim hover:border-line-strong"
+                >
+                  Decline
+                </Link>
+              </div>
+            </div>
+          </>
+        )
+      ) : single!.candidates.length === 0 ? (
         <div className="mt-6 rounded-3xl border border-dashed border-line-strong p-5 text-sm leading-relaxed text-ink-dim">
           None of your credentials can answer this request — it asks for a{" "}
           <span className="font-mono text-[12px]">
-            {matches.query.meta?.type_values?.[0]?.join(", ") ?? "credential"}
+            {single!.query.meta?.type_values?.[0]?.join(", ") ?? "credential"}
           </span>
           . Visit the Utopia DMV to be issued one, then open this link again.
         </div>
       ) : (
         <>
-          {matches.candidates.length > 1 && (
+          {single!.candidates.length > 1 && (
             <div className="mt-6">
               <SectionTitle>Which credential</SectionTitle>
               <ul className="mt-2 space-y-2">
-                {matches.candidates.map((candidate) => (
+                {single!.candidates.map((candidate) => (
                   <li key={candidate.record.id}>
                     <button
                       type="button"

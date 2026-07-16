@@ -1,6 +1,14 @@
 /**
- * The driver-verification panel: one verification session from start to
- * outcome.
+ * The verification panel: one session from start to outcome, on either of
+ * the counter's two flows.
+ *
+ * Standard driver check — name + license number + over-25 — gates the lot.
+ * The N5b "coastal resident rate" check is the composite exhibit (MIGRATION
+ * §9 B+C): ONE linked presentation proving over-25 (range), coastal
+ * residency (set membership, district hidden), and that one holder holds
+ * both credentials (link-secret equality) — with an EMPTY disclosed set.
+ * Eligibility is the anonymous part; an actual discounted booking would run
+ * the standard flow.
  *
  * Sequence: create a session on the Worker → show the OID4VP wallet link +
  * QR (the DC API exhibit lives at the shop; this counter goes straight to
@@ -10,8 +18,8 @@
  * correlated with another verifier's records, and which of it cannot.
  *
  * Since N3 the Worker verifies the WHOLE presentation server-side — credkit
- * range proofs need no WASM — so the verdict arrives final: no `zk_pending`,
- * no in-browser proof check, no split-runtime exhibit.
+ * proofs need no WASM — so the verdict arrives final: no `zk_pending`, no
+ * in-browser proof check, no split-runtime exhibit.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -19,6 +27,9 @@ import QRCode from "qrcode";
 import { walletPresentLink, type PresentationRequest } from "@vgw/protocols";
 import { nextTourStop, useTourStop, withTourParam } from "@vgw/tour";
 import { clientWalletOrigin } from "../walletOrigin";
+
+/** Mirrors the Worker's VerificationFlow (wire contract, not import). */
+export type VerificationFlow = "standard" | "resident-rate";
 
 /** Mirrors the Worker's VerificationSessionBody (wire contract, not import). */
 export interface VerificationSession {
@@ -37,6 +48,14 @@ export interface PredicatePayload {
   cutoffIso: string;
 }
 
+/** Mirrors the Worker's CompositeExhibit (wire contract, not import). */
+export interface CompositePayload {
+  statements: number;
+  range: (PredicatePayload & { statement: number })[];
+  membership: { statement: number; pointer: string; setId: string; members: string[] }[];
+  equalities: { kind: "link_secret"; statements: number[] }[];
+}
+
 /** Mirrors the Worker's SessionStatus. */
 export type SessionStatus =
   | { status: "pending" }
@@ -46,6 +65,7 @@ export type SessionStatus =
       reason: string;
       disclosed: Record<string, unknown>;
       predicate?: PredicatePayload;
+      composite?: CompositePayload;
       vpToken?: unknown;
       completedAt: number;
     };
@@ -56,11 +76,17 @@ const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
 type Phase =
-  | { kind: "starting" }
-  | { kind: "start-failed"; error: string }
-  | { kind: "awaiting"; session: VerificationSession }
+  | { kind: "starting"; flow: VerificationFlow }
+  | { kind: "start-failed"; flow: VerificationFlow; error: string }
+  | { kind: "awaiting"; flow: VerificationFlow; session: VerificationSession }
   | { kind: "resumed"; sessionId: string }
-  | { kind: "done"; outcome: GateOutcome; session: VerificationSession | null }
+  | {
+      kind: "done";
+      outcome: GateOutcome;
+      session: VerificationSession | null;
+      /** null when resumed (?session=) — the flow is inferred from the outcome. */
+      flow: VerificationFlow | null;
+    }
   | { kind: "timed-out" };
 
 /**
@@ -152,15 +178,29 @@ function Inspector({ title, data }: { title: string; data: unknown }) {
 /** The "what did the verifier actually learn" table — the point of the demo. */
 function LearnedPanel({ outcome }: { outcome: GateOutcome }) {
   const entries = Object.entries(outcome.disclosed);
+  const composite = outcome.composite !== undefined && outcome.status === "verified";
   return (
     <div className="mt-4 rounded-2xl border border-line bg-surface p-4 text-left">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
         What Utopia Wheels learned
       </p>
       {entries.length === 0 ? (
-        <p className="mt-2 text-[13px] text-ink-dim">
-          Nothing — the presentation failed before disclosure.
-        </p>
+        composite ? (
+          // THE headline of the resident-rate exhibit: an allowed verdict
+          // whose disclosed set is empty beyond the mandatory pointers.
+          <p className="mt-2 text-[13px] leading-relaxed text-ink">
+            <span className="font-semibold">
+              Nothing but three proofs — the disclosed set is empty.
+            </span>{" "}
+            No name, no birthdate, no district, no identifier: only each
+            credential's mandatory fields (who issued it, its validity window)
+            plus three yes/no facts, listed below.
+          </p>
+        ) : (
+          <p className="mt-2 text-[13px] text-ink-dim">
+            Nothing — the presentation failed before disclosure.
+          </p>
+        )
       ) : (
         <dl className="mt-2 space-y-1.5">
           {entries.map(([claim, value]) => (
@@ -182,12 +222,15 @@ function LearnedPanel({ outcome }: { outcome: GateOutcome }) {
 
 /**
  * The cross-verifier exhibit — M5's teaching point, upgraded by the credkit
- * flip. This counter knows who you are (a rental agreement needs a name);
- * the demo's claim is narrower and stronger: NOTHING in the cryptography
- * lets this counter and the shop link their records. The only correlation
- * handles that exist are values you explicitly chose to disclose to both.
+ * flip. On the standard flow this counter knows who you are (a rental
+ * agreement needs a name); the demo's claim is narrower and stronger:
+ * NOTHING in the cryptography lets this counter and the shop link their
+ * records. On the composite flow it's absolute: no values were disclosed at
+ * all, and even the "same holder" linkage was holder-elected, proven INSIDE
+ * one presentation — never a handle that survives it.
  */
 function CorrelationPanel({ outcome }: { outcome: GateOutcome }) {
+  const composite = outcome.composite !== undefined;
   return (
     <div className="mt-4 rounded-2xl border border-line bg-surface p-4 text-left">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
@@ -204,20 +247,42 @@ function CorrelationPanel({ outcome }: { outcome: GateOutcome }) {
         <div>
           <dt className="font-semibold text-ink">The proof bytes</dt>
           <dd className="text-ink-dim">
-            are a fresh derivation — every presentation of the same license is
-            cryptographically unlinkable to every other one, and an age proof
-            hides the birthdate behind a per-presentation-randomized value.
+            are a fresh derivation — every presentation of the same credential is
+            cryptographically unlinkable to every other one, and each proof hides
+            its value behind per-presentation-randomized cryptography.
           </dd>
         </div>
-        <div>
-          <dt className="font-semibold text-ink">What COULD correlate</dt>
-          <dd className="text-ink-dim">
-            only the claim values above. This counter needed your name and license
-            number for the rental agreement; the shop asked for neither. Your
-            wallet's home screen shows the two verifiers' views side by side and
-            draws that line exactly.
-          </dd>
-        </div>
+        {composite ? (
+          <>
+            <div>
+              <dt className="font-semibold text-ink">The "same holder" linkage</dt>
+              <dd className="text-ink-dim">
+                was proven between the two credentials INSIDE this one
+                presentation — holder-elected, via a hidden link secret. It is
+                not a value anyone received; there is nothing to take to
+                another verifier.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-ink">What COULD correlate</dt>
+              <dd className="text-ink-dim">
+                nothing. This check disclosed no claim values at all — three
+                yes/no facts about an anonymous holder are shared with every
+                other eligible resident.
+              </dd>
+            </div>
+          </>
+        ) : (
+          <div>
+            <dt className="font-semibold text-ink">What COULD correlate</dt>
+            <dd className="text-ink-dim">
+              only the claim values above. This counter needed your name and license
+              number for the rental agreement; the shop asked for neither. Your
+              wallet's home screen shows the two verifiers' views side by side and
+              draws that line exactly.
+            </dd>
+          </div>
+        )}
       </dl>
     </div>
   );
@@ -259,6 +324,65 @@ function PredicateExhibitPanel({ predicate }: { predicate: PredicatePayload }) {
   );
 }
 
+/**
+ * The composite exhibit (N5b): the three proofs one linked presentation
+ * established — over-25 live, coastal membership with the district hidden,
+ * one holder across both credentials with nobody named.
+ */
+function CompositeExhibitPanel({ composite }: { composite: CompositePayload }) {
+  const range = composite.range[0];
+  const membership = composite.membership[0];
+  return (
+    <div className="mt-4 rounded-2xl border border-line bg-surface p-4 text-left">
+      <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+        One linked presentation · three proofs · verified on the server
+      </p>
+      <dl className="mt-2 space-y-2 text-[12px] leading-relaxed">
+        {range !== undefined && (
+          <div>
+            <dt className="font-semibold text-ink">1 · Over 25, live</dt>
+            <dd className="text-ink-dim">
+              The license's hidden birth date is on or before{" "}
+              <span className="font-mono">{range.cutoffIso}</span> — proven against{" "}
+              <em>this request's</em> cutoff; the date never left the wallet.
+            </dd>
+          </div>
+        )}
+        {membership !== undefined && (
+          <div>
+            <dt className="font-semibold text-ink">2 · Coastal resident, district hidden</dt>
+            <dd className="text-ink-dim">
+              The registration's hidden district code is one of the{" "}
+              {membership.members.length} in Wheels' published "{membership.setId}"
+              set (<span className="font-mono">{membership.members.join(", ")}</span>)
+              — which one, it cannot tell.
+            </dd>
+          </div>
+        )}
+        {composite.equalities.length > 0 && (
+          <div>
+            <dt className="font-semibold text-ink">3 · Same holder, no identifier</dt>
+            <dd className="text-ink-dim">
+              Both credentials were proven to belong to ONE holder through the
+              hidden link secret they share — the license and the registration
+              answer together, and nobody was named doing it.
+            </dd>
+          </div>
+        )}
+        <div>
+          <dt className="font-semibold text-ink">Where it was checked</dt>
+          <dd className="text-ink-dim">
+            Entirely on Utopia Wheels' Worker: both DMV signatures, the merged
+            presentation proof (nonce + audience → no replay), the range and
+            membership proofs, and the equality — one server-side verdict.
+          </dd>
+        </div>
+      </dl>
+      <Inspector title="Composite offer (as restated by the verifier)" data={composite} />
+    </div>
+  );
+}
+
 export function RentalGate({
   resumeSessionId,
   onVerdict,
@@ -273,23 +397,37 @@ export function RentalGate({
   const walletOrigin = clientWalletOrigin();
   const tourStopId = useTourStop()?.id;
 
-  const start = useCallback(async () => {
-    setPhase({ kind: "starting" });
-    onVerdict(null);
-    let session: VerificationSession;
-    try {
-      const response = await fetch("/api/verification", { method: "POST" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      session = (await response.json()) as VerificationSession;
-    } catch (error) {
-      setPhase({
-        kind: "start-failed",
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return;
-    }
-    setPhase({ kind: "awaiting", session });
-  }, [onVerdict]);
+  const start = useCallback(
+    async (flow: VerificationFlow) => {
+      setPhase({ kind: "starting", flow });
+      onVerdict(null);
+      let session: VerificationSession;
+      try {
+        // The standard flow posts the pre-N5b empty body; the composite
+        // names itself. Unknown flows 400 on the Worker (fail closed).
+        const response = await fetch("/api/verification", {
+          method: "POST",
+          ...(flow === "resident-rate"
+            ? {
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ flow }),
+              }
+            : {}),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        session = (await response.json()) as VerificationSession;
+      } catch (error) {
+        setPhase({
+          kind: "start-failed",
+          flow,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      setPhase({ kind: "awaiting", flow, session });
+    },
+    [onVerdict],
+  );
 
   const statusUrl =
     phase?.kind === "awaiting"
@@ -303,9 +441,16 @@ export function RentalGate({
     (outcome) => {
       setPhase((current) => {
         const session = current?.kind === "awaiting" ? current.session : null;
-        return { kind: "done", outcome, session };
+        const flow = current?.kind === "awaiting" ? current.flow : null;
+        return { kind: "done", outcome, session, flow };
       });
-      onVerdict(outcome.status === "verified" ? (outcome.verdict ?? null) : null);
+      // The lot is gated by the STANDARD driver check; the resident-rate
+      // check is an anonymous eligibility exhibit — a discounted booking
+      // would still run the standard flow (MIGRATION D.5.3).
+      const composite = outcome.composite !== undefined;
+      onVerdict(
+        !composite && outcome.status === "verified" ? (outcome.verdict ?? null) : null,
+      );
     },
     () => setPhase({ kind: "timed-out" }),
   );
@@ -326,34 +471,59 @@ export function RentalGate({
 
   if (phase === null) {
     return (
-      <div className="rounded-3xl border border-line bg-raised p-6 text-center">
-        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
-          Driver check · name + license + 25+
-        </p>
-        <h2 className="mt-2 font-display text-2xl font-semibold uppercase tracking-[0.02em] text-ink">
-          Three answers. Not your life story.
-        </h2>
-        <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-dim">
-          The rental agreement needs your{" "}
-          <span className="font-mono text-[12px]">name</span>, your{" "}
-          <span className="font-mono text-[12px]">license number</span>, and proof
-          you're over 25. Your birthdate, address, and everything else stay in
-          your pocket.
-        </p>
-        <button
-          type="button"
-          onClick={() => void start()}
-          className="mt-5 rounded-2xl bg-accent px-6 py-3 text-[15px] font-semibold text-accent-contrast transition-opacity hover:opacity-90"
-        >
-          Verify with VeryGoodWallet
-        </button>
-        {walletOrigin === null && (
-          <p className="mx-auto mt-4 max-w-md rounded-xl bg-danger-soft px-4 py-3 text-[12px] leading-relaxed text-danger">
-            No wallet origin is configured for this deployment (VITE_WALLET_ORIGIN) —
-            the verification link can't be built. Append{" "}
-            <span className="font-mono">?wallet=&lt;origin&gt;</span> to override.
+      <div className="space-y-4">
+        <div className="rounded-3xl border border-line bg-raised p-6 text-center">
+          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
+            Driver check · name + license + 25+
           </p>
-        )}
+          <h2 className="mt-2 font-display text-2xl font-semibold uppercase tracking-[0.02em] text-ink">
+            Three answers. Not your life story.
+          </h2>
+          <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-dim">
+            The rental agreement needs your{" "}
+            <span className="font-mono text-[12px]">name</span>, your{" "}
+            <span className="font-mono text-[12px]">license number</span>, and proof
+            you're over 25. Your birthdate, address, and everything else stay in
+            your pocket.
+          </p>
+          <button
+            type="button"
+            onClick={() => void start("standard")}
+            className="mt-5 rounded-2xl bg-accent px-6 py-3 text-[15px] font-semibold text-accent-contrast transition-opacity hover:opacity-90"
+          >
+            Verify with VeryGoodWallet
+          </button>
+          {walletOrigin === null && (
+            <p className="mx-auto mt-4 max-w-md rounded-xl bg-danger-soft px-4 py-3 text-[12px] leading-relaxed text-danger">
+              No wallet origin is configured for this deployment (VITE_WALLET_ORIGIN) —
+              the verification link can't be built. Append{" "}
+              <span className="font-mono">?wallet=&lt;origin&gt;</span> to override.
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-3xl border border-line bg-raised p-6 text-center">
+          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
+            Coastal resident rate · anonymous eligibility check
+          </p>
+          <h2 className="mt-2 font-display text-xl font-semibold uppercase tracking-[0.02em] text-ink">
+            Prove three things. Disclose nothing.
+          </h2>
+          <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-dim">
+            Coastal residents rent cheaper. Eligibility takes your license{" "}
+            <em>and</em> your resident registration in one linked presentation:
+            over 25, a coastal district, one holder for both — proven, never
+            shown. No name, no district, no birthdate. Booking at the rate runs
+            the ordinary driver check.
+          </p>
+          <button
+            type="button"
+            onClick={() => void start("resident-rate")}
+            className="mt-5 rounded-2xl border border-accent px-6 py-3 text-[15px] font-semibold text-accent transition-colors hover:bg-accent-soft"
+          >
+            Check coastal resident rate
+          </button>
+        </div>
       </div>
     );
   }
@@ -374,7 +544,7 @@ export function RentalGate({
         </p>
         <button
           type="button"
-          onClick={() => void start()}
+          onClick={() => void start(phase.flow)}
           className="mt-4 rounded-2xl bg-accent px-5 py-2.5 text-[14px] font-semibold text-accent-contrast"
         >
           Try again
@@ -399,7 +569,7 @@ export function RentalGate({
         </p>
         <button
           type="button"
-          onClick={() => void start()}
+          onClick={() => void start("standard")}
           className="mt-4 rounded-2xl bg-accent px-5 py-2.5 text-[14px] font-semibold text-accent-contrast"
         >
           Start over
@@ -413,7 +583,9 @@ export function RentalGate({
     return (
       <div className="rounded-3xl border border-line bg-raised p-6" aria-live="polite">
         <p className="text-center font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
-          Driver check · waiting for your wallet
+          {phase.flow === "resident-rate"
+            ? "Coastal resident rate · waiting for your wallet"
+            : "Driver check · waiting for your wallet"}
         </p>
 
         <div className="mt-5 flex flex-col items-center gap-5 sm:flex-row sm:justify-center">
@@ -451,11 +623,26 @@ export function RentalGate({
   // phase.kind === "done"
   const { outcome } = phase;
   const isPredicateOutcome = outcome.status === "verified" && outcome.predicate !== undefined;
+  const isCompositeOutcome = outcome.status === "verified" && outcome.composite !== undefined;
   const allowed = outcome.status === "verified" && outcome.verdict === "allowed";
   const denied = outcome.status === "verified" && outcome.verdict === "denied";
   return (
     <div className="rounded-3xl border border-line bg-raised p-6 text-center" aria-live="polite">
-      {allowed && (
+      {allowed && isCompositeOutcome && (
+        <div className="guide-sign mx-auto max-w-md px-6 py-5">
+          <p className="font-mono text-[11px] uppercase tracking-[0.3em] opacity-90">
+            Coastal exit · resident rate
+          </p>
+          <h2 className="mt-1.5 font-display text-2xl font-semibold uppercase tracking-[0.03em]">
+            Eligible — and still anonymous
+          </h2>
+          <p className="mt-1 text-[12px] opacity-90">
+            Over 25, coastal resident, one holder for both — three proofs,
+            zero disclosures, verified on the server.
+          </p>
+        </div>
+      )}
+      {allowed && !isCompositeOutcome && (
         <div className="guide-sign mx-auto max-w-md px-6 py-5">
           <p className="font-mono text-[11px] uppercase tracking-[0.3em] opacity-90">
             Exit 25 · driver verified
@@ -495,9 +682,15 @@ export function RentalGate({
 
       {outcome.status === "verified" && <CorrelationPanel outcome={outcome} />}
 
-      {outcome.status === "verified" && outcome.predicate !== undefined && (
-        <PredicateExhibitPanel predicate={outcome.predicate} />
+      {outcome.status === "verified" && outcome.composite !== undefined && (
+        <CompositeExhibitPanel composite={outcome.composite} />
       )}
+
+      {outcome.status === "verified" &&
+        outcome.composite === undefined &&
+        outcome.predicate !== undefined && (
+          <PredicateExhibitPanel predicate={outcome.predicate} />
+        )}
 
       {phase.session !== null && (
         <Inspector title="OID4VP authorization request" data={phase.session.request} />
@@ -506,13 +699,19 @@ export function RentalGate({
         <Inspector title="vp_token (as received)" data={outcome.vpToken} />
       )}
 
-      {!allowed && (
+      {(!allowed || isCompositeOutcome) && (
         <button
           type="button"
-          onClick={() => void start()}
+          onClick={() =>
+            // An eligible resident's next step is booking (the standard
+            // check); a failed attempt retries whatever flow it was.
+            void start(
+              isCompositeOutcome && allowed ? "standard" : (phase.flow ?? "standard"),
+            )
+          }
           className="mt-5 rounded-2xl bg-accent px-5 py-2.5 text-[14px] font-semibold text-accent-contrast"
         >
-          Try again
+          {isCompositeOutcome && allowed ? "Run the driver check to book" : "Try again"}
         </button>
       )}
     </div>

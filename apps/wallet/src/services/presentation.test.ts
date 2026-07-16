@@ -14,20 +14,29 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  UTOPIA_DISTRICTS,
+  UTOPIA_DL_NUMERIC_DECLARATIONS,
+  UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
   buildUtopiaDriversLicense,
+  buildUtopiaResidentRegistration,
   createHolderBinding,
+  districtByFips,
   generateCredkitBbsKeyPair,
   getEncoder,
   issueCredkitCredential,
   mintSeededRangeParams,
+  mintSeededSetParams,
   rangeParamsHashBase64Url,
   rangeParamsToBase64Url,
+  setParamsHashBase64Url,
+  setParamsToBase64Url,
   summarizeCredkitPresentation,
   verifyCredkitPresentation,
-  UTOPIA_DL_NUMERIC_DECLARATIONS,
   type CredkitBbsKeyPair,
   type HolderBinding,
   type RangeParams,
+  type SetMembershipParams,
+  type UtopiaDistrict,
   type VerifiableCredential,
   type VerifiablePresentation,
 } from "@vgw/vc-kit";
@@ -40,11 +49,14 @@ import {
 } from "@vgw/protocols";
 import { deriveLinkSecret, scalarToBase64Url } from "@vgw/keys";
 import {
+  compositePresentationSteps,
+  compositeStatements,
   disclosurePreview,
   hasEmbeddedSubjectId,
   matchCredentials,
   parsePresentParams,
   predicateOption,
+  presentComposite,
   presentCredential,
   presentationSteps,
   previewPresentationRequest,
@@ -63,6 +75,7 @@ const REDIRECT_BACK = "https://shop.example/?session=abc";
 
 const LICENSE_PATH = ["credentialSubject", "driversLicense"] as const;
 const DOB_POINTER = "/credentialSubject/driversLicense/birth_date";
+const STATE_FIPS_POINTER = "/credentialSubject/stateFips";
 
 /** Frozen cutoffs (see the module note): 18+ / 25+ as of 2026-07-16. */
 const CUTOFF_18_ISO = "2008-07-16";
@@ -70,13 +83,24 @@ const CUTOFF_25_ISO = "2001-07-16";
 const BOUND_18 = getEncoder("date1900").encode(CUTOFF_18_ISO).toString();
 const BOUND_25 = getEncoder("date1900").encode(CUTOFF_25_ISO).toString();
 
+/** The composite flow's verifier (rentals-shaped): a SECOND origin. */
+const RENTALS_RESPONSE_URI = "https://rentals.example/oid4vp/response";
+const RENTALS_CLIENT_ID = `redirect_uri:${RENTALS_RESPONSE_URI}`;
+const RENTALS_PARAMS_URI = "https://rentals.example/.well-known/credkit-params";
+
+/** Jamie's district (coastal, fips 11) and an inland one (fips 21). */
+const PORT_AZURE = districtByFips(11)!;
+const HIGHFIELD = districtByFips(21)!;
+/** The coastal set = fips of coastal districts, in publication order (D.5.5). */
+const COASTAL_FIPS = UTOPIA_DISTRICTS.filter((d) => d.coastal).map((d) => BigInt(d.fips));
+
 interface IssuedFixture {
   vc: VerifiableCredential;
   binding: HolderBinding;
 }
 
 let issuer: CredkitBbsKeyPair;
-/** The wallet's ONE link secret — re-derived by presentCredential from MASTER_SECRET. */
+/** The wallet's ONE link secret — re-derived by the ceremonies from MASTER_SECRET. */
 let linkSecret: Uint8Array;
 /** Jamie (1996-03-14; passes 18+ and 25+), unlinkable shape (no subject id). */
 let adult: IssuedFixture;
@@ -84,10 +108,18 @@ let adult: IssuedFixture;
 let minor: IssuedFixture;
 /** Jamie again, with an embedded subject id — kept to pin its consequences. */
 let identified: IssuedFixture;
+/** Jamie's resident registration, Port Azure (coastal) — SAME link secret, own blind. */
+let residentCoastal: IssuedFixture;
+/** A Highfield (inland) registration — the coastal set's non-member. */
+let residentInland: IssuedFixture;
 /** The verifier's published proof alphabet + its wire encodings. */
 let params: RangeParams;
 let paramsHash: string;
 let paramsDocument: CredkitParamsDocument;
+/** The rentals-shaped verifier's coastal set alphabet + document (range + sets). */
+let coastalSet: SetMembershipParams;
+let coastalSetHash: string;
+let rentalsParamsDocument: CredkitParamsDocument;
 
 beforeAll(async () => {
   issuer = generateCredkitBbsKeyPair(ISSUER_SEED);
@@ -116,10 +148,37 @@ beforeAll(async () => {
     return { vc, binding };
   };
 
-  [adult, minor, identified] = await Promise.all([
+  // The resident registrations share the ONE wallet link secret (each with
+  // its own blind) — exactly what makes the link-secret equality provable.
+  const issueResident = async (
+    district: UtopiaDistrict,
+    postalCode: number,
+  ): Promise<IssuedFixture> => {
+    const binding = createHolderBinding({ linkSecret });
+    const vc = await issueCredkitCredential({
+      credential: buildUtopiaResidentRegistration({
+        givenName: "Jamie",
+        familyName: "Voss",
+        districtName: district.name,
+        stateFips: district.fips,
+        postalCode,
+        issuer: { id: issuer.controller, name: "Utopia DMV" },
+        validFrom: "2026-01-01T00:00:00Z",
+        validUntil: "2028-01-01T00:00:00Z",
+      }),
+      keyPair: issuer,
+      numericDeclarations: UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
+      holderCommitment: binding.commitmentWithProof,
+    });
+    return { vc, binding };
+  };
+
+  [adult, minor, identified, residentCoastal, residentInland] = await Promise.all([
     issue(),
     issue({ birthDate: "2009-11-02" }),
     issue({ subjectId: "did:key:z6MkHolderExample" }),
+    issueResident(PORT_AZURE, 40125),
+    issueResident(HIGHFIELD, 41150),
   ]);
 
   params = mintSeededRangeParams({
@@ -132,6 +191,20 @@ beforeAll(async () => {
     version: 1,
     suite: "credkit-bbs-sha-2026",
     range: { base: 16, params: rangeParamsToBase64Url(params), hash: paramsHash },
+  };
+
+  coastalSet = mintSeededSetParams({
+    seed: "rentals-params-seed",
+    dst: "VGW-RENTALS-CREDKIT-SET-PARAMS-coastal-V1",
+    members: COASTAL_FIPS,
+  });
+  coastalSetHash = await setParamsHashBase64Url(coastalSet);
+  // ONE document per verifier (D.3/D.5.5): range AND sets from the same fetch.
+  rentalsParamsDocument = {
+    version: 1,
+    suite: "credkit-bbs-sha-2026",
+    range: paramsDocument.range,
+    sets: { coastal: { params: setParamsToBase64Url(coastalSet), hash: coastalSetHash } },
   };
 }, 120_000);
 
@@ -252,6 +325,75 @@ function request(overrides?: Partial<PresentationRequest>): PresentationRequest 
   };
 }
 
+/**
+ * The rentals N5b composite shape (showcases B + C): two predicate-only
+ * queries — DL over-25 range + resident coastal membership, both with an
+ * empty claim_set — linked by a link-secret equality. Mirrors
+ * `buildResidentRateDcqlQuery` in the rentals Worker.
+ */
+function residentRateDcql(overrides?: {
+  setParamsHash?: string;
+  equalities?: DcqlQuery["vgw_equalities"];
+}): DcqlQuery {
+  return {
+    credentials: [
+      {
+        id: "utopia_dl_over25",
+        format: "ldp_vc",
+        meta: {
+          type_values: [["VerifiableCredential", "Iso18013DriversLicenseCredential"]],
+        },
+        vgw_predicates: {
+          params_uri: RENTALS_PARAMS_URI,
+          range: [
+            {
+              path: [...LICENSE_PATH, "birth_date"],
+              kind: "lessOrEqual",
+              bound: BOUND_25,
+              digits: 4,
+              params_hash: paramsHash,
+            },
+          ],
+          claim_set: [],
+        },
+      },
+      {
+        id: "utopia_resident_coastal",
+        format: "ldp_vc",
+        meta: {
+          type_values: [["VerifiableCredential", "UtopiaResidentRegistrationCredential"]],
+        },
+        vgw_predicates: {
+          params_uri: RENTALS_PARAMS_URI,
+          membership: [
+            {
+              path: ["credentialSubject", "stateFips"],
+              set_id: "coastal",
+              params_hash: overrides?.setParamsHash ?? coastalSetHash,
+            },
+          ],
+          claim_set: [],
+        },
+      },
+    ],
+    vgw_equalities: overrides?.equalities ?? [
+      [
+        { query: "utopia_dl_over25", link_secret: true },
+        { query: "utopia_resident_coastal", link_secret: true },
+      ],
+    ],
+  };
+}
+
+function compositeRequest(dcql?: DcqlQuery): PresentationRequest {
+  return request({
+    response_uri: RENTALS_RESPONSE_URI,
+    client_id: RENTALS_CLIENT_ID,
+    dcql_query: dcql ?? residentRateDcql(),
+    client_metadata: { client_name: "Utopia Wheels" },
+  });
+}
+
 interface FetchLog {
   /** GET requests (the params document fetches), by URL. */
   gets: string[];
@@ -260,7 +402,8 @@ interface FetchLog {
 }
 
 /**
- * Stub fetch as the two endpoints this flow touches: GET params document,
+ * Stub fetch as the two endpoints this flow touches: GET params document
+ * (routed by origin — the rentals-shaped verifier publishes range + sets),
  * POST direct_post. Overridable per test for the failure paths.
  */
 function stubFetch(options?: {
@@ -277,7 +420,10 @@ function stubFetch(options?: {
       ).toUpperCase();
       if (method === "GET") {
         log.gets.push(url);
-        return options?.paramsResponse?.() ?? Response.json(paramsDocument);
+        return (
+          options?.paramsResponse?.() ??
+          Response.json(url === RENTALS_PARAMS_URI ? rentalsParamsDocument : paramsDocument)
+        );
       }
       log.posts.push({ url, body: new URLSearchParams(String(init?.body ?? "")) });
       return options?.postResponse?.() ?? Response.json({ redirect_uri: REDIRECT_BACK });
@@ -342,9 +488,11 @@ describe("matchCredentials", () => {
       [{ record: record(1), payload: v3Payload(adult) }],
       request(),
     );
-    expect(result.queryId).toBe("utopia_dl_age");
-    expect(result.candidates).toHaveLength(1);
-    expect(result.candidates[0]?.match.claims[0]?.pointer).toBe(
+    expect(result.composite).toBe(false);
+    expect(result.queries).toHaveLength(1);
+    expect(result.queries[0]?.queryId).toBe("utopia_dl_age");
+    expect(result.queries[0]?.candidates).toHaveLength(1);
+    expect(result.queries[0]?.candidates[0]?.match.claims[0]?.pointer).toBe(
       "/credentialSubject/driversLicense/age_over_18",
     );
   });
@@ -357,49 +505,65 @@ describe("matchCredentials", () => {
       ],
       request(),
     );
-    expect(result.candidates).toHaveLength(1);
-    expect(result.candidates[0]?.record.id).toBe(2);
+    expect(result.queries[0]?.candidates).toHaveLength(1);
+    expect(result.queries[0]?.candidates[0]?.record.id).toBe(2);
   });
 
-  it("rejects multi-credential queries loudly", () => {
-    const base = shopDcql();
-    const twoQueries: DcqlQuery = {
-      credentials: [base.credentials[0]!, { ...base.credentials[0]!, id: "second" }],
-    };
+  it("matches a composite request per query, in query order (N5b)", () => {
+    const result = matchCredentials(
+      [
+        { record: record(1), payload: v3Payload(residentCoastal) },
+        { record: record(2), payload: v3Payload(adult) },
+      ],
+      compositeRequest(),
+    );
+    expect(result.composite).toBe(true);
+    expect(result.queries.map((entry) => entry.queryId)).toEqual([
+      "utopia_dl_over25",
+      "utopia_resident_coastal",
+    ]);
+    // Each query matched exactly its own credential kind.
+    expect(result.queries[0]?.candidates.map((c) => c.record.id)).toEqual([2]);
+    expect(result.queries[1]?.candidates.map((c) => c.record.id)).toEqual([1]);
+  });
+
+  it("fails a composite loudly when a query is unsatisfiable, naming query + fix", () => {
+    // The vault holds the license but no resident registration.
     expect(() =>
-      matchCredentials(
-        [{ record: record(1), payload: v3Payload(adult) }],
-        request({ dcql_query: twoQueries }),
-      ),
-    ).toThrow(/exactly one credential query/);
+      matchCredentials([{ record: record(1), payload: v3Payload(adult) }], compositeRequest()),
+    ).toThrow(
+      /don't hold a Resident registration.*"utopia_resident_coastal".*Utopia DMV/s,
+    );
   });
 
-  it("rejects requests demanding cross-credential equalities (reserved N5) loudly", () => {
-    const withEqualities: DcqlQuery = {
-      ...shopDcql(),
-      vgw_equalities: [
+  it("rejects pointer-twin equality references loudly (link_secret only, D.5.7)", () => {
+    const dcql = residentRateDcql({
+      equalities: [
         [
-          { query: "utopia_dl_age", link_secret: true },
-          { query: "utopia_dl_age", link_secret: true },
+          { query: "utopia_dl_over25", link_secret: true },
+          { query: "utopia_resident_coastal", path: ["credentialSubject", "stateFips"] },
         ],
       ],
-    };
+    });
     expect(() =>
       matchCredentials(
-        [{ record: record(1), payload: v3Payload(adult) }],
-        request({ dcql_query: withEqualities }),
+        [
+          { record: record(1), payload: v3Payload(adult) },
+          { record: record(2), payload: v3Payload(residentCoastal) },
+        ],
+        compositeRequest(dcql),
       ),
-    ).toThrow(/vgw_equalities/);
+    ).toThrow(/pointer-twin equality.*link secret only/s);
   });
 });
 
 describe("tiers", () => {
   it("tier 1 discloses only the matched claim; tier 0 the whole subject", () => {
-    const { candidates } = matchCredentials(
+    const { queries } = matchCredentials(
       [{ record: record(1), payload: v3Payload(adult) }],
       request(),
     );
-    const match = candidates[0]!.match;
+    const match = queries[0]!.candidates[0]!.match;
     expect(tierPointers(1, match)).toEqual([
       "/credentialSubject/driversLicense/age_over_18",
     ]);
@@ -417,11 +581,11 @@ describe("tiers", () => {
   it("previews the embedded subject id at EVERY tier for identified credentials", () => {
     // Node ids are revealed structurally: selecting any subject claim drags
     // credentialSubject.id along. The consent screen must say so.
-    const { candidates } = matchCredentials(
+    const { queries } = matchCredentials(
       [{ record: record(1), payload: v3Payload(identified) }],
       request(),
     );
-    const match = candidates[0]!.match;
+    const match = queries[0]!.candidates[0]!.match;
     expect(hasEmbeddedSubjectId(identified.vc)).toBe(true);
     expect(hasEmbeddedSubjectId(adult.vc)).toBe(false);
     expect(disclosurePreview(1, identified.vc, match)["subject id"]).toBe(
@@ -439,6 +603,15 @@ describe("tiers", () => {
     ]);
     expect(presentationSteps(2).map((s) => s.id)).toEqual([
       "fetching-params",
+      "deriving-presentation",
+      "posting",
+    ]);
+    expect(compositePresentationSteps(true).map((s) => s.id)).toEqual([
+      "fetching-params",
+      "deriving-presentation",
+      "posting",
+    ]);
+    expect(compositePresentationSteps(false).map((s) => s.id)).toEqual([
       "deriving-presentation",
       "posting",
     ]);
@@ -486,12 +659,13 @@ describe("predicateOption", () => {
     });
 
     // Tier 2 discloses exactly that set; the preview names the proven bit.
-    const { candidates } = matchCredentials(
+    const { queries } = matchCredentials(
       [{ record: record(1), payload: v3Payload(adult) }],
       request({ dcql_query: rentalDcql() }),
     );
-    expect(tierPointers(2, candidates[0]!.match, option)).toEqual(option.pointers);
-    const preview = disclosurePreview(2, adult.vc, candidates[0]!.match, option);
+    const match = queries[0]!.candidates[0]!.match;
+    expect(tierPointers(2, match, option)).toEqual(option.pointers);
+    const preview = disclosurePreview(2, adult.vc, match, option);
     expect(preview["given_name"]).toBe("JAMIE");
     expect(preview["birth_date"]).toMatch(/proven, not shown/);
     expect(preview["age_over_25"]).toBeUndefined();
@@ -507,18 +681,40 @@ describe("predicateOption", () => {
     });
   });
 
-  it("is unavailable for set-membership requests (reserved N5)", () => {
-    const query = structuredClone(shopQuery());
-    query.vgw_predicates = {
-      params_uri: PARAMS_URI,
-      membership: [
-        { path: [...LICENSE_PATH, "issuing_authority"], set_id: "coastal", params_hash: "x" },
-      ],
-    };
-    const option = predicateOption(query, adultCandidate());
+  it("supports membership claims over a declared twin (N5b)", () => {
+    const query = residentRateDcql().credentials[1]!;
+    const option = predicateOption(query, {
+      vc: residentCoastal.vc,
+      payload: v3Payload(residentCoastal),
+    });
+    expect(option.available).toBe(true);
+    if (!option.available) return;
+    expect(option.range).toEqual([]);
+    expect(option.membership).toHaveLength(1);
+    const claim = option.membership[0]!;
+    expect(claim.pointer).toBe(STATE_FIPS_POINTER);
+    expect(claim.encoder).toBe("uint64");
+    expect(claim.setId).toBe("coastal");
+    expect(claim.paramsHash).toBe(coastalSetHash);
+    expect(claim.description).toMatch(/stateFips is one of the verifier's published set/);
+    expect(claim.description).toMatch(/stays hidden/);
+    // Empty claim_set: the membership route discloses nothing.
+    expect(option.pointers).toEqual([]);
+    expect(option.disclosed).toEqual({});
+  });
+
+  it("is unavailable when a membership pointer is not a declared twin", () => {
+    const query = structuredClone(residentRateDcql().credentials[1]!);
+    query.vgw_predicates!.membership = [
+      { path: ["credentialSubject", "districtName"], set_id: "coastal", params_hash: "x" },
+    ];
+    const option = predicateOption(query, {
+      vc: residentCoastal.vc,
+      payload: v3Payload(residentCoastal),
+    });
     expect(option).toMatchObject({
       available: false,
-      reason: expect.stringMatching(/membership/),
+      reason: expect.stringMatching(/no hidden numeric twin for "districtName".*re-issue/i),
     });
   });
 
@@ -583,10 +779,11 @@ describe("presentCredential", () => {
     },
   ) {
     const req = request(options?.dcql !== undefined ? { dcql_query: options.dcql } : {});
-    const { queryId, candidates } = matchCredentials(
+    const { queries } = matchCredentials(
       [{ record: record(1), payload: v3Payload(options?.fixture ?? adult) }],
       req,
     );
+    const { queryId, candidates } = queries[0]!;
     const log = stubFetch(options?.fetch);
     const steps: string[] = [];
     const result = presentCredential({
@@ -818,7 +1015,7 @@ describe("presentCredential", () => {
       // as a loud error, never as a bad proof (MIGRATION §9).
       const { log, result } = await run(2, { fixture: minor });
       await expect(result).rejects.toThrow(
-        /does not satisfy the verifier's bound.*fails closed.*Nothing was sent/s,
+        /does not satisfy the verifier's requirement.*fails closed.*Nothing was sent/s,
       );
       expect(log.posts).toHaveLength(0);
     },
@@ -856,17 +1053,15 @@ describe("presentCredential", () => {
     expect(log.posts).toHaveLength(0);
   });
 
-  it("rejects a set-membership request loudly at the ceremony (reserved N5)", async () => {
+  it("refuses a membership claim whose set the verifier's document does not publish", async () => {
+    // A membership demand at a range-only verifier: the pinning ritual fails
+    // closed at the document, before anything is proven.
     const dcql = shopDcql();
-    dcql.credentials[0]!.vgw_predicates = {
-      params_uri: PARAMS_URI,
-      membership: [
-        { path: [...LICENSE_PATH, "issuing_authority"], set_id: "coastal", params_hash: "x" },
-      ],
-    };
+    dcql.credentials[0]!.vgw_predicates!.membership = [
+      { path: [...LICENSE_PATH, "birth_date"], set_id: "coastal", params_hash: "x" },
+    ];
     const { log, result } = await run(2, { dcql });
-    await expect(result).rejects.toThrow(/membership/);
-    expect(log.gets).toHaveLength(0);
+    await expect(result).rejects.toThrow(/publishes no set "coastal"/);
     expect(log.posts).toHaveLength(0);
   });
 
@@ -912,7 +1107,7 @@ describe("presentCredential", () => {
         },
       ],
       req,
-    );
+    ).queries[0]!;
     const log = stubFetch();
     await expect(
       presentCredential({
@@ -936,7 +1131,7 @@ describe("presentCredential", () => {
         },
       ],
       req,
-    );
+    ).queries[0]!;
     const log = stubFetch();
     await expect(
       presentCredential({
@@ -955,7 +1150,7 @@ describe("presentCredential", () => {
     const { queryId, candidates } = matchCredentials(
       [{ record: record(1), payload: v3Payload(adult) }],
       req,
-    );
+    ).queries[0]!;
     const log = stubFetch();
     const controller = new AbortController();
     controller.abort();
@@ -987,4 +1182,195 @@ describe("presentCredential", () => {
     });
     await expect(result).rejects.toThrow(/already received a response/);
   });
+});
+
+describe("presentComposite (showcases B + C: coastal resident rate)", () => {
+  /** The vault for the composite flows: Jamie's DL + a resident registration. */
+  function vault(resident: IssuedFixture = residentCoastal) {
+    return [
+      { record: record(1), payload: v3Payload(adult) },
+      { record: record(2), payload: v3Payload(resident) },
+    ];
+  }
+
+  async function runComposite(options?: {
+    dcql?: DcqlQuery;
+    resident?: IssuedFixture;
+    fetch?: Parameters<typeof stubFetch>[0];
+  }) {
+    const req = compositeRequest(options?.dcql);
+    const matches = matchCredentials(vault(options?.resident), req);
+    const log = stubFetch(options?.fetch);
+    const steps: string[] = [];
+    const result = presentComposite({
+      request: req,
+      matches,
+      masterSecret: MASTER_SECRET.slice(),
+      onStep: (step) => steps.push(step),
+    });
+    return { req, matches, log, steps, result };
+  }
+
+  it("resolves the fixed composite plan: proofs listed, nothing disclosed", () => {
+    const matches = matchCredentials(vault(), compositeRequest());
+    const statements = compositeStatements(matches);
+    expect(statements.map((s) => s.queryId)).toEqual([
+      "utopia_dl_over25",
+      "utopia_resident_coastal",
+    ]);
+    expect(statements[0]?.proven[0]).toMatch(/birth_date on or before 2001-07-16.*at least \d+ years/);
+    expect(statements[1]?.proven[0]).toMatch(/stateFips is one of the verifier's published set/);
+    // Empty claim_sets: zero disclosure, zero selective pointers.
+    expect(statements.every((s) => s.pointers.length === 0)).toBe(true);
+    expect(statements.every((s) => Object.keys(s.disclosed).length === 0)).toBe(true);
+  });
+
+  it(
+    "answers both queries with ONE graph VP under the FIRST query's id — and it verifies with both claims + the equality",
+    async () => {
+      const { req, log, steps, result } = await runComposite();
+      const outcome = await result;
+
+      expect(steps).toEqual(["fetching-params", "deriving-presentation", "posting"]);
+      // ONE fetch pinned the range alphabet AND the coastal set (same document).
+      expect(log.gets).toEqual([RENTALS_PARAMS_URI]);
+      expect(outcome.redirectUri).toBe(REDIRECT_BACK);
+
+      // The D.5.1 vp_token convention: the single graph VP answers ALL
+      // queries, keyed by the FIRST credential query's id.
+      const vpToken = JSON.parse(log.posts[0]!.body.get("vp_token")!) as Record<
+        string,
+        VerifiablePresentation[]
+      >;
+      expect(Object.keys(vpToken)).toEqual(["utopia_dl_over25"]);
+      const vp = vpToken["utopia_dl_over25"]![0]!;
+      expect((vp as Record<string, unknown>)["holder"]).toBeUndefined();
+      expect(summarizeCredkitPresentation(vp)).toEqual({
+        rangeClaims: 1,
+        membershipClaims: 1,
+        equalities: 1,
+      });
+
+      // The verifier restates ITS OWN expectations (D.2/D.5.6): statement 0
+      // range, statement 1 membership, one link-secret equality across them,
+      // the SAME issuer pinned per statement.
+      const verification = await verifyCredkitPresentation({
+        verifiablePresentation: vp,
+        expectedIssuerDids: [issuer.controller, issuer.controller],
+        challenge: req.nonce,
+        domain: req.client_id,
+        expectedRangeClaims: [
+          {
+            statement: 0,
+            pointer: DOB_POINTER,
+            kind: "lessOrEqual",
+            bound: BigInt(BOUND_25),
+            digits: 4,
+            params,
+          },
+        ],
+        expectedMembershipClaims: [
+          { statement: 1, pointer: STATE_FIPS_POINTER, params: coastalSet },
+        ],
+        expectedEqualities: [
+          [
+            { statement: 0, linkSecret: true },
+            { statement: 1, linkSecret: true },
+          ],
+        ],
+      });
+      expect(verification.error).toBeUndefined();
+      expect(verification.verified).toBe(true);
+
+      // "Nothing but three proofs": neither statement disclosed a single
+      // subject claim — over-25, coastal, same holder, nobody named.
+      const dl = (verification.documents?.[0]?.credentialSubject ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const license = (dl["driversLicense"] ?? {}) as Record<string, unknown>;
+      expect(license["birth_date"]).toBeUndefined();
+      expect(license["given_name"]).toBeUndefined();
+      expect(license["age_over_25"]).toBeUndefined();
+      const resident = (verification.documents?.[1]?.credentialSubject ?? {}) as Record<
+        string,
+        unknown
+      >;
+      expect(resident["stateFips"]).toBeUndefined();
+      expect(resident["postalCode"]).toBeUndefined();
+      expect(resident["districtName"]).toBeUndefined();
+      expect(resident["givenName"]).toBeUndefined();
+
+      // An equality the wallet proved but the verifier did not demand (or
+      // vice versa) fails closed — restatement is exact.
+      const withoutEquality = await verifyCredkitPresentation({
+        verifiablePresentation: vp,
+        expectedIssuerDids: [issuer.controller, issuer.controller],
+        challenge: req.nonce,
+        domain: req.client_id,
+        expectedRangeClaims: [
+          {
+            statement: 0,
+            pointer: DOB_POINTER,
+            kind: "lessOrEqual",
+            bound: BigInt(BOUND_25),
+            digits: 4,
+            params,
+          },
+        ],
+        expectedMembershipClaims: [
+          { statement: 1, pointer: STATE_FIPS_POINTER, params: coastalSet },
+        ],
+      });
+      expect(withoutEquality.verified).toBe(false);
+    },
+    180_000,
+  );
+
+  it("refuses to prove when the request pins a different set alphabet than published", async () => {
+    const { log, result } = await runComposite({
+      dcql: residentRateDcql({ setParamsHash: "B".repeat(43) }),
+    });
+    await expect(result).rejects.toThrow(/pins a different set alphabet for "coastal"/);
+    expect(log.posts).toHaveLength(0);
+  });
+
+  it("refuses a document that does not publish the demanded set", async () => {
+    const { log, result } = await runComposite({
+      // The verifier's document suddenly has no sets at all.
+      fetch: { paramsResponse: () => Response.json(paramsDocument) },
+    });
+    await expect(result).rejects.toThrow(/publishes no set "coastal"/);
+    expect(log.posts).toHaveLength(0);
+  });
+
+  it("refuses a published set that does not match its own declared hash", async () => {
+    const { log, result } = await runComposite({
+      fetch: {
+        paramsResponse: () =>
+          Response.json({
+            ...rentalsParamsDocument,
+            sets: {
+              coastal: { ...rentalsParamsDocument.sets!["coastal"]!, hash: "B".repeat(43) },
+            },
+          }),
+      },
+    });
+    await expect(result).rejects.toThrow(
+      /published set "coastal" does not match its own declared hash/,
+    );
+    expect(log.posts).toHaveLength(0);
+  });
+
+  it(
+    "an inland resident cannot present: the prover THROWS, fail closed, nothing posted",
+    async () => {
+      // Highfield's fips (21) has no signature in the coastal alphabet — the
+      // §9 fail-closed beat, membership edition.
+      const { log, result } = await runComposite({ resident: residentInland });
+      await expect(result).rejects.toThrow(/fails closed.*Nothing was sent/s);
+      expect(log.posts).toHaveLength(0);
+    },
+    180_000,
+  );
 });

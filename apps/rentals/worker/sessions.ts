@@ -35,6 +35,41 @@ export interface PredicateExhibit {
   cutoffIso: string;
 }
 
+/**
+ * One membership proof of a composite outcome (N5b): the hidden twin is one
+ * of this verifier's PUBLISHED set — the members are public policy (they
+ * ride the params document); which one the holder matches stays hidden.
+ */
+export interface MembershipExhibit {
+  statement: number;
+  /** The declared twin the proof is about (never its value). */
+  pointer: string;
+  setId: string;
+  /** The published members, decimal strings, in publication order. */
+  members: string[];
+}
+
+/** One proven cross-statement equality of a composite outcome (N5b). */
+export interface EqualityExhibit {
+  /** The only kind this verifier offers: the statements' hidden link secrets. */
+  kind: "link_secret";
+  /** Which statements were proven to share one holder. */
+  statements: number[];
+}
+
+/**
+ * The composite ("coastal resident rate") exhibit: everything the linked
+ * presentation PROVED, verified entirely on the Worker — while the
+ * disclosed set stayed empty (MIGRATION §9 showcase C, D.5.3).
+ */
+export interface CompositeExhibit {
+  /** How many credentials the one graph presentation spanned. */
+  statements: number;
+  range: (PredicateExhibit & { statement: number })[];
+  membership: MembershipExhibit[];
+  equalities: EqualityExhibit[];
+}
+
 /** Everything the rentals UI learns about a completed session. */
 export interface SessionOutcome {
   /** `verified` = the presentation checked out; `failed` = it did not. */
@@ -45,8 +80,10 @@ export interface SessionOutcome {
   reason: string;
   /** Claim name → disclosed value — exactly what this verifier learned. */
   disclosed: Record<string, unknown>;
-  /** Present iff the wallet took the predicate route. */
+  /** Present iff the wallet took the standard flow's predicate route. */
   predicate?: PredicateExhibit;
+  /** Present iff this was the composite resident-rate flow. */
+  composite?: CompositeExhibit;
   /** The vp_token as received, for the protocol inspector. */
   vpToken?: unknown;
   completedAt: number;

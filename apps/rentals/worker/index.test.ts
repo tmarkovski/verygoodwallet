@@ -12,23 +12,33 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   UTOPIA_DL_NUMERIC_DECLARATIONS,
+  UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
   buildUtopiaDriversLicense,
+  buildUtopiaResidentRegistration,
   createCredkitPresentation,
   createHolderBinding,
+  districtByFips,
   generateCredkitBbsKeyPair,
   issueCredkitCredential,
   rangeParamsFromBase64Url,
   rangeParamsHashBase64Url,
+  setParamsFromBase64Url,
+  setParamsHashBase64Url,
+  verifySetParams,
   type CredkitBbsKeyPair,
+  type GraphEquality,
   type HolderBinding,
+  type MembershipClaimRequest,
   type RangeClaimRequest,
   type RangeParams,
+  type SetMembershipParams,
   type VerifiableCredential,
   type VerifiablePresentation,
 } from "@vgw/vc-kit";
 import {
   CREDKIT_PARAMS_PATH,
   assertCredkitParamsDocument,
+  mintSignedToken,
   type OauthErrorResponse,
   type PresentationRequest,
 } from "@vgw/protocols";
@@ -39,7 +49,13 @@ import {
   type DurableObjectNamespaceLike,
   type RentalsBindings,
 } from "./env.js";
-import { BIRTH_DATE_POINTER, RENTAL_QUERY_ID } from "./policy.js";
+import {
+  BIRTH_DATE_POINTER,
+  RENTAL_QUERY_ID,
+  RESIDENT_RATE_DL_QUERY_ID,
+  RESIDENT_RATE_RESIDENT_QUERY_ID,
+  STATE_FIPS_POINTER,
+} from "./policy.js";
 import { VerificationSessions, type SessionStatus } from "./sessions.js";
 
 const app = createApp();
@@ -70,11 +86,18 @@ interface IssuedFixture {
   binding: Pick<HolderBinding, "linkSecret" | "secretProverBlind">;
 }
 
+/** Marisol's district for the resident fixtures: Port Azure (coastal, fips 11). */
+const PORT_AZURE = districtByFips(11)!;
+
 let issuer: CredkitBbsKeyPair;
 let rogueIssuer: CredkitBbsKeyPair;
 let senior: IssuedFixture;
 let young: IssuedFixture;
 let rogueSenior: IssuedFixture;
+/** Marisol's resident registration — SAME link secret as her DL, own blind. */
+let coastalResident: IssuedFixture;
+/** A coastal registration signed by the wrong issuer. */
+let rogueResident: IssuedFixture;
 
 beforeAll(async () => {
   issuer = generateCredkitBbsKeyPair(ISSUER_SEED);
@@ -105,10 +128,35 @@ beforeAll(async () => {
     };
   };
 
-  [senior, young, rogueSenior] = await Promise.all([
+  const issueResident = async (keyPair: CredkitBbsKeyPair): Promise<IssuedFixture> => {
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const vc = await issueCredkitCredential({
+      credential: buildUtopiaResidentRegistration({
+        givenName: "Marisol",
+        familyName: "Deng",
+        districtName: PORT_AZURE.name,
+        stateFips: PORT_AZURE.fips,
+        postalCode: 40140,
+        issuer: { id: keyPair.controller, name: "Utopia DMV" },
+        validFrom: "2026-01-01T00:00:00Z",
+        validUntil: "2028-01-01T00:00:00Z",
+      }),
+      keyPair,
+      numericDeclarations: UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
+      holderCommitment: binding.commitmentWithProof,
+    });
+    return {
+      vc,
+      binding: { linkSecret: LINK_SECRET, secretProverBlind: binding.secretProverBlind },
+    };
+  };
+
+  [senior, young, rogueSenior, coastalResident, rogueResident] = await Promise.all([
     issue(issuer, SENIOR_BIRTH_DATE),
     issue(issuer, YOUNG_BIRTH_DATE),
     issue(rogueIssuer, SENIOR_BIRTH_DATE),
+    issueResident(issuer),
+    issueResident(rogueIssuer),
   ]);
 }, 120_000);
 
@@ -163,6 +211,22 @@ async function createSession(env: RentalsBindings): Promise<VerificationSessionB
   return (await res.json()) as VerificationSessionBody;
 }
 
+async function createResidentRateSession(
+  env: RentalsBindings,
+): Promise<VerificationSessionBody> {
+  const res = await app.request(
+    "/api/verification",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ flow: "resident-rate" }),
+    },
+    env,
+  );
+  expect(res.status).toBe(200);
+  return (await res.json()) as VerificationSessionBody;
+}
+
 /** The wallet's params pinning, in-process: fetch, validate, decode. */
 async function fetchParams(
   env: RentalsBindings,
@@ -175,6 +239,18 @@ async function fetchParams(
     params: rangeParamsFromBase64Url(document.range!.params),
     hash: document.range!.hash,
   };
+}
+
+/** The published coastal set, decoded as the wallet would. */
+async function fetchCoastalSet(
+  env: RentalsBindings,
+): Promise<{ params: SetMembershipParams; hash: string }> {
+  const res = await app.request(CREDKIT_PARAMS_PATH, {}, env);
+  expect(res.status).toBe(200);
+  const document = assertCredkitParamsDocument(await res.json());
+  const entry = document.sets?.["coastal"];
+  expect(entry).toBeDefined();
+  return { params: setParamsFromBase64Url(entry!.params), hash: entry!.hash };
 }
 
 /** Range claims answering the session's query, exactly as the wallet builds them. */
@@ -238,6 +314,68 @@ async function sessionStatus(env: RentalsBindings, sessionId: string): Promise<S
   return (await res.json()) as SessionStatus;
 }
 
+/** The one equality the resident-rate flow demands: statements 0+1 share the link secret. */
+const LINK_SECRET_EQUALITY: GraphEquality[] = [
+  [
+    { statement: 0, linkSecret: true },
+    { statement: 1, linkSecret: true },
+  ],
+];
+
+/** Build a two-statement graph VP exactly as the wallet's composite ceremony does. */
+async function compositeVp(options: {
+  request: PresentationRequest;
+  dl: IssuedFixture;
+  resident: IssuedFixture;
+  rangeClaims?: RangeClaimRequest[];
+  membershipClaims?: MembershipClaimRequest[];
+  equalities?: GraphEquality[];
+}): Promise<VerifiablePresentation> {
+  return createCredkitPresentation({
+    credentials: [
+      {
+        verifiableCredential: options.dl.vc,
+        selectivePointers: [],
+        ...(options.rangeClaims !== undefined ? { rangeClaims: options.rangeClaims } : {}),
+        holderBinding: options.dl.binding,
+      },
+      {
+        verifiableCredential: options.resident.vc,
+        selectivePointers: [],
+        ...(options.membershipClaims !== undefined
+          ? { membershipClaims: options.membershipClaims }
+          : {}),
+        holderBinding: options.resident.binding,
+      },
+    ],
+    ...(options.equalities !== undefined ? { equalities: options.equalities } : {}),
+    challenge: options.request.nonce,
+    domain: options.request.client_id,
+  });
+}
+
+/** direct_post a prebuilt vp_token entry (the D.5.1 single-VP convention). */
+async function postVp(options: {
+  env: RentalsBindings;
+  state: string;
+  vpKey: string;
+  vp: VerifiablePresentation | Record<string, unknown>;
+}): Promise<Response> {
+  const body = new URLSearchParams({
+    vp_token: JSON.stringify({ [options.vpKey]: [options.vp] }),
+    state: options.state,
+  });
+  return app.request(
+    "/oid4vp/response",
+    {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    },
+    options.env,
+  );
+}
+
 describe("GET /.well-known/credkit-params", () => {
   it("serves a valid document whose hash matches the published octets", async () => {
     const env = makeEnv();
@@ -249,6 +387,15 @@ describe("GET /.well-known/credkit-params", () => {
     const params = rangeParamsFromBase64Url(document.range!.params);
     expect(await rangeParamsHashBase64Url(params)).toBe(document.range!.hash);
   });
+
+  it("publishes the coastal set (N5b): valid alphabet, matching hash, coastal fips in publication order", async () => {
+    const { params, hash } = await fetchCoastalSet(makeEnv());
+    // The members ARE the verifier's policy: coastal fips, publication order.
+    expect(params.members).toEqual([11n, 12n, 13n]);
+    expect(await setParamsHashBase64Url(params)).toBe(hash);
+    // 2 pairings per member — run once, here.
+    expect(verifySetParams(params)).toBe(true);
+  }, 30_000);
 
   it("serves byte-identical params across app instances with the same seed", async () => {
     const first = await (await app.request(CREDKIT_PARAMS_PATH, {}, makeEnv())).json();
@@ -526,6 +673,259 @@ describe("POST /oid4vp/response", () => {
     });
     expect(res.status).toBe(400);
     expect((await sessionStatus(env, session.session_id)).status).toBe("pending");
+  });
+});
+
+describe("resident-rate composite flow (N5b, showcases B + C)", () => {
+  /** The full wallet side of the composite, against a fresh session. */
+  async function presentComposite(
+    env: RentalsBindings,
+    options?: {
+      dl?: IssuedFixture;
+      resident?: IssuedFixture;
+      omitRange?: boolean;
+      omitMembership?: boolean;
+      omitEquality?: boolean;
+    },
+  ): Promise<{ session: VerificationSessionBody; res: Response }> {
+    const session = await createResidentRateSession(env);
+    const { params } = await fetchParams(env);
+    const { params: coastalSet } = await fetchCoastalSet(env);
+    const vp = await compositeVp({
+      request: session.request,
+      dl: options?.dl ?? senior,
+      resident: options?.resident ?? coastalResident,
+      ...(options?.omitRange === true
+        ? {}
+        : { rangeClaims: queryRangeClaims(session.request, params) }),
+      ...(options?.omitMembership === true
+        ? {}
+        : { membershipClaims: [{ pointer: STATE_FIPS_POINTER, params: coastalSet }] }),
+      ...(options?.omitEquality === true ? {} : { equalities: LINK_SECRET_EQUALITY }),
+    });
+    const res = await postVp({
+      env,
+      state: session.request.state,
+      vpKey: RESIDENT_RATE_DL_QUERY_ID,
+      vp,
+    });
+    return { session, res };
+  }
+
+  it("rejects an unknown flow discriminator (fail closed)", async () => {
+    const res = await app.request(
+      "/api/verification",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ flow: "vip-rate" }),
+      },
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("offers TWO predicate-only queries linked by a link-secret equality (D.5.3)", async () => {
+    const env = makeEnv();
+    const session = await createResidentRateSession(env);
+    const [dl, resident] = session.request.dcql_query.credentials;
+    expect(dl?.id).toBe(RESIDENT_RATE_DL_QUERY_ID);
+    expect(resident?.id).toBe(RESIDENT_RATE_RESIDENT_QUERY_ID);
+
+    // Zero disclosure by construction: no claims, no claim_sets, and empty
+    // predicate claim_sets — there is deliberately no dob fallback.
+    for (const query of [dl!, resident!]) {
+      expect(query.claims).toBeUndefined();
+      expect(query.claim_sets).toBeUndefined();
+      expect(query.vgw_predicates?.claim_set).toEqual([]);
+    }
+    expect(dl?.meta?.type_values).toEqual([
+      ["VerifiableCredential", "Iso18013DriversLicenseCredential"],
+    ]);
+    expect(resident?.meta?.type_values).toEqual([
+      ["VerifiableCredential", "UtopiaResidentRegistrationCredential"],
+    ]);
+
+    // The claims pin THIS isolate's published alphabets.
+    const { hash: rangeHash } = await fetchParams(env);
+    const { hash: setHash } = await fetchCoastalSet(env);
+    expect(dl?.vgw_predicates?.range?.[0]?.kind).toBe("lessOrEqual");
+    expect(dl?.vgw_predicates?.range?.[0]?.params_hash).toBe(rangeHash);
+    expect(resident?.vgw_predicates?.membership?.[0]?.set_id).toBe("coastal");
+    expect(resident?.vgw_predicates?.membership?.[0]?.params_hash).toBe(setHash);
+
+    expect(session.request.dcql_query.vgw_equalities).toEqual([
+      [
+        { query: RESIDENT_RATE_DL_QUERY_ID, link_secret: true },
+        { query: RESIDENT_RATE_RESIDENT_QUERY_ID, link_secret: true },
+      ],
+    ]);
+  });
+
+  it("verifies the whole composite on the Worker: allowed, disclosed EMPTY, three proofs narrated", async () => {
+    const env = makeEnv();
+    const { session, res } = await presentComposite(env);
+    expect(res.status).toBe(200);
+    const ack = (await res.json()) as { redirect_uri?: string };
+    expect(ack.redirect_uri).toContain(`session=${session.session_id}`);
+
+    const status = await sessionStatus(env, session.session_id);
+    expect(status.status).toBe("verified");
+    if (status.status !== "verified") return;
+    expect(status.verdict).toBe("allowed");
+    // THE exhibit: an allowed verdict whose disclosed set is EMPTY.
+    expect(status.disclosed).toEqual({});
+    expect(status.reason).toMatch(/Three facts, zero disclosures/);
+    expect(status.reason).toMatch(/verified entirely on the Worker/i);
+
+    // The composite exhibit narrates all three proofs for the UI.
+    expect(status.composite?.statements).toBe(2);
+    expect(status.composite?.range?.[0]).toMatchObject({
+      statement: 0,
+      pointer: BIRTH_DATE_POINTER,
+      kind: "lessOrEqual",
+    });
+    expect(status.composite?.range?.[0]?.cutoffIso).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(status.composite?.membership?.[0]).toEqual({
+      statement: 1,
+      pointer: STATE_FIPS_POINTER,
+      setId: "coastal",
+      members: ["11", "12", "13"],
+    });
+    expect(status.composite?.equalities).toEqual([
+      { kind: "link_secret", statements: [0, 1] },
+    ]);
+    expect(status.predicate).toBeUndefined();
+  }, 30_000);
+
+  it("fails a range-only presentation — not the shape this session offered", async () => {
+    const env = makeEnv();
+    const { session, res } = await presentComposite(env, {
+      omitMembership: true,
+      omitEquality: true,
+    });
+    expect(res.status).toBe(400);
+    const status = await sessionStatus(env, session.session_id);
+    expect(status.status).toBe("failed");
+    if (status.status !== "failed") return;
+    expect(status.reason).toMatch(/offered 1\/1\/1, not that shape/);
+  }, 30_000);
+
+  it("fails a membership-only presentation", async () => {
+    const env = makeEnv();
+    const { session, res } = await presentComposite(env, {
+      omitRange: true,
+      omitEquality: true,
+    });
+    expect(res.status).toBe(400);
+    expect((await sessionStatus(env, session.session_id)).status).toBe("failed");
+  }, 30_000);
+
+  it("fails when the offered equality is missing from the presentation", async () => {
+    const env = makeEnv();
+    const { session, res } = await presentComposite(env, { omitEquality: true });
+    expect(res.status).toBe(400);
+    const status = await sessionStatus(env, session.session_id);
+    expect(status.status).toBe("failed");
+    if (status.status !== "failed") return;
+    expect(status.reason).toMatch(/1 membership, and 0 equality/);
+  }, 30_000);
+
+  it("fails an equality-carrying presentation against a STANDARD session (vice versa)", async () => {
+    const env = makeEnv();
+    const session = await createSession(env);
+    const { params } = await fetchParams(env);
+    const { params: coastalSet } = await fetchCoastalSet(env);
+    const vp = await compositeVp({
+      request: session.request,
+      dl: senior,
+      resident: coastalResident,
+      rangeClaims: queryRangeClaims(session.request, params),
+      membershipClaims: [{ pointer: STATE_FIPS_POINTER, params: coastalSet }],
+      equalities: LINK_SECRET_EQUALITY,
+    });
+    const res = await postVp({
+      env,
+      state: session.request.state,
+      vpKey: RENTAL_QUERY_ID,
+      vp,
+    });
+    expect(res.status).toBe(400);
+    const status = await sessionStatus(env, session.session_id);
+    expect(status.status).toBe("failed");
+    if (status.status !== "failed") return;
+    expect(status.reason).toMatch(/1 equality claims.*offered 1\/0\/0/s);
+  }, 30_000);
+
+  it("fails when the DL statement's issuer is not the trusted DMV", async () => {
+    const env = makeEnv();
+    const { session, res } = await presentComposite(env, { dl: rogueSenior });
+    expect(res.status).toBe(400);
+    expect((await sessionStatus(env, session.session_id)).status).toBe("failed");
+  }, 30_000);
+
+  it("fails when the RESIDENT statement's issuer is not the trusted DMV", async () => {
+    const env = makeEnv();
+    const { session, res } = await presentComposite(env, { resident: rogueResident });
+    expect(res.status).toBe(400);
+    expect((await sessionStatus(env, session.session_id)).status).toBe("failed");
+  }, 30_000);
+
+  it("rejects a replayed composite response for an already-completed session", async () => {
+    const env = makeEnv();
+    const { session, res } = await presentComposite(env);
+    expect(res.status).toBe(200);
+    // Replay the exact flow against the same session's state token.
+    const { params } = await fetchParams(env);
+    const { params: coastalSet } = await fetchCoastalSet(env);
+    const vp = await compositeVp({
+      request: session.request,
+      dl: senior,
+      resident: coastalResident,
+      rangeClaims: queryRangeClaims(session.request, params),
+      membershipClaims: [{ pointer: STATE_FIPS_POINTER, params: coastalSet }],
+      equalities: LINK_SECRET_EQUALITY,
+    });
+    const replay = await postVp({
+      env,
+      state: session.request.state,
+      vpKey: RESIDENT_RATE_DL_QUERY_ID,
+      vp,
+    });
+    expect(replay.status).toBe(400);
+    const error = (await replay.json()) as OauthErrorResponse;
+    expect(error.error_description).toMatch(/already received/);
+    // The first outcome stands.
+    const status = await sessionStatus(env, session.session_id);
+    expect(status.status).toBe("verified");
+  }, 30_000);
+
+  it("fails closed on a pre-N5b state token shape (the D.5.6 memory is versioned)", async () => {
+    const env = makeEnv();
+    // The pre-N5b payload: a bare `predicates` array, no flow, no offer.
+    const legacyState = await mintSignedToken({
+      secret: "test-secret",
+      payload: {
+        use: "vp-session",
+        sessionId: "legacy-session",
+        nonce: "legacy-nonce",
+        predicates: [
+          { pointer: BIRTH_DATE_POINTER, kind: "lessOrEqual", bound: "40000", digits: 4 },
+        ],
+      },
+      ttlSeconds: 600,
+    });
+    const res = await postVp({
+      env,
+      state: legacyState,
+      vpKey: RENTAL_QUERY_ID,
+      vp: { type: "VerifiablePresentation" },
+    });
+    expect(res.status).toBe(400);
+    const error = (await res.json()) as OauthErrorResponse;
+    expect(error.error_description).toMatch(/state is invalid or expired/);
+    // Nothing was recorded against the named session.
+    expect((await sessionStatus(env, "legacy-session")).status).toBe("pending");
   });
 });
 

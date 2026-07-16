@@ -31,6 +31,7 @@ import { deriveIssuancePopSeed, deriveLinkSecret, scalarToBase64Url, scalarFromB
 import {
   CREDKIT_PARAMS_PATH,
   PRE_AUTHORIZED_CODE_GRANT_TYPE,
+  RESIDENT_CREDENTIAL_CONFIGURATION_ID,
   assertCredkitParamsDocument,
   commitmentDigest,
   createProofJwt,
@@ -45,10 +46,16 @@ import {
   createHolderBinding,
   rangeParamsFromBase64Url,
   rangeParamsHashBase64Url,
+  setParamsFromBase64Url,
+  setParamsHashBase64Url,
   verifyIssuedCredkitCredential,
+  type GraphEquality,
+  type MembershipClaimRequest,
   type RangeClaimRequest,
   type RangeParams,
+  type SetMembershipParams,
   type VerifiableCredential,
+  type VerifiablePresentation,
 } from "@vgw/vc-kit";
 import type { VerificationSessionBody } from "./index.js";
 import type { SessionOutcome, SessionStatus } from "./sessions.js";
@@ -64,6 +71,7 @@ const MASTER_SECRET = new Uint8Array(32).fill(43);
 
 const LICENSE = "/credentialSubject/driversLicense";
 const BIRTH_DATE_POINTER = `${LICENSE}/birth_date`;
+const STATE_FIPS_POINTER = "/credentialSubject/stateFips";
 const IDENTITY_POINTERS = [
   `${LICENSE}/given_name`,
   `${LICENSE}/family_name`,
@@ -179,17 +187,19 @@ interface IssuedCredential {
   secretProverBlind: string;
 }
 
-/** The wallet's N2 issuance flow (binding + digest-PoP + receipt check). */
-async function issueCredential(persona: {
-  givenName: string;
-  familyName: string;
-  birthDate: string;
-}): Promise<IssuedCredential> {
+/**
+ * The wallet's N2 issuance flow (binding + digest-PoP + receipt check).
+ * `offer` is the /api/offers body — a DL persona by default, or a resident
+ * offer when it carries `credential_configuration_id` (N5); every credential
+ * binds to the ONE master-derived link secret with its own blind.
+ */
+async function issueCredential(offerInput: Record<string, unknown>): Promise<IssuedCredential> {
   const offerBody = await json<{ credential_offer_uri: string }>(
     await fetch(`${DMV}/api/offers`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...persona, documentNumber: "UDL-E2EB-TEST" }),
+      // documentNumber applies to the DL shape; resident offers ignore it.
+      body: JSON.stringify({ documentNumber: "UDL-E2EB-TEST", ...offerInput }),
     }),
   );
   const offer = await json<CredentialOffer>(await fetch(offerBody.credential_offer_uri));
@@ -277,6 +287,85 @@ function rangeClaimsFor(
     digits: entry.digits,
     params,
   }));
+}
+
+/**
+ * The composite flow's params pinning (D.5.5): ONE fetched document supplies
+ * the range alphabet AND the coastal set; both hashes must match the
+ * document's own declarations and the DCQL claims'.
+ */
+async function fetchResidentRateParams(request: PresentationRequest): Promise<{
+  rangeParams: RangeParams;
+  coastalSet: SetMembershipParams;
+}> {
+  const [dlQuery, residentQuery] = request.dcql_query.credentials;
+  const paramsUri = new URL(dlQuery!.vgw_predicates!.params_uri);
+  expect(paramsUri.origin).toBe(new URL(request.response_uri).origin);
+  expect(residentQuery!.vgw_predicates!.params_uri).toBe(paramsUri.href);
+
+  const document = assertCredkitParamsDocument(await json(await fetch(paramsUri)));
+  const rangeParams = rangeParamsFromBase64Url(document.range!.params);
+  const rangeHash = await rangeParamsHashBase64Url(rangeParams);
+  expect(rangeHash).toBe(document.range!.hash);
+  expect(dlQuery!.vgw_predicates!.range![0]!.params_hash).toBe(rangeHash);
+
+  const setEntry = document.sets!["coastal"]!;
+  const coastalSet = setParamsFromBase64Url(setEntry.params);
+  const setHash = await setParamsHashBase64Url(coastalSet);
+  expect(setHash).toBe(setEntry.hash);
+  expect(residentQuery!.vgw_predicates!.membership![0]!.params_hash).toBe(setHash);
+  return { rangeParams, coastalSet };
+}
+
+/** The wallet's composite ceremony over real HTTP: one graph VP, D.5.1 posting. */
+async function presentResidentRate(options: {
+  dl: IssuedCredential;
+  resident: IssuedCredential;
+  session: VerificationSessionBody;
+  rangeClaims: RangeClaimRequest[];
+  membershipClaims: MembershipClaimRequest[];
+}): Promise<{ vp: VerifiablePresentation; response: Response }> {
+  const equalities: GraphEquality[] = [
+    [
+      { statement: 0, linkSecret: true },
+      { statement: 1, linkSecret: true },
+    ],
+  ];
+  const vp = await createCredkitPresentation({
+    credentials: [
+      {
+        verifiableCredential: options.dl.vc,
+        selectivePointers: [],
+        rangeClaims: options.rangeClaims,
+        holderBinding: {
+          linkSecret: await deriveLinkSecret(MASTER_SECRET),
+          secretProverBlind: scalarFromBase64Url(options.dl.secretProverBlind),
+        },
+      },
+      {
+        verifiableCredential: options.resident.vc,
+        selectivePointers: [],
+        membershipClaims: options.membershipClaims,
+        holderBinding: {
+          linkSecret: await deriveLinkSecret(MASTER_SECRET),
+          secretProverBlind: scalarFromBase64Url(options.resident.secretProverBlind),
+        },
+      },
+    ],
+    equalities,
+    challenge: options.session.request.nonce,
+    domain: options.session.request.client_id,
+  });
+  const firstQueryId = options.session.request.dcql_query.credentials[0]!.id;
+  const response = await fetch(options.session.request.response_uri, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      vp_token: JSON.stringify({ [firstQueryId]: [vp] }),
+      state: options.session.request.state,
+    }).toString(),
+  });
+  return { vp, response };
 }
 
 /** The wallet's presentation flow (disclosure or predicate route). */
@@ -472,4 +561,86 @@ describe.skipIf(!E2E)("live end-to-end (built DMV + rentals Workers under worker
     const status = await json<SessionStatus>(await fetch(session.status_url));
     expect(status.status).toBe("pending");
   }, 120_000);
+
+  it("coastal resident rate (N5b): the DMV blind-issues BOTH credentials to one link secret, and the composite verifies with an EMPTY disclosed set", async () => {
+    // One master secret → one link secret, two independent blinds — the
+    // very structure the equality proof rides on.
+    const dl = await issueCredential({
+      givenName: "Marisol",
+      familyName: "Deng",
+      birthDate: "1958-06-21",
+    });
+    const resident = await issueCredential({
+      credential_configuration_id: RESIDENT_CREDENTIAL_CONFIGURATION_ID,
+      givenName: "Marisol",
+      familyName: "Deng",
+      districtFips: 11, // Port Azure — coastal
+      postalCode: 40140,
+    });
+
+    const session = await json<VerificationSessionBody>(
+      await fetch(`${RENTALS}/api/verification`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ flow: "resident-rate" }),
+      }),
+    );
+    const { rangeParams, coastalSet } = await fetchResidentRateParams(session.request);
+    const { vp, response } = await presentResidentRate({
+      dl,
+      resident,
+      session,
+      rangeClaims: rangeClaimsFor(session.request, rangeParams),
+      membershipClaims: [{ pointer: STATE_FIPS_POINTER, params: coastalSet }],
+    });
+    expect((vp as Record<string, unknown>)["holder"]).toBeUndefined();
+    const ack = await json<{ redirect_uri?: string }>(response);
+    expect(ack.redirect_uri).toContain(`session=${session.session_id}`);
+
+    const status = await json<SessionStatus>(await fetch(session.status_url));
+    expect(status).toMatchObject({ status: "verified", verdict: "allowed" });
+    const outcome = status as SessionOutcome;
+    // "Same person, no name": the counter learned NOTHING beyond three proofs.
+    expect(outcome.disclosed).toEqual({});
+    expect(outcome.reason).toMatch(/Three facts, zero disclosures/);
+    expect(outcome.composite?.statements).toBe(2);
+    expect(outcome.composite?.membership?.[0]?.members).toEqual(["11", "12", "13"]);
+    expect(outcome.composite?.equalities).toEqual([
+      { kind: "link_secret", statements: [0, 1] },
+    ]);
+  }, 180_000);
+
+  it("coastal resident rate (N5b): an INLAND registration cannot produce the proof — the prover throws client-side", async () => {
+    const dl = await issueCredential({
+      givenName: "Marisol",
+      familyName: "Deng",
+      birthDate: "1958-06-21",
+    });
+    const resident = await issueCredential({
+      credential_configuration_id: RESIDENT_CREDENTIAL_CONFIGURATION_ID,
+      givenName: "Marisol",
+      familyName: "Deng",
+      districtFips: 21, // Highfield — inland
+      postalCode: 41150,
+    });
+    const session = await json<VerificationSessionBody>(
+      await fetch(`${RENTALS}/api/verification`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ flow: "resident-rate" }),
+      }),
+    );
+    const { rangeParams, coastalSet } = await fetchResidentRateParams(session.request);
+    await expect(
+      presentResidentRate({
+        dl,
+        resident,
+        session,
+        rangeClaims: rangeClaimsFor(session.request, rangeParams),
+        membershipClaims: [{ pointer: STATE_FIPS_POINTER, params: coastalSet }],
+      }),
+    ).rejects.toThrow(/not a member of the set/);
+    const status = await json<SessionStatus>(await fetch(session.status_url));
+    expect(status.status).toBe("pending");
+  }, 180_000);
 });
