@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./contexts": "./src/contexts/index.ts"
+    "./contexts": "./src/contexts/index.ts",
+    "./geography": "./src/credentials/utopia-geography.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -15,6 +15,7 @@ import { toBase64Url } from "@vgw/keys";
 import {
   CREDENTIAL_CONFIGURATION_ID,
   PRE_AUTHORIZED_CODE_GRANT_TYPE,
+  RESIDENT_CREDENTIAL_CONFIGURATION_ID,
   commitmentDigest,
   createProofJwt,
   ed25519KeyPairFromSeed,
@@ -36,6 +37,13 @@ import app, { type OfferResponseBody } from "./index.js";
 import type { DmvBindings } from "./env.js";
 import type { OfferCodePayload } from "./tokens.js";
 
+async function readOfferPayload(offer: CredentialOffer): Promise<OfferCodePayload> {
+  return readSignedToken<OfferCodePayload>({
+    secret: TEST_ENV.TOKEN_SECRET ?? "",
+    token: preAuthorizedCode(offer),
+  });
+}
+
 const TEST_ENV: DmvBindings = {
   ISSUER_SEED: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   TOKEN_SECRET: "test-token-secret",
@@ -55,6 +63,15 @@ const SUBJECT = {
   givenName: "Jamie",
   familyName: "Voss",
   birthDate: "1996-03-14",
+} as const;
+
+/** Jamie's resident record: Port Azure (coastal, fips 11, postal block 40100–40199). */
+const RESIDENT_SUBJECT = {
+  credential_configuration_id: RESIDENT_CREDENTIAL_CONFIGURATION_ID,
+  givenName: "Jamie",
+  familyName: "Voss",
+  districtFips: 11,
+  postalCode: 40125,
 } as const;
 
 async function postJson(
@@ -142,6 +159,25 @@ describe("issuer metadata", () => {
       config?.proof_types_supported.jwt.proof_signing_alg_values_supported,
     ).toEqual(["EdDSA"]);
   });
+
+  it("advertises the resident registration as a second configuration (N5)", async () => {
+    const res = await app.request("/.well-known/openid-credential-issuer", {}, TEST_ENV);
+    const metadata = (await res.json()) as IssuerMetadata;
+    const config =
+      metadata.credential_configurations_supported[RESIDENT_CREDENTIAL_CONFIGURATION_ID];
+    expect(config).toBeDefined();
+    expect(config?.format).toBe("ldp_vc");
+    expect(config?.credential_definition.type).toEqual([
+      "VerifiableCredential",
+      "UtopiaResidentRegistrationCredential",
+    ]);
+    expect(config?.credential_definition["@context"]).toEqual([
+      "https://www.w3.org/ns/credentials/v2",
+      "https://w3id.org/citizenship/v3",
+      "https://verygoodwallet.com/contexts/utopia-resident/v1",
+    ]);
+    expect(config?.display).toEqual([{ name: "Utopia Resident Registration" }]);
+  });
 });
 
 describe("POST /api/offers", () => {
@@ -166,11 +202,13 @@ describe("POST /api/offers", () => {
 
   it("auto-generates a well-formed documentNumber and embeds the record in the code", async () => {
     const { credential_offer } = await createOffer();
-    const payload = await readSignedToken<OfferCodePayload>({
-      secret: TEST_ENV.TOKEN_SECRET ?? "",
-      token: preAuthorizedCode(credential_offer),
-    });
+    const payload = await readOfferPayload(credential_offer);
     expect(payload.use).toBe("offer");
+    // An offer body without a discriminator is a license offer (the pre-N5
+    // API shape) — and the code binds that configuration explicitly.
+    if (payload.configurationId !== CREDENTIAL_CONFIGURATION_ID) {
+      throw new Error(`expected a license offer, got ${payload.configurationId}`);
+    }
     expect(payload.givenName).toBe(SUBJECT.givenName);
     expect(payload.familyName).toBe(SUBJECT.familyName);
     expect(payload.birthDate).toBe(SUBJECT.birthDate);
@@ -184,10 +222,10 @@ describe("POST /api/offers", () => {
       birthDate: SUBJECT.birthDate,
       documentNumber: "UDL-K4Q7-XW2M",
     });
-    const payload = await readSignedToken<OfferCodePayload>({
-      secret: TEST_ENV.TOKEN_SECRET ?? "",
-      token: preAuthorizedCode(credential_offer),
-    });
+    const payload = await readOfferPayload(credential_offer);
+    if (payload.configurationId !== CREDENTIAL_CONFIGURATION_ID) {
+      throw new Error(`expected a license offer, got ${payload.configurationId}`);
+    }
     expect(payload.givenName).toBe("Jamie");
     expect(payload.familyName).toBe("Voss");
     expect(payload.documentNumber).toBe("UDL-K4Q7-XW2M");
@@ -245,6 +283,44 @@ describe("POST /api/offers", () => {
     ["age over 120", { ...SUBJECT, birthDate: "1880-01-01" }],
     ["bad documentNumber", { ...SUBJECT, documentNumber: "UDL-101O-ILLO" }],
   ])("rejects %s with invalid_request", async (_label, body) => {
+    const res = await postJson("/api/offers", body);
+    await expectOauthError(res, 400, "invalid_request");
+  });
+
+  it("mints a resident offer bound to the resident configuration (N5)", async () => {
+    const { credential_offer, credential_offer_uri } = await createOffer(RESIDENT_SUBJECT);
+    expect(credential_offer.credential_configuration_ids).toEqual([
+      RESIDENT_CREDENTIAL_CONFIGURATION_ID,
+    ]);
+
+    const payload = await readOfferPayload(credential_offer);
+    expect(payload.use).toBe("offer");
+    if (payload.configurationId !== RESIDENT_CREDENTIAL_CONFIGURATION_ID) {
+      throw new Error(`expected a resident offer, got ${payload.configurationId}`);
+    }
+    expect(payload.givenName).toBe("Jamie");
+    expect(payload.familyName).toBe("Voss");
+    expect(payload.districtFips).toBe(11);
+    expect(payload.postalCode).toBe(40125);
+
+    // The offer-by-reference reconstruction reflects the SAME configuration.
+    const fetched = await app.request(new URL(credential_offer_uri).pathname, {}, TEST_ENV);
+    expect(fetched.status).toBe(200);
+    expect((await fetched.json()) as CredentialOffer).toEqual(credential_offer);
+  });
+
+  it.each([
+    ["unknown credential_configuration_id", { ...RESIDENT_SUBJECT, credential_configuration_id: "SomeOtherCredential" }],
+    ["missing resident givenName", { ...RESIDENT_SUBJECT, givenName: "  " }],
+    ["missing resident familyName", { ...RESIDENT_SUBJECT, familyName: undefined }],
+    ["missing districtFips", { ...RESIDENT_SUBJECT, districtFips: undefined }],
+    ["non-integer districtFips", { ...RESIDENT_SUBJECT, districtFips: "11" }],
+    ["unknown districtFips", { ...RESIDENT_SUBJECT, districtFips: 99 }],
+    ["missing postalCode", { ...RESIDENT_SUBJECT, postalCode: undefined }],
+    ["non-integer postalCode", { ...RESIDENT_SUBJECT, postalCode: 40125.5 }],
+    ["postal code below the district block", { ...RESIDENT_SUBJECT, postalCode: 40099 }],
+    ["postal code from another district's block", { ...RESIDENT_SUBJECT, postalCode: 41150 }],
+  ])("rejects a resident offer with %s", async (_label, body) => {
     const res = await postJson("/api/offers", body);
     await expectOauthError(res, 400, "invalid_request");
   });
@@ -336,9 +412,10 @@ describe("POST /oid4vci/credential", () => {
   async function credentialRequestBody(
     binding: HolderBinding,
     nonce: string,
+    configurationId: string = CREDENTIAL_CONFIGURATION_ID,
   ): Promise<Record<string, unknown>> {
     return {
-      credential_configuration_id: CREDENTIAL_CONFIGURATION_ID,
+      credential_configuration_id: configurationId,
       proof: {
         proof_type: "jwt",
         jwt: createProofJwt({
@@ -578,6 +655,99 @@ describe("POST /oid4vci/credential", () => {
       { authorization: `Bearer ${token.access_token}` },
     );
     await expectOauthError(res, 400, "unsupported_credential_type");
+  });
+
+  it("blind-issues a resident registration end-to-end that passes the receipt check (N5)", async () => {
+    const { credential_offer } = await createOffer(RESIDENT_SUBJECT);
+    const token = await exchangeForToken(preAuthorizedCode(credential_offer));
+
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const res = await postJson(
+      "/oid4vci/credential",
+      await credentialRequestBody(binding, token.c_nonce, RESIDENT_CREDENTIAL_CONFIGURATION_ID),
+      { authorization: `Bearer ${token.access_token}` },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CredentialResponse;
+
+    const vc = body.credentials[0]?.credential;
+    expect(vc).toBeDefined();
+    const proof = vc?.["proof"] as Record<string, unknown>;
+    expect(proof["cryptosuite"]).toBe("credkit-bbs-sha-2026");
+    expect(vc?.["type"]).toEqual([
+      "VerifiableCredential",
+      "UtopiaResidentRegistrationCredential",
+    ]);
+
+    // Same discipline as the license: no subject id, ever.
+    const subject = vc?.["credentialSubject"] as Record<string, unknown>;
+    expect(subject["id"]).toBeUndefined();
+    expect(subject["type"]).toEqual(["Person", "UtopiaResident"]);
+    expect(subject["givenName"]).toBe("Jamie");
+    expect(subject["familyName"]).toBe("Voss");
+    // The district name is re-derived from the shared geography, and the
+    // twins ride as canonical decimal STRINGS (xsd:unsignedInt via context —
+    // the N5 lexical-form decision).
+    expect(subject["districtName"]).toBe("Port Azure");
+    expect(subject["stateFips"]).toBe("11");
+    expect(subject["postalCode"]).toBe("40125");
+
+    // Holder receipt check: blind-signed over THIS wallet's link secret.
+    const receivedVc = vc as unknown as VerifiableCredential;
+    await expect(
+      verifyIssuedCredkitCredential({
+        verifiableCredential: receivedVc,
+        holderBinding: {
+          linkSecret: LINK_SECRET,
+          secretProverBlind: binding.secretProverBlind,
+        },
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it("refuses to issue a configuration the token was not minted for (offer↔token binding)", async () => {
+    // A resident offer's token must not redeem for a license…
+    const resident = await createOffer(RESIDENT_SUBJECT);
+    const residentToken = await exchangeForToken(preAuthorizedCode(resident.credential_offer));
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const asLicense = await postJson(
+      "/oid4vci/credential",
+      await credentialRequestBody(binding, residentToken.c_nonce, CREDENTIAL_CONFIGURATION_ID),
+      { authorization: `Bearer ${residentToken.access_token}` },
+    );
+    const licenseError = await expectOauthError(asLicense, 400, "invalid_credential_request");
+    expect(licenseError.error_description).toContain("was issued for");
+
+    // …and a license offer's token must not redeem for a registration.
+    const license = await createOffer();
+    const licenseToken = await exchangeForToken(preAuthorizedCode(license.credential_offer));
+    const asResident = await postJson(
+      "/oid4vci/credential",
+      await credentialRequestBody(binding, licenseToken.c_nonce, RESIDENT_CREDENTIAL_CONFIGURATION_ID),
+      { authorization: `Bearer ${licenseToken.access_token}` },
+    );
+    const residentError = await expectOauthError(asResident, 400, "invalid_credential_request");
+    expect(residentError.error_description).toContain("was issued for");
+  });
+
+  it("rejects an access token that binds no configuration (pre-N5 shape, fail closed)", async () => {
+    const legacyToken = await mintSignedToken({
+      secret: TEST_ENV.TOKEN_SECRET ?? "",
+      payload: {
+        use: "access",
+        ...SUBJECT,
+        documentNumber: "UDL-AAAA-2222",
+        c_nonce: "legacy-nonce",
+      },
+      ttlSeconds: 60,
+    });
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const res = await postJson(
+      "/oid4vci/credential",
+      await credentialRequestBody(binding, "legacy-nonce"),
+      { authorization: `Bearer ${legacyToken}` },
+    );
+    await expectOauthError(res, 400, "invalid_credential_request");
   });
 
   it("rejects a proof over the wrong nonce", async () => {

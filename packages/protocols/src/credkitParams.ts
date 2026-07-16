@@ -1,7 +1,7 @@
 /**
- * The published proof-alphabet document (MIGRATION §8, Appendix D.3): each
- * verifier serves ONE JSON document at a well-known path, holding the range
- * (and, at N5, set) parameters every prover must consume verbatim.
+ * The published proof-alphabet document (MIGRATION §8, Appendix D.3, D.5.5):
+ * each verifier serves ONE JSON document at a well-known path, holding the
+ * range and set-membership parameters every prover must consume verbatim.
  *
  * Why published at all: credkit's `createRangeParams` is randomized, so the
  * alphabet is not reproducible — a prover that regenerated locally would fail
@@ -26,7 +26,13 @@ export interface CredkitParamsDocument {
   suite: string;
   /** Range-proof alphabet: `params` = base64url `rangeParamsToOctets`, `hash` = base64url SHA-256 of those octets. */
   range?: { base: number; params: string; hash: string };
-  // N5: sets?: Record<string, { params: string; hash: string }>
+  /**
+   * Set-membership alphabets, keyed by set id (N5, Appendix D.5.5): each
+   * `params` = base64url `setParamsToOctets`, `hash` = base64url SHA-256 of
+   * those octets — the same bytes credkit binds as `membershipParamsHash`.
+   * The DCQL membership claim pins `set_id` + `params_hash` against this.
+   */
+  sets?: Record<string, { params: string; hash: string }>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -86,6 +92,34 @@ export function assertCredkitParamsDocument(value: unknown): CredkitParamsDocume
       throw new Error(
         "The credkit params document's range.hash is not a base64url string",
       );
+    }
+  }
+  const sets = value["sets"];
+  if (sets !== undefined) {
+    if (!isRecord(sets)) {
+      throw new Error("The credkit params document has a non-object sets map");
+    }
+    for (const [setId, entry] of Object.entries(sets)) {
+      if (setId === "") {
+        throw new Error("The credkit params document has a set with an empty id");
+      }
+      if (!isRecord(entry)) {
+        throw new Error(
+          `The credkit params document's sets[${JSON.stringify(setId)}] is not an object`,
+        );
+      }
+      const params = entry["params"];
+      if (typeof params !== "string" || params === "" || !BASE64URL_PATTERN.test(params)) {
+        throw new Error(
+          `The credkit params document's sets[${JSON.stringify(setId)}].params is not a base64url string`,
+        );
+      }
+      const hash = entry["hash"];
+      if (typeof hash !== "string" || hash === "" || !BASE64URL_PATTERN.test(hash)) {
+        throw new Error(
+          `The credkit params document's sets[${JSON.stringify(setId)}].hash is not a base64url string`,
+        );
+      }
     }
   }
   return value as unknown as CredkitParamsDocument;

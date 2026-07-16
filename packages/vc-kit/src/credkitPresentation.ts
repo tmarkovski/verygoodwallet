@@ -6,8 +6,9 @@
  * Presenting (`createCredkitPresentation`) wraps `presentGraph`: N holder-
  * bound credentials become one Verifiable Presentation secured by the
  * `credkit-bbs-presentation-sha-2026` suite, with selective disclosure,
- * range claims over hidden numeric twins, and challenge/domain folded into
- * the merged transcript natively. The VP carries NO holder identifier —
+ * range and set-membership claims over hidden numeric twins, and
+ * challenge/domain folded into the merged transcript natively. The VP
+ * carries NO holder identifier —
  * credkit makes a `holder` property unrepresentable (MIGRATION §6), so the
  * verifier sees no key, no DID, nothing to correlate on.
  *
@@ -68,6 +69,13 @@ export interface CredkitPresentationCredential {
    */
   rangeClaims?: readonly RangeClaimRequest[];
   /**
+   * Set-membership claims over the credential's declared twins (N5), in the
+   * order the verifier restates them — each proves the hidden value is one
+   * of the verifier's published set members. Same fail-closed discipline as
+   * range claims: a non-member value makes the prover THROW.
+   */
+  membershipClaims?: readonly MembershipClaimRequest[];
+  /**
    * The holder's link secret + this credential's `secretProverBlind` —
    * REQUIRED for holder-bound credentials (every VGW v3 credential is).
    */
@@ -99,6 +107,9 @@ export async function createCredkitPresentation(
       verifiableCredential: input.verifiableCredential as Record<string, unknown>,
       selectivePointers: input.selectivePointers ?? [],
       ...(input.rangeClaims !== undefined ? { rangeClaims: input.rangeClaims } : {}),
+      ...(input.membershipClaims !== undefined
+        ? { membershipClaims: input.membershipClaims }
+        : {}),
       ...(input.holderBinding !== undefined ? { holderBinding: input.holderBinding } : {}),
     })),
     ...(options.equalities !== undefined ? { equalities: options.equalities } : {}),

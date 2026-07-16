@@ -20,6 +20,7 @@ export interface CredentialMeta {
 
 const KIND_LABELS: Record<string, string> = {
   Iso18013DriversLicenseCredential: "Driver's license",
+  UtopiaResidentRegistrationCredential: "Resident registration",
 };
 
 /** The primary (non-generic) credential type. */

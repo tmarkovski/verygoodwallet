@@ -12,10 +12,19 @@ export const PRE_AUTHORIZED_CODE_GRANT_TYPE =
   "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 
 /**
- * The single credential configuration this demo issues. The wallet requests
- * it by this exact id at the credential endpoint.
+ * The driver's-license credential configuration. The wallet requests it by
+ * this exact id at the credential endpoint.
  */
 export const CREDENTIAL_CONFIGURATION_ID = "UtopiaDriversLicense";
+
+/**
+ * The Utopia Resident Registration configuration (N5, MIGRATION Appendix
+ * D.5.4) — the same DMV's second credential, issued through a second,
+ * separate offer over the identical pre-authorized flow. Each offer names
+ * exactly ONE configuration id, and the issuer binds it into the signed
+ * code/token so the credential endpoint only ever issues what was offered.
+ */
+export const RESIDENT_CREDENTIAL_CONFIGURATION_ID = "utopia_resident_registration";
 
 export interface PreAuthorizedCodeGrant {
   "pre-authorized_code": string;

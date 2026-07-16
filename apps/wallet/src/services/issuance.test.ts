@@ -20,6 +20,7 @@ import {
 import {
   CREDENTIAL_CONFIGURATION_ID,
   PRE_AUTHORIZED_CODE_GRANT_TYPE,
+  RESIDENT_CREDENTIAL_CONFIGURATION_ID,
   commitmentDigest,
   ed25519KeyPairFromSeed,
   verifyProofJwt,
@@ -31,7 +32,9 @@ import {
 } from "@vgw/protocols";
 import {
   UTOPIA_DL_NUMERIC_DECLARATIONS,
+  UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
   buildUtopiaDriversLicense,
+  buildUtopiaResidentRegistration,
   createHolderBinding,
   generateCredkitBbsKeyPair,
   issueCredkitCredential,
@@ -77,6 +80,12 @@ const C_NONCE = "demo-c-nonce";
 interface FakeIssuerConfig {
   origin: string;
   seed: Uint8Array;
+  /**
+   * Which of the DMV's two configurations the offer names (default: the
+   * license). The wallet's offer→issue path is config-agnostic — the N5
+   * resident flow must ride it with zero wallet changes.
+   */
+  kind?: "license" | "resident";
   /** Bind the VC to this DID instead of leaving the subject anonymous. */
   subjectIdOverride?: string;
   /**
@@ -120,14 +129,19 @@ function json(body: unknown, status = 200): Response {
 function makeFakeIssuer(config: FakeIssuerConfig): FakeIssuer {
   const keyPair = generateCredkitBbsKeyPair(config.seed);
   const { origin } = config;
+  const kind = config.kind ?? "license";
+  const configurationId =
+    kind === "resident" ? RESIDENT_CREDENTIAL_CONFIGURATION_ID : CREDENTIAL_CONFIGURATION_ID;
 
   const offer: CredentialOffer = {
     credential_issuer: origin,
-    credential_configuration_ids: [CREDENTIAL_CONFIGURATION_ID],
+    credential_configuration_ids: [configurationId],
     grants: {
       [PRE_AUTHORIZED_CODE_GRANT_TYPE]: { "pre-authorized_code": PRE_AUTH_CODE },
     },
   };
+  // Like the real DMV since N5: the metadata advertises BOTH configurations;
+  // the offer names exactly one of them.
   const metadata: IssuerMetadata = {
     credential_issuer: origin,
     credential_endpoint: `${origin}/oid4vci/credential`,
@@ -145,6 +159,18 @@ function makeFakeIssuer(config: FakeIssuerConfig): FakeIssuer {
           jwt: { proof_signing_alg_values_supported: ["EdDSA"] },
         },
         display: [{ name: "Utopia Driver's License" }],
+      },
+      [RESIDENT_CREDENTIAL_CONFIGURATION_ID]: {
+        format: "ldp_vc",
+        credential_definition: {
+          "@context": ["https://www.w3.org/ns/credentials/v2"],
+          type: ["VerifiableCredential", "UtopiaResidentRegistrationCredential"],
+        },
+        cryptographic_binding_methods_supported: ["did:key"],
+        proof_types_supported: {
+          jwt: { proof_signing_alg_values_supported: ["EdDSA"] },
+        },
+        display: [{ name: "Utopia Resident Registration" }],
       },
     },
   };
@@ -209,20 +235,36 @@ function makeFakeIssuer(config: FakeIssuerConfig): FakeIssuer {
       captured.holderDid = verified.holderDid;
 
       // Like the real DMV: no subjectId by default (unlinkability — node ids
-      // are structurally revealed by every derived proof), no
-      // birthDateCommitment (age predicates prove against the hidden
-      // date1900 twin), blind signature over the wallet's commitment.
-      const unsigned = buildUtopiaDriversLicense({
-        ...(config.subjectIdOverride !== undefined
+      // are structurally revealed by every derived proof), predicate fields
+      // ride as hidden numeric twins (date1900 / uint64), blind signature
+      // over the wallet's commitment.
+      const subjectId =
+        config.subjectIdOverride !== undefined
           ? { subjectId: config.subjectIdOverride }
-          : {}),
-        ...SUBJECT,
-        issuer: { id: keyPair.controller, name: "Utopia DMV" },
-      });
+          : {};
+      const unsigned =
+        kind === "resident"
+          ? buildUtopiaResidentRegistration({
+              ...subjectId,
+              givenName: SUBJECT.givenName,
+              familyName: SUBJECT.familyName,
+              districtName: "Port Azure",
+              stateFips: 11,
+              postalCode: 40125,
+              issuer: { id: keyPair.controller, name: "Utopia DMV" },
+            })
+          : buildUtopiaDriversLicense({
+              ...subjectId,
+              ...SUBJECT,
+              issuer: { id: keyPair.controller, name: "Utopia DMV" },
+            });
       const signed = await issueCredkitCredential({
         credential: unsigned,
         keyPair,
-        numericDeclarations: UTOPIA_DL_NUMERIC_DECLARATIONS,
+        numericDeclarations:
+          kind === "resident"
+            ? UTOPIA_RESIDENT_NUMERIC_DECLARATIONS
+            : UTOPIA_DL_NUMERIC_DECLARATIONS,
         holderCommitment: config.swapCommitment
           ? createHolderBinding().commitmentWithProof
           : holderCommitment,
@@ -344,6 +386,57 @@ describe("acceptCredentialOffer", () => {
     const holder = ed25519KeyPairFromSeed(popSeed);
     expect(subject["id"]).toBeUndefined();
     expect(issuer.captured.holderDid).toBe(holder.did);
+  }, 60_000);
+
+  it("flows a resident-registration offer through the same config-agnostic path (N5)", async () => {
+    const issuer = makeFakeIssuer({
+      origin: "https://dmv.utopia.example",
+      seed: new Uint8Array(32).fill(1),
+      kind: "resident",
+    });
+    routeFetchTo(issuer);
+
+    // The preview shows the resident display name straight from metadata.
+    const preview = await previewCredentialOffer({ offerUri: issuer.offerUri });
+    expect(preview.credentialName).toBe("Utopia Resident Registration");
+
+    const record = await acceptCredentialOffer({
+      offer: preview.offer,
+      metadata: preview.metadata,
+      accountId: 7,
+      masterSecret,
+      vaultKey,
+    });
+
+    // The wallet requested exactly the offered configuration…
+    expect(issuer.captured.configurationId).toBe(RESIDENT_CREDENTIAL_CONFIGURATION_ID);
+    // …and stored plaintext metadata that renders the new kind.
+    expect(record.meta).toEqual({
+      name: "Utopia Resident Registration",
+      issuerName: "Utopia DMV",
+      kind: "UtopiaResidentRegistrationCredential",
+      colorSeed: "UtopiaResidentRegistrationCredential",
+    });
+
+    // Same v3 envelope discipline; the receipt check passed en route (the
+    // flow throws otherwise) and re-passes from only what survives.
+    const envelope = await decryptJson<CredentialPayload>(vaultKey, record.payload);
+    expect(envelope.version).toBe(3);
+    const subject = envelope.vc.credentialSubject as Record<string, unknown>;
+    expect(subject["id"]).toBeUndefined();
+    expect(subject["type"]).toEqual(["Person", "UtopiaResident"]);
+    expect(subject["districtName"]).toBe("Port Azure");
+    expect(subject["stateFips"]).toBe("11");
+    expect(subject["postalCode"]).toBe("40125");
+    await expect(
+      verifyIssuedCredkitCredential({
+        verifiableCredential: envelope.vc,
+        holderBinding: {
+          linkSecret: await deriveLinkSecret(masterSecret),
+          secretProverBlind: scalarFromBase64Url(envelope.secretProverBlind),
+        },
+      }),
+    ).resolves.toBe(true);
   }, 60_000);
 
   it("derives a different pairwise PoP DID per issuer origin", async () => {

@@ -21,10 +21,14 @@
  * - `summarizeCredkitPresentation(...)` — envelope claim counts (route peek)
  * - `credkitNumericDeclarations(...)` / `credkitProofMode(...)` — a
  *   credential's declared twins + binding mode, from its base proof
- * - `mintSeededRangeParams(...)` + params codec/hash helpers — the published
- *   `/.well-known/credkit-params` alphabet (deterministic seeded mint)
+ * - `mintSeededRangeParams(...)` / `mintSeededSetParams(...)` + params
+ *   codec/hash helpers — the published `/.well-known/credkit-params`
+ *   alphabets (deterministic seeded mint; sets since N5)
  * - `credkitDocumentLoader` — the strict offline loader for every credkit call
- * - `buildUtopiaDriversLicense(...)` — demo credential template
+ * - `buildUtopiaDriversLicense(...)` / `buildUtopiaResidentRegistration(...)`
+ *   — demo credential templates (the resident carries the uint64 twins)
+ * - `UTOPIA_DISTRICTS` / `districtByFips(...)` — the shared Utopia
+ *   geography fiction (data-only; also exported as `@vgw/vc-kit/geography`)
  */
 export {
   bbsDidKeyFromPublicKey,
@@ -68,12 +72,19 @@ export {
 } from './credkitPresentation.js';
 export {
   mintSeededRangeParams,
+  mintSeededSetParams,
   rangeParamsFromBase64Url,
   rangeParamsHashBase64Url,
   rangeParamsToBase64Url,
+  setParamsFromBase64Url,
+  setParamsHashBase64Url,
+  setParamsToBase64Url,
   verifyRangeParams,
+  verifySetParams,
   type MintSeededRangeParamsOptions,
+  type MintSeededSetParamsOptions,
   type RangeParams,
+  type SetMembershipParams,
 } from './credkitParams.js';
 export {
   UTOPIA_DL_NUMERIC_DECLARATIONS,
@@ -81,7 +92,19 @@ export {
   type UtopiaDriversLicenseInput,
 } from './credentials/utopia-dl.js';
 export {
+  UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
+  buildUtopiaResidentRegistration,
+  type UtopiaResidentRegistrationInput,
+} from './credentials/utopia-resident.js';
+export {
+  UTOPIA_DISTRICTS,
+  districtByFips,
+  type UtopiaDistrict,
+} from './credentials/utopia-geography.js';
+export {
+  CITIZENSHIP_V3_CONTEXT_URL,
   CREDENTIALS_V2_CONTEXT_URL,
+  UTOPIA_RESIDENT_V1_CONTEXT_URL,
   VDL_V1_CONTEXT_URL,
   VDL_AAMVA_V1_CONTEXT_URL,
   VGW_CONTEXT_URL,

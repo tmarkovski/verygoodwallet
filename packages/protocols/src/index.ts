@@ -10,6 +10,7 @@
 export {
   CREDENTIAL_CONFIGURATION_ID,
   PRE_AUTHORIZED_CODE_GRANT_TYPE,
+  RESIDENT_CREDENTIAL_CONFIGURATION_ID,
   walletOfferLink,
   type CredentialConfiguration,
   type CredentialOffer,

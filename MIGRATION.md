@@ -493,7 +493,7 @@ encoder registry can be referenced/published openly rather than embedded per dep
 | **N2** | ✅ Complete — the DMV blind-issues the DL via credkit (`credkit-bbs-sha-2026`, `date1900` twin, offline loader; issuer DID unchanged per the N1 finding), the wallet threads the master-derived link secret, runs the holder receipt check, and persists the v3 envelope `{ version: 3, vc, secretProverBlind }` (IndexedDB DB_VERSION 3 clears pre-credkit credential records — reissuance, per Appendix B). Wire names (§7): request extension `vgw_holder_commitment`, PoP claim `vgw_commitment_digest`; no `vgw_commitment_opening` travels. `deriveHolderSeed` → `deriveIssuancePopSeed` (`vgw/v1/issuance-pop:<origin>`). Full blind issuance also validated under workerd against the built Worker artifact (closing N0's deferred issuance item). **Branch note:** N2 and N3 land on branch `credkit-flip`; between them the wallet stores credkit credentials it cannot yet present — the presentation path (and the DMV-facing e2e suites) still speak the old stack and are rewritten at N3. The wallet presentation/pipeline unit suites stay GREEN meanwhile: they mint their own bbs-2023 fixtures against the deliberately-retained legacy stack (an earlier draft predicted them red; the retained-until-N4 compatibility keeps them alive). **Transitional, die at N4:** the `vgw-v1.json` `birthDateCommitment`/`zkAgeProof` terms, `buildUtopiaDriversLicense`'s deprecated optional `birthDateCommitment` input, and `commitment.ts` (shop/rentals old-flow suites still exercise them). The demo-issuer seed is now `hkdfDerive(master, "vgw/v1/demo-issuer")` (it used to borrow the removed holder branch) |
 | **N3** | ✅ Complete — the wallet presents and the verifiers verify via credkit, end to end. **Wire (D.1):** `vgw_zk`/`DcqlZkAgePredicate` deleted; per-query `vgw_predicates` (`params_uri`, `range` claims over hidden twins, explicit `claim_set`) validated in `assertDcqlQuery`, with `membership` and top-level `vgw_equalities` reserved-and-rejected-loudly until N5. **Wallet:** `presentation.ts` rewritten onto the vc-kit facade — `presentGraph` via `createCredkitPresentation` (not the N=1 `deriveProof` this row once named; §4 already preferred the graph path, and challenge/domain fold natively), holder binding re-derived from the master + the v3 envelope's scalar-decoded blind, structural-only tier-2 availability (`credkitNumericDeclarations`), the D.3 pinning ritual before any proof, and the §9 fail-closed prover throw surfaced as a friendly error. The VP carries **no holder identifier** — the presenter-key step (and its pairwise DID) is retired, not rotated. **Verifiers:** shop + rentals verify the WHOLE presentation in the Worker through `verifyCredkitPresentation` (configured DID → `bbsPublicKeyFromDidKey` → validated G2 anchor → `verifyGraph` → issuer equality, verification-method control, validity windows); per-request DCQL offers pinned into the HMAC-signed state token and restated from it (D.2), route-picked by the `summarizeCredkitPresentation` claim-count peek; `/.well-known/credkit-params` served from the deterministic `CREDKIT_PARAMS_SEED` mint (D.3; `run_worker_first` + CORS-open in both wranglers). **Deleted at N3:** client `verifyAgeProof` + the bb.js warm-ups (`AgeGate`/`RentalGate`, both verifier `App.tsx`s), the wallet's `@vgw/zk/prove` call + `warmAgeProver`, the `zk_pending` verdict, `ZkExhibit`, the split-runtime exhibit, and the wallet db's dead `LegacyCredentialPayload`/`CommitmentOpening` types; the DMV↔verifier e2e suites flipped off the old stack (the `LegacyCredentialResponse` shim is gone — they now blind-issue and range-prove under workerd). Package deletions (`packages/zk`, `commitment.ts`, the bbs-2023/eddsa wrappers and their `vgw-v1`/builder residue) remain N4 (Appendix B timing note) |
 | **N4** | ✅ Complete — the rip-out and the exhibit reframe. **Deleted:** `packages/zk/**` (package `@vgw/zk` + its `"workspace:*"` entries in the three app manifests), `packages/keys/src/commitment.ts` + its tests/re-exports (and `poseidon-lite` from `@vgw/keys`), `derivePresenterSeed`/`presenterInfo`/`PRESENTER_INFO_PREFIX` + `describeHierarchy`'s `verifierOrigins` presenter branch, and the whole vc-kit legacy stack — `bbs.ts`, `presentation.ts`, `ed25519.ts`, plus the legacy-only `loader.ts`/`jsigsErrors.ts` (nothing but the dead stack imported them; the credkit path has its own strict loader), the legacy `generateBbsKeyPair`, the legacy types (`BbsKeyPair`/`BbsSigner`/`Ed25519*`/`Verify*Result`/`PresentedCredentialResult`), their suites (`vc-kit.test.ts`, `presentation.test.ts`; the builder tests moved to `utopia-dl.test.ts`), the `vgw-v1.json` `birthDateCommitment`/`zkAgeProof` terms (file + URL kept, now term-empty), and `buildUtopiaDriversLicense`'s deprecated `birthDateCommitment` input. The bb.js-era `public/_headers` COOP/COEP files (wallet/shop/rentals) died too — cross-origin isolation served only multithreaded WASM. **Dependency prune (proven by the full gauntlet):** all nine `@digitalbazaar/*` deps + `jsonld-signatures` left `@vgw/vc-kit` (only `@credkit/*` + `@scure/base` remain; the `di-sd-primitives` shim stays — credkit's own runtime dep); lockfile −44 packages. The `shims.d.ts` mirror now declares only `di-sd-primitives`. **Vite-workaround verdict: REMOVED** — with `credentials-context` out of every Worker bundle, the `import.meta.url` `define` left all three worker vite configs, and all three built bundles boot green under workerd (`smoke` scripts; DO round-trips included), exactly as the doc predicted. **Unlisted consumers handled:** `apps/dmv/worker/offers.ts` got a local `birthDateToEpochDays` (same regex + UTC-round-trip idiom, same epoch-days comparisons — offer validation semantics unchanged, still API-tested); the wallet's `CredentialDetail` "Verify" action (the deferred TODO(N3)) rewired from the bbs-2023 derive/verify roundtrip to the credkit **holder receipt check** (`verifyIssuedCredkitCredential` against the re-derived link secret + the envelope's decoded blind). **Reframed (§10):** cross-verifier exhibit (`VerifierViews`, `activity.ts` — confession → genuine non-correlation + holder-elected linking; also fixed the stale tier-2 exclusion prefix, `"proven in zero knowledge"` → `"proven, not shown"`, keeping the legacy prefix for old log entries), the tour script (same 14 stops / 12 numbered, narration now blind-issuance + hidden-twin + server-verdict + no-identifier), `DerivationTree` (the missing presenter branch narrated as the exhibit), Welcome/Home/Offer/CredentialCard/dmv-footer copy (bbs-2023/Poseidon → credkit), the landing page 01/cast/stamped-finale prose + hierarchy line (banner untouched), and the landing writeup teaser reframed as pre-credkit field notes (the writeup itself stays historical — out of scope). README: hierarchy diagram (link secret + issuance-PoP, no presenter branch), tier table (range predicate, server-side verify), the §0 confession paragraph → non-correlation + elective linking, colophon + repo layout. PLAN.md: supersession header + `[superseded]` markers on the four false spots. DEPLOY.md: e2e descriptions rewritten to the credkit flows; the `packages/zk` artifacts section replaced with its obituary. **Cross-library equality test** died with the digitalbazaar generator; the pinned did:key vector in `credkit-keys.test.ts` now carries that guarantee (provenance noted inline). **Counts:** 471+12 → **393 passed + 12 e2e-gated** (zk −27; keys 75→56: commitment −18, hierarchy −3/+2 presenter-branch swap; vc-kit 78→46: legacy suites −38, equality −1, utopia-dl +7); e2e green: shop 33/33, rentals 24/24, dmv 41/41 (`VGW_E2E=1` — the DMV has no gated suite of its own; its Worker is exercised by the shop/rentals e2e boots) |
-| **N5** | Add and bundle the typed Utopia Resident context; Resident Registration credential → residency set-membership (B) and cross-credential link secret (C) via `presentGraph`/`verifyGraph` |
+| **N5** | Two commits (D.5 staging). **N5a ✅ landed — foundation + issuance:** bundled `https://verygoodwallet.com/contexts/utopia-resident/v1` (credential/subject types, `districtName`, `stateFips` + `postalCode` coerced `xsd:unsignedInt`); `buildUtopiaResidentRegistration` + `UTOPIA_RESIDENT_NUMERIC_DECLARATIONS` (`uint64` twins at `/credentialSubject/stateFips` and `/credentialSubject/postalCode`; values serialized as canonical decimal STRINGS whose context typing is pinned by an issuance-fails-closed regression — see the D.5 as-executed note); the shared Utopia geography (six districts, coastal 11/12/13 vs inland 21/22/23, disjoint 5-digit postal blocks; crypto-free `@vgw/vc-kit/geography` subpath so the DMV UI's dropdown pulls no credkit); vc-kit set-params mirror (`mintSeededSetParams`/codec/hash/`verifySetParams`) + `membershipClaims` pass-through on `createCredkitPresentation`; protocols params document gains fail-closed `sets` validation (D.5.5 shape). The DMV issues `utopia_resident_registration` as a second configuration — offer-body discriminator (`credential_configuration_id`, absent = DL for API compat), district/postal validated against the geography, same blind-issuance ritual and issuer DID — **plus a hardening the two-config world forced: the signed pre-auth code and access token now bind the offered configuration id** (pre-N5 they bound nothing — one config made the constant check sufficient; now the credential endpoint refuses a token↔request mismatch and the legacy unbound shape, both pinned by vectors). Wallet: offer→issue path needed ZERO changes (config-agnostic — proven by a resident-offer flow test); rendering gained the resident kind label + flat-subject claims view. Facade-level showcase-B tests land here (membership happy/wrong-set/non-member-throw; two-sided postalCode range), wired to live verifiers at N5b. Counts: 393+12 → **432 passed + 12 e2e-gated** (vc-kit 46→66, protocols 104→106, dmv 41→56, wallet 81→83). **N5b next — showcases live:** rentals publishes `sets` + the coastal policy and the composite "coastal resident rate" flow (D.5.3/6), the wallet's N3 rejections (`membership`, `vgw_equalities`, multi-query) come out (D.5.7), residency set-membership (B) + cross-credential link secret (C) verified end-to-end via `presentGraph`/`verifyGraph` |
 | **N6** | Stretch: cross-issuer loyalty (D) and/or agent delegation (E) |
 
 N0–N4 are a strict upgrade of the *existing* age story and should land before the new showcases.
@@ -865,3 +865,84 @@ public artifacts anyone can compare out of band.
 - `packages/protocols/src/credkitParams.ts` — the D.3 document type,
   `assertCredkitParamsDocument`, and `CREDKIT_PARAMS_PATH` (crypto-free wire contract, per the §7
   protocols charter).
+
+## D.5 N5 design pass: the resident credential and the composite flow (settled 2026-07-16)
+
+Written before the N5 code. N5 lands as two green commits — **N5a** (foundation + issuance,
+additive: the resident credential exists but nothing presents it yet, the same staging shape
+N2→N3 used) and **N5b** (showcases live).
+
+1. **Composite `vp_token` convention.** OID4VP's DCQL model is one enveloped presentation per
+   credential query; a credkit graph VP deliberately spans queries. VGW extension semantics: when
+   `vgw_equalities` is present, the wallet answers ALL linked queries with ONE graph VP, posted
+   under the FIRST credential query's id (`vp_token: { [credentials[0].id]: [vp] }`). Statement
+   order = the `dcql_query.credentials` order, on both sides — the verifier restates
+   per-statement expectations in that order and treats the single VP as answering the whole set.
+2. **Showcase B's live mechanism is set membership over `stateFips`** (the coastal-district
+   set). Range is already showcased by the age predicate; membership is the new capability. The
+   two-sided `postalCode` range (ZIP-in-block) is covered by tests (two range claims over one
+   pointer), not by a live UI flow.
+3. **Showcase C's live flow is ONE new rentals flow — the "coastal resident rate" eligibility
+   check** — and it discloses NOTHING personal: DL statement (over-25 range claim, empty
+   claim_set) + Resident statement (coastal `stateFips` membership, empty claim_set) +
+   `vgw_equalities` [[dl.link_secret, resident.link_secret]]. "Same person, no name" is the
+   exhibit: an `allowed` verdict whose disclosed set is empty beyond the mandatory pointers. The
+   existing standard rental flow (identity + age) is untouched; a discounted BOOKING would run
+   that flow — eligibility is the anonymous part.
+4. **Resident Registration issuance**: a second, separate OID4VCI offer at the same DMV
+   (`credential_configuration_id` `utopia_resident_registration`), flowing through the wallet's
+   existing single-config offer path. Subject: given/family name via the bundled citizenship v3
+   vocabulary, plus district name and the two numeric-declared predicate fields (`stateFips`,
+   `postalCode`, both `uint64` over `xsd:unsignedInt` — defined by the new bundled
+   `https://verygoodwallet.com/contexts/utopia-resident/v1` context, per §5). The Utopia
+   geography fiction (district names → FIPS-like codes, coastal vs inland) lives ONCE in vc-kit
+   so the DMV's offer form and the rentals policy share it; the COASTAL SET itself is rentals
+   VERIFIER POLICY (a subset of the codes), not credential data.
+5. **Params document gains `sets`** (the D.3 reservation): `"sets": { "<set_id>": { "params":
+   "<base64url setParamsToOctets>", "hash": "<base64url sha256(octets)>" } }`, minted seeded like
+   the range alphabet (distinct DST per set id). The DCQL membership claim pins `set_id` +
+   `params_hash`; the wallet's pinning ritual extends verbatim (same-origin, double hash,
+   `verifySetParams` once, cache by hash). The hash matches credkit's wire `membershipParamsHash`
+   (sha256 of the same octets).
+6. **Verifier memory generalizes**: the rentals state token's `predicates` field becomes the full
+   offer memory — statement-indexed range claims, membership claims (`{statement, pointer,
+   set_id}`), and the offered equalities. The D.2 route peek compares all three envelope counts;
+   restatement rebuilds `expectedRangeClaims` + `expectedMembershipClaims` (statement-major) +
+   `expectedEqualities` (query refs mapped to statement indices by query order) from the token
+   plus the isolate's own params objects.
+7. **Wallet scope**: multi-query matching (one candidate per query, every query satisfiable or
+   the request fails loudly), membership satisfiability against the credential's declared twins,
+   the composite consent screen (per-statement sections + a linkage line), and equality support
+   for `link_secret` refs ONLY — pointer-twin equality refs remain typed-but-rejected (a later
+   milestone's mechanism; recorded here so the rejection is deliberate). The N3 rejections
+   (`membership`, `vgw_equalities`, multi-query) come out.
+
+**As executed at N5a** (no design deviations; three details the code pass nailed down):
+
+- **Citizenship v3's terms are TYPE-SCOPED, not top-level.** The bundled context defines no
+  property terms at its top level at all — `givenName`/`familyName`/`birthDate`/… live inside
+  scoped contexts on the subject types (`Person`, `PermanentResident`, …), so they only resolve
+  on a node carrying such a type. The resident subject is therefore typed
+  `['Person', 'UtopiaResident']`: `Person` activates the citizenship person vocabulary,
+  `UtopiaResident` activates the resident context's scope (`districtName`, `stateFips`,
+  `postalCode`; vocabulary IRIs under `https://verygoodwallet.com/vocab/utopia-resident#`).
+  This also confirms §5's "cannot reuse citizenship v3 alone" the hard way: its only
+  `postalCode` term sits untyped inside the `PostalAddress` scope — a type this subject does
+  not carry — and nothing named `stateFips` exists anywhere in it.
+- **The uint64 lexical-form decision: context-typed canonical decimal STRINGS.** The builder
+  serializes `stateFips`/`postalCode` as JSON strings in canonical unsigned-decimal form
+  (validated integers in `[0, 2³²−1]`, the `xsd:unsignedInt` value space) and the resident
+  context's `@type` coercion stamps the datatype — exactly the DL `birth_date` mechanism. A
+  JSON string's RDF lexical form is byte-identical to the JSON value; a JSON number would ride
+  the serializer's number formatting instead (scientific notation, precision), a second
+  spelling credkit's encoder rejects rather than repairs. Pinned through the REAL pipeline:
+  issuance fails closed when the coercion is stripped (`does not accept`) and on a
+  non-canonical form (`not a canonical unsigned integer`).
+- **The offer↔token configuration binding (D.5.4's "single-config offer path", hardened).**
+  Pre-N5 the signed code/token carried no configuration id — with one configuration the
+  constant check was sufficient. Two configurations make the binding load-bearing: the offer
+  body's `credential_configuration_id` discriminator (absent = DL) is validated once, rides
+  the signed code into the access token, and the credential endpoint issues ONLY that id —
+  mismatches and pre-N5 unbound tokens are rejected (vectored). Set-alphabet DST convention
+  established for N5b: one DST per set id, `VGW-<APP>-CREDKIT-SET-PARAMS-<set_id>-V1` shaped
+  (e.g. rentals' coastal set → `VGW-RENTALS-CREDKIT-SET-PARAMS-coastal-V1`).

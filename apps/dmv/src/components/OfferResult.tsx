@@ -11,6 +11,8 @@ import type { CredentialOffer } from "@vgw/protocols";
 export interface OfferResultProps {
   credentialOffer: CredentialOffer;
   credentialOfferUri: string;
+  /** Stamp headline, e.g. "License issued" / "Registration issued". */
+  issuedLabel: string;
   /** Null when no wallet origin is configured — the panel shows a notice instead. */
   walletLink: string | null;
   walletOrigin: string | null;
@@ -19,6 +21,7 @@ export interface OfferResultProps {
 export function OfferResult({
   credentialOffer,
   credentialOfferUri,
+  issuedLabel,
   walletLink,
   walletOrigin,
 }: OfferResultProps) {
@@ -55,7 +58,7 @@ export function OfferResult({
         <span aria-hidden="true" className="issuance-stamp size-10 shrink-0" />
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stamp">
-            License issued
+            {issuedLabel}
           </p>
           <p className="mt-0.5 text-sm text-ink-dim">
             Ready for pickup — collect it into your wallet.

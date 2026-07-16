@@ -48,6 +48,55 @@ describe("assertCredkitParamsDocument", () => {
     );
   });
 
+  it("accepts a well-formed sets map (and an empty one)", () => {
+    const withSets: CredkitParamsDocument = {
+      ...DOCUMENT,
+      sets: {
+        coastal: { params: "AAAB_zz-99", hash: "c2hhLTI1Ng" },
+        "vip-block": { params: "BBBB", hash: "CCCC" },
+      },
+    };
+    expect(assertCredkitParamsDocument(withSets)).toEqual(withSets);
+    // An empty map means "this verifier publishes no sets" — same as absent.
+    expect(assertCredkitParamsDocument({ ...DOCUMENT, sets: {} })).toEqual({
+      ...DOCUMENT,
+      sets: {},
+    });
+  });
+
+  it("rejects malformed sets maps entry by entry", () => {
+    const withSets = (sets: unknown) => ({ ...DOCUMENT, sets });
+    const entry = { params: "AAAA", hash: "BBBB" };
+    expect(() => assertCredkitParamsDocument(withSets("coastal"))).toThrow(
+      /non-object sets map/,
+    );
+    expect(() => assertCredkitParamsDocument(withSets([entry]))).toThrow(
+      /non-object sets map/,
+    );
+    expect(() => assertCredkitParamsDocument(withSets({ "": entry }))).toThrow(
+      /set with an empty id/,
+    );
+    expect(() => assertCredkitParamsDocument(withSets({ coastal: "params" }))).toThrow(
+      /sets\["coastal"\] is not an object/,
+    );
+    expect(() =>
+      assertCredkitParamsDocument(withSets({ coastal: { ...entry, params: "" } })),
+    ).toThrow(/sets\["coastal"\]\.params/);
+    expect(() =>
+      assertCredkitParamsDocument(withSets({ coastal: { ...entry, params: "not+b64url/" } })),
+    ).toThrow(/sets\["coastal"\]\.params/);
+    expect(() =>
+      assertCredkitParamsDocument(withSets({ coastal: { params: "AAAA" } })),
+    ).toThrow(/sets\["coastal"\]\.hash/);
+    expect(() =>
+      assertCredkitParamsDocument(withSets({ coastal: { ...entry, hash: "pad==" } })),
+    ).toThrow(/sets\["coastal"\]\.hash/);
+    // One bad entry poisons the document even next to a good one.
+    expect(() =>
+      assertCredkitParamsDocument(withSets({ good: entry, bad: { params: "AAAA" } })),
+    ).toThrow(/sets\["bad"\]\.hash/);
+  });
+
   it("rejects malformed range blocks field by field", () => {
     const withRange = (range: unknown) => ({ ...DOCUMENT, range });
     expect(() => assertCredkitParamsDocument(withRange("base16"))).toThrow(/non-object range/);

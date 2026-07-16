@@ -22,7 +22,7 @@ import { CredentialCard } from "../components/CredentialCard";
 import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
 import { JsonTree } from "../inspector/JsonTree";
 
-const CLAIM_LABELS: [key: string, label: string][] = [
+const DL_CLAIM_LABELS: [key: string, label: string][] = [
   ["given_name", "Given name"],
   ["family_name", "Family name"],
   ["birth_date", "Date of birth"],
@@ -33,12 +33,35 @@ const CLAIM_LABELS: [key: string, label: string][] = [
   ["expiry_date", "Expires"],
 ];
 
-function claimsOf(vc: VerifiableCredential): Record<string, unknown> | null {
+// The resident registration's subject is flat (citizenship-style camelCase);
+// stateFips and postalCode double as hidden uint64 twins at presentation.
+const RESIDENT_CLAIM_LABELS: [key: string, label: string][] = [
+  ["givenName", "Given name"],
+  ["familyName", "Family name"],
+  ["districtName", "District"],
+  ["stateFips", "District code (FIPS)"],
+  ["postalCode", "Postal code"],
+];
+
+/** A credential's claim object plus the label set that knows how to name it. */
+interface ClaimView {
+  labels: [key: string, label: string][];
+  claims: Record<string, unknown>;
+}
+
+function claimsOf(vc: VerifiableCredential): ClaimView | null {
   const subject = vc.credentialSubject;
   if (subject === undefined || Array.isArray(subject)) return null;
+  // Utopia DL: the claims live under the driversLicense node.
   const dl = subject["driversLicense"];
   if (typeof dl === "object" && dl !== null && !Array.isArray(dl)) {
-    return dl as Record<string, unknown>;
+    return { labels: DL_CLAIM_LABELS, claims: dl as Record<string, unknown> };
+  }
+  // Utopia Resident Registration: flat subject typed ['Person', 'UtopiaResident'].
+  const types = subject["type"];
+  const typeList = Array.isArray(types) ? types : [types];
+  if (typeList.includes("UtopiaResident")) {
+    return { labels: RESIDENT_CLAIM_LABELS, claims: subject as Record<string, unknown> };
   }
   return null;
 }
@@ -132,7 +155,7 @@ export function CredentialDetail() {
   }
 
   const vc = payload?.vc ?? null;
-  const claims = vc !== null ? claimsOf(vc) : null;
+  const claimView = vc !== null ? claimsOf(vc) : null;
 
   // The credkit holder receipt check (MIGRATION §6): recompute the whole
   // issuance pipeline from the stored credential and verify the issuer's
@@ -208,23 +231,29 @@ export function CredentialDetail() {
         <div className="flex justify-center pt-10 text-muted">
           <Spinner />
         </div>
-      ) : claims !== null ? (
+      ) : claimView !== null ? (
         <section className="mt-8">
           <SectionTitle>Claims</SectionTitle>
           <dl className="mt-3 grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-line bg-line sm:grid-cols-2">
-            {CLAIM_LABELS.filter(([key]) => claims[key] !== undefined).map(([key, label]) => (
-              <div key={key} className="bg-surface px-4 py-3">
-                <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
-                  {label}
-                </dt>
-                <dd
-                  className={`mt-1 text-sm ${key === "document_number" ? "font-mono text-[13px]" : "font-medium"}`}
-                  title={typeof claims[key] === "string" ? (claims[key] as string) : undefined}
-                >
-                  {formatClaim(key, claims[key])}
-                </dd>
-              </div>
-            ))}
+            {claimView.labels
+              .filter(([key]) => claimView.claims[key] !== undefined)
+              .map(([key, label]) => (
+                <div key={key} className="bg-surface px-4 py-3">
+                  <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+                    {label}
+                  </dt>
+                  <dd
+                    className={`mt-1 text-sm ${key === "document_number" || key === "stateFips" || key === "postalCode" ? "font-mono text-[13px]" : "font-medium"}`}
+                    title={
+                      typeof claimView.claims[key] === "string"
+                        ? (claimView.claims[key] as string)
+                        : undefined
+                    }
+                  >
+                    {formatClaim(key, claimView.claims[key])}
+                  </dd>
+                </div>
+              ))}
           </dl>
           {payload !== null && (
             <p className="mt-2 text-[11px] leading-relaxed text-muted">

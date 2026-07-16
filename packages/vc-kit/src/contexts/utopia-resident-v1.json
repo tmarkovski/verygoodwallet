@@ -1,0 +1,24 @@
+{
+  "@context": {
+    "@protected": true,
+    "UtopiaResidentRegistrationCredential":
+      "https://verygoodwallet.com/vocab/utopia-resident#UtopiaResidentRegistrationCredential",
+    "UtopiaResident": {
+      "@id": "https://verygoodwallet.com/vocab/utopia-resident#UtopiaResident",
+      "@context": {
+        "@protected": true,
+        "id": "@id",
+        "type": "@type",
+        "districtName": "https://verygoodwallet.com/vocab/utopia-resident#districtName",
+        "stateFips": {
+          "@id": "https://verygoodwallet.com/vocab/utopia-resident#stateFips",
+          "@type": "http://www.w3.org/2001/XMLSchema#unsignedInt"
+        },
+        "postalCode": {
+          "@id": "https://verygoodwallet.com/vocab/utopia-resident#postalCode",
+          "@type": "http://www.w3.org/2001/XMLSchema#unsignedInt"
+        }
+      }
+    }
+  }
+}

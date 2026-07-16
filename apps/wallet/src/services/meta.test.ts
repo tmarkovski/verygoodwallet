@@ -38,6 +38,10 @@ describe("kindLabel", () => {
     expect(kindLabel("Iso18013DriversLicenseCredential")).toBe("Driver's license");
   });
 
+  it("uses the curated label for the Utopia Resident Registration", () => {
+    expect(kindLabel("UtopiaResidentRegistrationCredential")).toBe("Resident registration");
+  });
+
   it("spaces camel-cased kinds and strips the Credential suffix", () => {
     expect(kindLabel("MovieTicketCredential")).toBe("Movie Ticket");
     expect(kindLabel("AlumniCredential")).toBe("Alumni");

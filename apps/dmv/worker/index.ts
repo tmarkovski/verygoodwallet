@@ -15,6 +15,12 @@
  * `c_nonce`), so any isolate can serve any step of the flow. The issuer origin
  * is derived from each request's URL — never hardcoded — so the same Worker
  * answers correctly on localhost, workers.dev, and the custom domain.
+ *
+ * Since N5 the DMV issues TWO credential configurations — the driver's
+ * license and the Utopia Resident Registration (MIGRATION Appendix D.5.4) —
+ * over the same flow. Each offer names exactly one configuration id, the
+ * signed tokens bind it, and the credential endpoint only issues what the
+ * redeemed offer named.
  */
 
 import { Hono } from "hono";
@@ -23,6 +29,7 @@ import { fromBase64Url, toBase64Url } from "@vgw/keys";
 import {
   CREDENTIAL_CONFIGURATION_ID,
   PRE_AUTHORIZED_CODE_GRANT_TYPE,
+  RESIDENT_CREDENTIAL_CONFIGURATION_ID,
   commitmentDigest,
   mintSignedToken,
   readSignedToken,
@@ -36,13 +43,19 @@ import {
   type TokenResponse,
 } from "@vgw/protocols";
 import {
+  CITIZENSHIP_V3_CONTEXT_URL,
   CREDENTIALS_V2_CONTEXT_URL,
   UTOPIA_DL_NUMERIC_DECLARATIONS,
+  UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
+  UTOPIA_RESIDENT_V1_CONTEXT_URL,
   VDL_V1_CONTEXT_URL,
   VDL_AAMVA_V1_CONTEXT_URL,
   VGW_CONTEXT_URL,
   buildUtopiaDriversLicense,
+  buildUtopiaResidentRegistration,
+  districtByFips,
   issueCredkitCredential,
+  type VerifiableCredential,
 } from "@vgw/vc-kit";
 import { getIssuerKeyPair, resolveTokenSecret, type DmvBindings } from "./env.js";
 import { OfferValidationError, parseOfferInput, type OfferInput } from "./offers.js";
@@ -185,6 +198,22 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
           },
           display: [{ name: "Utopia Driver's License" }],
         },
+        [RESIDENT_CREDENTIAL_CONFIGURATION_ID]: {
+          format: "ldp_vc",
+          credential_definition: {
+            "@context": [
+              CREDENTIALS_V2_CONTEXT_URL,
+              CITIZENSHIP_V3_CONTEXT_URL,
+              UTOPIA_RESIDENT_V1_CONTEXT_URL,
+            ],
+            type: ["VerifiableCredential", "UtopiaResidentRegistrationCredential"],
+          },
+          cryptographic_binding_methods_supported: ["did:key"],
+          proof_types_supported: {
+            jwt: { proof_signing_alg_values_supported: ["EdDSA"] },
+          },
+          display: [{ name: "Utopia Resident Registration" }],
+        },
       },
     };
     return c.json(metadata);
@@ -216,7 +245,10 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
     const origin = new URL(c.req.url).origin;
     const credentialOffer: CredentialOffer = {
       credential_issuer: origin,
-      credential_configuration_ids: [CREDENTIAL_CONFIGURATION_ID],
+      // Exactly the one configuration this offer is FOR — the same id the
+      // signed code binds, so the credential endpoint can hold the wallet
+      // to it (single-config offers per MIGRATION D.5.4).
+      credential_configuration_ids: [input.configurationId],
       grants: {
         [PRE_AUTHORIZED_CODE_GRANT_TYPE]: { "pre-authorized_code": code },
       },
@@ -238,8 +270,9 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
     const code = c.req.param("code");
     // The offer is reconstructed from the code itself (nothing is stored), so
     // a bad code identifies nothing: verify before serving, 404 otherwise.
+    let payload: OfferCodePayload;
     try {
-      const payload = await readSignedToken<OfferCodePayload>({
+      payload = await readSignedToken<OfferCodePayload>({
         secret: resolveTokenSecret(c.env),
         token: code,
       });
@@ -254,7 +287,7 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
     const origin = new URL(c.req.url).origin;
     const offer: CredentialOffer = {
       credential_issuer: origin,
-      credential_configuration_ids: [CREDENTIAL_CONFIGURATION_ID],
+      credential_configuration_ids: [payload.configurationId],
       grants: {
         [PRE_AUTHORIZED_CODE_GRANT_TYPE]: { "pre-authorized_code": code },
       },
@@ -325,17 +358,17 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
     }
 
     // Fresh c_nonce, embedded INSIDE the signed access token: the credential
-    // endpoint recovers it from the Bearer token — no nonce store.
+    // endpoint recovers it from the Bearer token — no nonce store. The whole
+    // citizen record INCLUDING the offered configuration id rides along, so
+    // the credential endpoint issues exactly what this code was minted for.
     const cNonce = toBase64Url(globalThis.crypto.getRandomValues(new Uint8Array(16)));
+    const { use: _use, ...claims } = offer;
     const accessToken = await mintSignedToken({
       secret,
       payload: {
         use: "access",
-        givenName: offer.givenName,
-        familyName: offer.familyName,
-        birthDate: offer.birthDate,
-        documentNumber: offer.documentNumber,
         c_nonce: cNonce,
+        ...claims,
       } satisfies AccessTokenPayload,
       ttlSeconds: ACCESS_TOKEN_TTL_SECONDS,
     });
@@ -393,12 +426,28 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
         ),
       );
     }
-    if (request.credential_configuration_id !== CREDENTIAL_CONFIGURATION_ID) {
+    if (
+      request.credential_configuration_id !== CREDENTIAL_CONFIGURATION_ID &&
+      request.credential_configuration_id !== RESIDENT_CREDENTIAL_CONFIGURATION_ID
+    ) {
       return c.json(
         ...oauthError(
           400,
           "unsupported_credential_type",
-          `only ${CREDENTIAL_CONFIGURATION_ID} is supported`,
+          `only ${CREDENTIAL_CONFIGURATION_ID} and ${RESIDENT_CREDENTIAL_CONFIGURATION_ID} are supported`,
+        ),
+      );
+    }
+    // The access token binds the configuration the OFFER named — a token
+    // redeemed from a license offer must not mint a resident registration
+    // (or vice versa), and a pre-N5 token binds nothing and satisfies
+    // neither id (fail closed).
+    if (request.credential_configuration_id !== access.configurationId) {
+      return c.json(
+        ...oauthError(
+          400,
+          "invalid_credential_request",
+          `this access token was issued for a ${String(access.configurationId)} offer, not ${request.credential_configuration_id}`,
         ),
       );
     }
@@ -464,28 +513,59 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
       );
     }
 
-    // Deliberately NO subjectId: selective disclosure structurally reveals a
-    // node's `id` whenever any claim under it is selected, so an embedded
-    // holder DID would ride along in EVERY derived proof — one correlation
-    // handle shared by all verifiers, defeating unlinkability. Holder binding
-    // is the blind-signed link-secret commitment instead: the issuer signs
-    // one message it never sees, and no birthDateCommitment exists anymore —
-    // the birth_date is numeric-declared (date1900) so age predicates prove
-    // against a hidden, per-presentation-randomized twin.
+    // Deliberately NO subjectId on either credential kind: selective
+    // disclosure structurally reveals a node's `id` whenever any claim under
+    // it is selected, so an embedded holder DID would ride along in EVERY
+    // derived proof — one correlation handle shared by all verifiers,
+    // defeating unlinkability. Holder binding is the blind-signed
+    // link-secret commitment instead: the issuer signs one message it never
+    // sees — and because BOTH credentials commit to the same master-derived
+    // secret, the holder can later elect to prove they hold both (the N5
+    // composite). The predicate fields are numeric-declared twins: date1900
+    // for the license's birth_date, uint64 for the registration's
+    // stateFips/postalCode.
     const keyPair = getIssuerKeyPair(c.env);
-    const unsigned = buildUtopiaDriversLicense({
-      givenName: access.givenName,
-      familyName: access.familyName,
-      birthDate: access.birthDate,
-      documentNumber: access.documentNumber,
-      issuer: { id: keyPair.controller, name: ISSUER_DISPLAY_NAME },
-    });
+    let unsigned: VerifiableCredential;
+    let numericDeclarations;
+    if (access.configurationId === RESIDENT_CREDENTIAL_CONFIGURATION_ID) {
+      // The token carries the validated district code; the display name is
+      // re-derived from the shared geography at issuance so the two can
+      // never disagree.
+      const district = districtByFips(access.districtFips);
+      if (district === undefined) {
+        return c.json(
+          ...oauthError(
+            400,
+            "invalid_credential_request",
+            `districtFips ${String(access.districtFips)} names no Utopia district`,
+          ),
+        );
+      }
+      unsigned = buildUtopiaResidentRegistration({
+        givenName: access.givenName,
+        familyName: access.familyName,
+        districtName: district.name,
+        stateFips: district.fips,
+        postalCode: access.postalCode,
+        issuer: { id: keyPair.controller, name: ISSUER_DISPLAY_NAME },
+      });
+      numericDeclarations = UTOPIA_RESIDENT_NUMERIC_DECLARATIONS;
+    } else {
+      unsigned = buildUtopiaDriversLicense({
+        givenName: access.givenName,
+        familyName: access.familyName,
+        birthDate: access.birthDate,
+        documentNumber: access.documentNumber,
+        issuer: { id: keyPair.controller, name: ISSUER_DISPLAY_NAME },
+      });
+      numericDeclarations = UTOPIA_DL_NUMERIC_DECLARATIONS;
+    }
     let signed;
     try {
       signed = await issueCredkitCredential({
         credential: unsigned,
         keyPair,
-        numericDeclarations: UTOPIA_DL_NUMERIC_DECLARATIONS,
+        numericDeclarations,
         holderCommitment,
       });
     } catch (error) {
