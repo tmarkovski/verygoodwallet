@@ -12,7 +12,14 @@
  * - `documentLoader` / `registerContext` / `resolveDid` — JSON-LD plumbing
  * - `buildUtopiaDriversLicense(...)` — demo credential template
  */
-export { generateBbsKeyPair } from './keys.js';
+export {
+  bbsDidKeyFromPublicKey,
+  bbsPublicKeyFromDidKey,
+  credkitCiphersuite,
+  generateBbsKeyPair,
+  generateCredkitBbsKeyPair,
+  type CredkitBbsKeyPair,
+} from './keys.js';
 export { signCredential, deriveCredential, verifyCredential } from './bbs.js';
 export { generateEd25519KeyPair } from './ed25519.js';
 export { signPresentation, verifyPresentation } from './presentation.js';

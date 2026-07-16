@@ -8,10 +8,12 @@ export { fromBase64Url, fromHex, toBase64Url, toHex, utf8 } from "./encoding.js"
 export { hkdfDerive } from "./hkdf.js";
 export {
   HOLDER_INFO_PREFIX,
+  LINK_SECRET_INFO,
   PRESENTER_INFO_PREFIX,
   PRF_EVAL_INPUT,
   VAULT_INFO,
   deriveHolderSeed,
+  deriveLinkSecret,
   derivePresenterSeed,
   deriveVaultKey,
   describeHierarchy,

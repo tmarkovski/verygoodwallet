@@ -5,6 +5,7 @@
  * passkey PRF output ("master", never stored — re-derived per session)
  * └── HKDF-SHA-256 branches (domain-separated by `info`)
  *     ├── "vgw/v1/vault"                        → AES-GCM-256 vault key
+ *     ├── "vgw/v1/link-secret"                  → 32-byte credkit link secret (ONE for all issuers)
  *     ├── "vgw/v1/holder:<issuer-origin>"       → 32-byte holder seed (per-issuer BBS keypair)
  *     └── "vgw/v1/presenter:<verifier-origin>"  → 32-byte presenter seed (per-verifier keypair)
  * ```
@@ -22,6 +23,13 @@ export const PRF_EVAL_INPUT = "vgw/v1/master-secret";
 
 /** HKDF `info` for the vault (at-rest encryption) branch. */
 export const VAULT_INFO = "vgw/v1/vault";
+
+/**
+ * HKDF `info` for the credkit link-secret branch. Deliberately NOT
+ * origin-scoped: one secret across all issuers, for life (MIGRATION §6,
+ * credkit FINDINGS §8).
+ */
+export const LINK_SECRET_INFO = "vgw/v1/link-secret";
 
 /** HKDF `info` prefix for holder (per-issuer) branches. */
 export const HOLDER_INFO_PREFIX = "vgw/v1/holder:";
@@ -92,6 +100,26 @@ export async function derivePresenterSeed(
 }
 
 /**
+ * Derive the credkit link secret: 32 bytes, the SAME value at every call for
+ * a given master — deliberately not scoped to any issuer or verifier origin.
+ * One secret is blind-committed into every credential (the issuer never sees
+ * it), which is what makes cross-credential "same holder" equality provable.
+ * Verifier-unlinkability survives regardless: the secret itself is never
+ * disclosed and proofs are re-randomized per presentation; only
+ * holder-elected linking ever reveals "same holder".
+ *
+ * Feed the returned bytes to credkit as
+ * `createHolderBinding({ linkSecret: deriveLinkSecret(master) })` — a bare
+ * `createHolderBinding()` mints a fresh random secret per call, which passes
+ * single-credential demos but silently breaks cross-credential equality and
+ * the one-secret-for-life property. The secret is re-derived from the PRF
+ * whenever needed, never stored.
+ */
+export async function deriveLinkSecret(master: Uint8Array): Promise<Uint8Array> {
+  return hkdfDerive(master, LINK_SECRET_INFO, 32);
+}
+
+/**
  * Safe display form of a secret for the inspector: the first 8 hex characters
  * of its SHA-256 digest. Never show raw secret bytes in any UI.
  */
@@ -136,6 +164,11 @@ export async function describeHierarchy(
     info: VAULT_INFO,
     children: [],
   };
+  const linkSecretNode: DerivationNode = {
+    label: "link secret (credkit holder binding, all issuers)",
+    info: LINK_SECRET_INFO,
+    children: [],
+  };
   const holderNodes: DerivationNode[] = issuerOrigins.map((origin) => ({
     label: `holder seed (${origin})`,
     info: holderInfo(origin),
@@ -150,7 +183,7 @@ export async function describeHierarchy(
   const root: DerivationNode = {
     label: "master secret (passkey PRF)",
     info: PRF_EVAL_INPUT,
-    children: [vaultNode, ...holderNodes, ...presenterNodes],
+    children: [vaultNode, linkSecretNode, ...holderNodes, ...presenterNodes],
   };
 
   if (master !== undefined) {

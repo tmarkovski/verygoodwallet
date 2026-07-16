@@ -340,7 +340,11 @@ stays; `claimPathToPointer` (RFC-6901) stays. Concrete edits:
   expected-issuer, proof-verification-method, and validity-window enforcement.
 - **Issuer key bridge** — `keys.ts` swaps key generation to `@credkit/bbs` `keyGen` and adds inverse,
   tested `bbsDidKeyFromPublicKey(G2Point)` / `bbsPublicKeyFromDidKey(did:key:zUC7…)` helpers. The first
-  preserves the issuer DID published as `vgw_issuer_did`; the second decodes only the BLS12-381-G2
+  preserves the issuer DID published as `vgw_issuer_did` — and more than the encoding survives:
+  **verified at N1 by a pinned cross-library vector, `@credkit/bbs` `keyGen` and the incumbent
+  `@digitalbazaar` generator derive the *same key pair* from the same seed** (both implement the IETF
+  BBS KeyGen), so a fixed `ISSUER_SEED` keeps the DMV's DID stable across the N2 issuance swap — no
+  verifier re-discovery churn. The second decodes only the BLS12-381-G2
   multicodec, requires exactly 96 compressed key bytes, validates the point, and supplies Credkit's raw
   trust anchor. `TRUSTED_ISSUER_DID` remains the production pin; no raw key is accepted from the VP.
 - **JSON-LD loader** — keep `loader.ts`, its offline `BUNDLED_CONTEXTS`, and the `zUC7…` driver. Pass
@@ -460,7 +464,7 @@ encoder registry can be referenced/published openly rather than embedded per dep
 | Stage | Deliverable |
 |---|---|
 | **N0** | ✅ Complete. Worker-viability proven under workerd (spike below); consumption decided **and validated** — Git deps pinned by sha via pnpm overrides (§11, Appendix C addendum); credkit `8fdb3cf` is consumable and VGW is wired (resolver plugin, vitest inlining, optimizeDeps excludes) with the full typecheck/test/build/smoke pipeline green. Full `issueCredential`/`verifyProof` under workerd deferred to N2/N3 (needs a document loader + the pinned VP envelope) |
-| **N1** | Link secret in `@vgw/keys` (`deriveLinkSecret`); issuer key via `@credkit/bbs` `keyGen` |
+| **N1** | ✅ Complete (additive — live callers flip at N2). `deriveLinkSecret(master)` under the non-origin-scoped `vgw/v1/link-secret` info + a link-secret branch in the inspector tree; vc-kit gains `generateCredkitBbsKeyPair` (era pinned in `credkitCiphersuite()`), `bbsDidKeyFromPublicKey`, `bbsPublicKeyFromDidKey`, with round-trip and rejection vectors (wrong codec, bad length, off-curve, identity). Bonus finding: credkit `keyGen` ≡ digitalbazaar KeyGen from the same seed (pinned cross-library test) — the N2 swap keeps the issuer DID stable |
 | **N2** | DMV reissues the DL with credkit + the `date1900` twin; change vDL `birth_date` to `xsd:date`; pass VGW's offline loader through issuance; OID4VCI request carries the commitment-with-proof as an extension (freshness a-vs-c decided here, §3.3); drop Poseidon + opening; wallet threads the master-derived link secret and persists per-credential `secretProverBlind` |
 | **N3** | Wallet `deriveProof`; shop/rentals **server-side** verification through the vc-kit policy facade; add the `did:key:zUC7…` ↔ raw G2 trust-anchor bridge; preserve expected issuer, verification-method ownership, and validity checks; pass the offline loader; generalize the DCQL predicate extension; publish range params; delete client bb.js |
 | **N4** | Rip out `packages/zk` + `commitment.ts`; retire the bbs-2023 / eddsa wrappers; reframe the exhibits |
