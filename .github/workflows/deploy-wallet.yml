@@ -3,7 +3,7 @@
 # Deploys on every push to main so the live Worker never lags the repo (a
 # stale wallet once shipped dead offer links because deploys were manual);
 # workflow_dispatch stays for redeploying without a commit.
-name: Deploy wallet
+name: Deploy Wallet
 
 on:
   push:
