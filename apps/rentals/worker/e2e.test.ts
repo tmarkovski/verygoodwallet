@@ -19,8 +19,13 @@
  * verifiers shows both the same issuer-signed commitment — the seal never
  * opens, but the seal itself is a joinable value, and the test pins that.
  */
+// TODO(N3): rewrite this whole flow to the credkit stack — the live DMV now
+// requires a vgw_holder_commitment + digest-carrying PoP and blind-signs a
+// credkit credential with NO vgw_commitment_opening, so the legacy issuance
+// spoken below cannot succeed against it. Only the removed imports were
+// swapped at N2 to keep typecheck green (this file is VGW_E2E-gated).
 import { describe, expect, it } from "vitest";
-import { daysSinceEpoch, deriveHolderSeed, derivePresenterSeed, verifyCommitment } from "@vgw/keys";
+import { daysSinceEpoch, deriveIssuancePopSeed, derivePresenterSeed, verifyCommitment } from "@vgw/keys";
 import {
   PRE_AUTHORIZED_CODE_GRANT_TYPE,
   createProofJwt,
@@ -64,6 +69,14 @@ interface IssuedCredential {
   opening: { value: number; blinding: string; commitment: string };
 }
 
+/**
+ * Pre-N2 credential response with the retired vgw_commitment_opening
+ * extension — kept locally for typecheck only until the TODO(N3) rewrite.
+ */
+type LegacyCredentialResponse = CredentialResponse & {
+  vgw_commitment_opening?: { value: number; blinding: string; commitment: string };
+};
+
 /** The wallet's issuance flow, spoken over real HTTP against the dev DMV. */
 async function issueCredential(persona: {
   givenName: string;
@@ -94,13 +107,13 @@ async function issueCredential(persona: {
     }),
   );
 
-  const holderSeed = await deriveHolderSeed(MASTER_SECRET, new URL(DMV).origin);
+  const holderSeed = await deriveIssuancePopSeed(MASTER_SECRET, new URL(DMV).origin);
   const jwt = createProofJwt({
     seed: holderSeed,
     audience: offer.credential_issuer,
     nonce: token.c_nonce,
   });
-  const credentialResponse = await json<CredentialResponse>(
+  const credentialResponse = await json<LegacyCredentialResponse>(
     await fetch(metadata.credential_endpoint, {
       method: "POST",
       headers: {

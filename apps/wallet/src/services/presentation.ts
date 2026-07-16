@@ -50,7 +50,12 @@ import { VGW_CONTEXT_URL } from "@vgw/vc-kit/contexts";
 import { ageCutoffDays } from "@vgw/zk/cutoff";
 import { normalizeFieldHex } from "@vgw/zk/encoding";
 import { inspect } from "../inspector/events";
-import type { CommitmentOpening, CredentialPayload, CredentialRecord } from "./db";
+// TODO(N3): this whole module still speaks the pre-credkit stack (bbs-2023
+// derive + eddsa presenter signature + the ZK tier over the retired Poseidon
+// commitment) and is rewritten wholesale at N3. Until then it types its
+// decrypted inputs with the deprecated LegacyCredentialPayload — v3 (credkit)
+// envelopes carry no commitmentOpening and cannot be presented by this code.
+import type { CommitmentOpening, LegacyCredentialPayload, CredentialRecord } from "./db";
 
 /**
  * The protocol phases for a tier, in execution order, with UI labels.
@@ -140,7 +145,7 @@ export interface CandidateCredential {
   record: CredentialRecord;
   vc: VerifiableCredential;
   /** The decrypted vault envelope — carries the commitment opening (tier 2). */
-  payload: CredentialPayload;
+  payload: LegacyCredentialPayload;
   match: DcqlCredentialMatch;
 }
 
@@ -158,7 +163,7 @@ export interface QueryCandidates {
  * than silently presenting less than the verifier asked for.
  */
 export function matchCredentials(
-  decrypted: { record: CredentialRecord; payload: CredentialPayload }[],
+  decrypted: { record: CredentialRecord; payload: LegacyCredentialPayload }[],
   request: PresentationRequest,
 ): QueryCandidates {
   const queries = request.dcql_query.credentials;
@@ -208,7 +213,7 @@ export type ZkAgeOption =
  */
 export function zkAgeOption(
   query: DcqlCredentialQuery,
-  candidate: { vc: VerifiableCredential; payload: CredentialPayload },
+  candidate: { vc: VerifiableCredential; payload: LegacyCredentialPayload },
 ): ZkAgeOption {
   const zk = query.vgw_zk;
   if (zk === undefined) {

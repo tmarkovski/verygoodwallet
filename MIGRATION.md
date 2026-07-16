@@ -237,7 +237,10 @@ default makes N2 issuance fail before any proof is produced.
 (`packages/vc-kit/src/credentials/utopia-dl.ts`):
 
 - **Remove** `birthDateCommitment` (the Poseidon handle) and, from `vgw-v1.json`, the
-  `birthDateCommitment` and `zkAgeProof` terms.
+  `birthDateCommitment` and `zkAgeProof` terms. Staged (N2 status): the DMV and the wallet demo no
+  longer emit the field; `buildUtopiaDriversLicense` keeps a deprecated OPTIONAL `birthDateCommitment`
+  input and `vgw-v1.json` keeps its terms until N4 — the shop/rentals suites still exercise the old
+  flow and need them (harmless while unused by the live issuers).
 - **Add** a numeric declaration for `/credentialSubject/driversLicense/birth_date` (`date1900`) —
   invisible metadata bound into the base proof's third header segment, not a document field, so the
   revealed credential is still valid JSON-LD (FINDINGS §14).
@@ -313,18 +316,22 @@ branching — the machinery exists. The shift:
 `@vgw/protocols` produces no proof material — it is wire types + a matcher + a PoP JWT. `ldp_vc`
 stays; `claimPathToPointer` (RFC-6901) stays. Concrete edits:
 
-- **`oid4vci.ts`** — the credential request gains a **holder-commitment extension field** carrying the
-  credkit commitment-with-proof (§3.3); binding leaves the standard `proof` slot untouched. Whether
-  that slot still carries a `proof_type: jwt` PoP (freshness) or is dropped is the N2 decision (§3.3,
-  a vs c). Remove `CommitmentOpeningLike` and `vgw_commitment_opening` from `CredentialResponse` — no
-  opening travels; the secret is the holder's, blind-signed.
-- **`popJwt.ts`** — kept under (c) (the lean, §3.3), removed under (a) — the N2 decision. Under (c) it
-  signs the commitment digest alongside `c_nonce`, so it proves liveness of a party holding the
-  commitment (possession, not fresh knowledge — §3.3), not of a key bound to nothing. Pass the
-  issuer-scoped `deriveIssuancePopSeed` result so its `kid` stays **pairwise per issuer**; do not collapse
-  it to one device-wide key.
-  The commitment's builder/verifier (holder `commit` / issuer `blindSign`-verify) is added regardless:
-  it is the binding, orthogonal to the PoP.
+- **`oid4vci.ts`** — done at N2: the credential request gained the **holder-commitment extension
+  field `vgw_holder_commitment`** — base64url of the credkit commitment-with-proof bytes (§3.3);
+  binding leaves the standard `proof` slot untouched, which still carries the `proof_type: jwt` PoP
+  (option (c), decided §13 and implemented at N2). `CommitmentOpeningLike` and
+  `vgw_commitment_opening` are removed from `CredentialResponse` — no opening travels; the secret is
+  the holder's, blind-signed.
+- **`popJwt.ts`** — kept under (c) and implemented at N2: the payload gains the VGW claim
+  **`vgw_commitment_digest`** — base64url SHA-256 over the raw `vgw_holder_commitment` bytes
+  (`commitmentDigest` in @vgw/protocols, plain WebCrypto) — signed alongside `c_nonce`, so the JWT
+  proves liveness of a party holding the commitment (possession, not fresh knowledge — §3.3), not of
+  a key bound to nothing; `verifyProofJwt` takes `expectedCommitmentDigest` and fails closed when the
+  claim is absent or mismatched. Pass the issuer-scoped `deriveIssuancePopSeed` result so its `kid`
+  stays **pairwise per issuer**; do not collapse it to one device-wide key.
+  The commitment's builder/verifier (holder `commit` / issuer `blindSign`-verify) rides through the
+  vc-kit facade (`createHolderBinding` re-export / `issueCredkitCredential`): it is the binding,
+  orthogonal to the PoP.
 - **`oid4vp.ts`** — the predicate extension generalizes. `DcqlZkAgePredicate { predicate:"age_over",
   years, claim_id }` → a credkit predicate descriptor carrying range claims (`pointer, kind, bound,
   digits`), membership claims (`pointer`), equalities, and a **params reference** (hash + fetch URL).
@@ -465,7 +472,7 @@ encoder registry can be referenced/published openly rather than embedded per dep
 |---|---|
 | **N0** | ✅ Complete. Worker-viability proven under workerd (spike below); consumption decided **and validated** — Git deps pinned by sha via pnpm overrides (§11, Appendix C addendum); credkit `8fdb3cf` is consumable and VGW is wired (resolver plugin, vitest inlining, optimizeDeps excludes) with the full typecheck/test/build/smoke pipeline green. Full `issueCredential`/`verifyProof` under workerd deferred to N2/N3 (needs a document loader + the pinned VP envelope) |
 | **N1** | ✅ Complete (additive — live callers flip at N2). `deriveLinkSecret(master)` under the non-origin-scoped `vgw/v1/link-secret` info + a link-secret branch in the inspector tree; vc-kit gains `generateCredkitBbsKeyPair` (era pinned in `credkitCiphersuite()`), `bbsDidKeyFromPublicKey`, `bbsPublicKeyFromDidKey`, with round-trip and rejection vectors (wrong codec, bad length, off-curve, identity). Bonus finding: credkit `keyGen` ≡ digitalbazaar KeyGen from the same seed (pinned cross-library test) — the N2 swap keeps the issuer DID stable |
-| **N2** | DMV reissues the DL with credkit + the `date1900` twin; change vDL `birth_date` to `xsd:date`; pass VGW's offline loader through issuance; OID4VCI request carries the commitment-with-proof as an extension (freshness a-vs-c decided here, §3.3); drop Poseidon + opening; wallet threads the master-derived link secret and persists per-credential `secretProverBlind` |
+| **N2** | ✅ Complete — the DMV blind-issues the DL via credkit (`credkit-bbs-sha-2026`, `date1900` twin, offline loader; issuer DID unchanged per the N1 finding), the wallet threads the master-derived link secret, runs the holder receipt check, and persists the v3 envelope `{ version: 3, vc, secretProverBlind }` (IndexedDB DB_VERSION 3 clears pre-credkit credential records — reissuance, per Appendix B). Wire names (§7): request extension `vgw_holder_commitment`, PoP claim `vgw_commitment_digest`; no `vgw_commitment_opening` travels. `deriveHolderSeed` → `deriveIssuancePopSeed` (`vgw/v1/issuance-pop:<origin>`). Full blind issuance also validated under workerd against the built Worker artifact (closing N0's deferred issuance item). **Branch note:** N2 and N3 land on branch `credkit-flip`; between them the wallet stores credkit credentials it cannot yet present — the presentation path (and the DMV-facing e2e suites) still speak the old stack and are rewritten at N3. The wallet presentation/pipeline unit suites stay GREEN meanwhile: they mint their own bbs-2023 fixtures against the deliberately-retained legacy stack (an earlier draft predicted them red; the retained-until-N4 compatibility keeps them alive). **Transitional, die at N4:** the `vgw-v1.json` `birthDateCommitment`/`zkAgeProof` terms, `buildUtopiaDriversLicense`'s deprecated optional `birthDateCommitment` input, and `commitment.ts` (shop/rentals old-flow suites still exercise them). The demo-issuer seed is now `hkdfDerive(master, "vgw/v1/demo-issuer")` (it used to borrow the removed holder branch) |
 | **N3** | Wallet `deriveProof`; shop/rentals **server-side** verification through the vc-kit policy facade; add the `did:key:zUC7…` ↔ raw G2 trust-anchor bridge; preserve expected issuer, verification-method ownership, and validity checks; pass the offline loader; generalize the DCQL predicate extension; publish range params; delete client bb.js |
 | **N4** | Rip out `packages/zk` + `commitment.ts`; retire the bbs-2023 / eddsa wrappers; reframe the exhibits |
 | **N5** | Add and bundle the typed Utopia Resident context; Resident Registration credential → residency set-membership (B) and cross-credential link secret (C) via `presentGraph`/`verifyGraph` |

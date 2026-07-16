@@ -22,28 +22,10 @@ import { DataIntegrityProof } from '@digitalbazaar/data-integrity';
 import jsigs from 'jsonld-signatures';
 import { extractErrorMessage, toMessage } from './jsigsErrors.js';
 import { documentLoader } from './loader.js';
+import { defaultMandatoryPointers } from './mandatory.js';
 import type { BbsKeyPair, VerifiableCredential, VerifyCredentialResult } from './types.js';
 
 const { AssertionProofPurpose } = jsigs.purposes;
-
-/**
- * Default mandatory pointers applied by {@link signCredential} when the
- * caller does not supply any — restricted to fields present on the credential.
- *
- * `/validUntil` is included so relying parties can check expiry on derived
- * proofs. Privacy note: mandatory pointers are disclosed byte-for-byte in
- * EVERY derived proof, so any high-precision per-credential value here (e.g.
- * a millisecond issuance timestamp) becomes a correlation handle that defeats
- * BBS unlinkability across verifiers — keep these values coarse
- * (date-granular), as {@link buildUtopiaDriversLicense} does by default.
- */
-const DEFAULT_MANDATORY_POINTERS = ['/issuer', '/validFrom', '/validUntil'] as const;
-
-function defaultMandatoryPointers(credential: VerifiableCredential): string[] {
-  return DEFAULT_MANDATORY_POINTERS.filter(
-    (pointer) => credential[pointer.slice(1)] !== undefined
-  );
-}
 
 /**
  * Signs a credential with a bbs-2023 *base proof* (issuer operation).

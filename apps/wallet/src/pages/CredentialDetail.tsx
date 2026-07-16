@@ -145,6 +145,10 @@ export function CredentialDetail() {
   const vc = payload?.vc ?? null;
   const claims = vc !== null ? claimsOf(vc) : null;
 
+  // TODO(N3): this action still runs the bbs-2023 derive/verify roundtrip and
+  // reports "Not verified" (gracefully) for the credkit credentials issued
+  // since N2 — the wallet cannot derive credkit presentations until N3
+  // rewires this to deriveProof/the receipt check (MIGRATION §12).
   const verify = async () => {
     if (vc === null || verifying) return;
     setVerifying(true);
@@ -234,11 +238,12 @@ export function CredentialDetail() {
               </div>
             ))}
           </dl>
-          {payload?.commitmentOpening !== undefined && (
+          {payload !== null && (
             <p className="mt-2 text-[11px] leading-relaxed text-muted">
-              The commitment's opening (birthdate + blinding) is stored inside
-              this credential's encrypted envelope — it never leaves the vault
-              and later powers the ZK age-predicate tier.
+              The blind-issuance share (secretProverBlind) is stored inside
+              this credential's encrypted envelope — it never leaves the
+              vault, and together with the wallet's link secret it is what
+              makes this credential presentable as yours.
             </p>
           )}
         </section>
@@ -317,7 +322,7 @@ export function CredentialDetail() {
           {showRaw && (
             <div className="mt-4 animate-fade rounded-2xl border border-line bg-surface p-4">
               <p className="mb-2 text-[11px] text-muted">
-                Decrypted verifiable credential (bbs-2023 base proof — holder-only material).
+                Decrypted verifiable credential (base proof — holder-only material).
               </p>
               <div className="max-h-96 overflow-y-auto rounded-xl bg-canvas p-3">
                 <JsonTree value={vc} defaultOpen={false} />

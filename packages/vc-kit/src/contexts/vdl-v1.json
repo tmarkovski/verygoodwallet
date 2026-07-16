@@ -46,7 +46,7 @@
           "age_over_65": "https://w3id.org/vdl#ageOver65",
           "birth_date": {
             "@id": "https://w3id.org/vdl#birthDate",
-            "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+            "@type": "http://www.w3.org/2001/XMLSchema#date"
           },
           "birth_place": "https://w3id.org/vdl#birthPlace",
           "document_number": "https://w3id.org/vdl#documentNumber",

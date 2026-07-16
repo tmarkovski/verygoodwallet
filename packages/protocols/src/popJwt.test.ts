@@ -2,7 +2,12 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { describe, expect, it } from "vitest";
 import { fromBase64Url, fromHex, toBase64Url, utf8 } from "@vgw/keys";
 import { ed25519KeyPairFromSeed } from "./didkey.js";
-import { PROOF_JWT_TYP, createProofJwt, verifyProofJwt } from "./popJwt.js";
+import {
+  PROOF_JWT_TYP,
+  commitmentDigest,
+  createProofJwt,
+  verifyProofJwt,
+} from "./popJwt.js";
 
 const SEED = fromHex(
   "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
@@ -41,6 +46,37 @@ describe("createProofJwt", () => {
     expect(payload["aud"]).toBe(AUD);
     expect(payload["nonce"]).toBe(NONCE);
     expect(payload["iat"]).toBeTypeOf("number");
+    // Without a commitmentDigest option the VGW claim is absent, not null.
+    expect("vgw_commitment_digest" in payload).toBe(false);
+  });
+
+  it("signs the commitment digest into the payload as vgw_commitment_digest", async () => {
+    const digest = await commitmentDigest(new Uint8Array([1, 2, 3]));
+    const jwt = createProofJwt({
+      seed: SEED,
+      audience: AUD,
+      nonce: NONCE,
+      commitmentDigest: digest,
+    });
+    expect(decodeSegment(jwt, 1)["vgw_commitment_digest"]).toBe(digest);
+  });
+});
+
+describe("commitmentDigest", () => {
+  it("is base64url SHA-256 over the raw bytes (fixed vector)", async () => {
+    // SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    expect(await commitmentDigest(new Uint8Array(0))).toBe(
+      toBase64Url(
+        fromHex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+      ),
+    );
+  });
+
+  it("differs for different commitment bytes", async () => {
+    const a = await commitmentDigest(new Uint8Array(144).fill(1));
+    const b = await commitmentDigest(new Uint8Array(144).fill(2));
+    expect(a).not.toBe(b);
+    expect(a).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 });
 
@@ -66,6 +102,101 @@ describe("verifyProofJwt", () => {
     expect(() =>
       verifyProofJwt({ jwt, audience: AUD, nonce: "other-nonce" }),
     ).toThrow(/nonce/);
+  });
+
+  it("round-trips the commitment digest when the issuer expects it", async () => {
+    const digest = await commitmentDigest(new Uint8Array(144).fill(7));
+    const jwt = createProofJwt({
+      seed: SEED,
+      audience: AUD,
+      nonce: NONCE,
+      commitmentDigest: digest,
+    });
+    const verified = verifyProofJwt({
+      jwt,
+      audience: AUD,
+      nonce: NONCE,
+      expectedCommitmentDigest: digest,
+    });
+    expect(verified.payload.vgw_commitment_digest).toBe(digest);
+  });
+
+  it("rejects a digest minted for a different commitment", async () => {
+    const jwt = createProofJwt({
+      seed: SEED,
+      audience: AUD,
+      nonce: NONCE,
+      commitmentDigest: await commitmentDigest(new Uint8Array(144).fill(7)),
+    });
+    expect(() =>
+      verifyProofJwt({
+        jwt,
+        audience: AUD,
+        nonce: NONCE,
+        expectedCommitmentDigest: "different-digest",
+      }),
+    ).toThrow(/vgw_commitment_digest mismatch/);
+  });
+
+  it("rejects a proof with no digest when the issuer expects one", async () => {
+    // A bare PoP binds a key to nothing in the credkit model (§3.3): when the
+    // issuer received a commitment, a proof that does not attest it fails.
+    const jwt = createProofJwt({ seed: SEED, audience: AUD, nonce: NONCE });
+    const expected = await commitmentDigest(new Uint8Array(3));
+    expect(() =>
+      verifyProofJwt({
+        jwt,
+        audience: AUD,
+        nonce: NONCE,
+        expectedCommitmentDigest: expected,
+      }),
+    ).toThrow(/missing vgw_commitment_digest/);
+  });
+
+  it("accepts a digest-carrying proof when the issuer does not demand one", async () => {
+    // Forward-compatible: the claim is additive; verifiers that do not pass
+    // expectedCommitmentDigest ignore it.
+    const jwt = createProofJwt({
+      seed: SEED,
+      audience: AUD,
+      nonce: NONCE,
+      commitmentDigest: await commitmentDigest(new Uint8Array(3)),
+    });
+    expect(verifyProofJwt({ jwt, audience: AUD, nonce: NONCE }).holderDid).toMatch(
+      /^did:key:/,
+    );
+  });
+
+  it("digest tampering breaks the signature (the claim is covered)", async () => {
+    const digest = await commitmentDigest(new Uint8Array(144).fill(7));
+    const otherDigest = await commitmentDigest(new Uint8Array(144).fill(8));
+    const { did } = ed25519KeyPairFromSeed(SEED);
+    const jwt = createProofJwt({
+      seed: SEED,
+      audience: AUD,
+      nonce: NONCE,
+      commitmentDigest: digest,
+    });
+    const [h, , s] = jwt.split(".");
+    const forgedPayload = toBase64Url(
+      utf8(
+        JSON.stringify({
+          iss: did,
+          aud: AUD,
+          iat: Math.floor(Date.now() / 1000),
+          nonce: NONCE,
+          vgw_commitment_digest: otherDigest,
+        }),
+      ),
+    );
+    expect(() =>
+      verifyProofJwt({
+        jwt: `${h}.${forgedPayload}.${s}`,
+        audience: AUD,
+        nonce: NONCE,
+        expectedCommitmentDigest: otherDigest,
+      }),
+    ).toThrow(/signature/);
   });
 
   it("rejects an iat older than maxAgeSeconds", () => {

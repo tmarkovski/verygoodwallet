@@ -3,8 +3,8 @@
  *
  * did:key encodes a public key as `did:key:z<base58btc(multicodec ‖ key)>`.
  * For Ed25519 the multicodec prefix is `0xed 0x01` (ed25519-pub, varint), so
- * every Ed25519 did:key starts with `did:key:z6Mk`. The 32-byte holder seed
- * from `deriveHolderSeed` IS the Ed25519 private key — no further expansion —
+ * every Ed25519 did:key starts with `did:key:z6Mk`. The 32-byte seed from
+ * `deriveIssuancePopSeed` IS the Ed25519 private key — no further expansion —
  * which keeps the wallet's pairwise-DID derivation a pure function of the
  * passkey PRF output.
  */

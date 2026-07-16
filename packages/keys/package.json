@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@credkit/bbs": "0.1.0",
     "poseidon-lite": "^0.3.0"
   },
   "devDependencies": {

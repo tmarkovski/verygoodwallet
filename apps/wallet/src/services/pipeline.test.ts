@@ -1,11 +1,17 @@
+// TODO(N3): this pins the RETIRED pre-credkit pipeline (bbs-2023 sign/derive
+// + Poseidon commitment + legacy envelope) — rewrite it to the credkit
+// issue → deriveProof → verify pipeline when the wallet presents credkit
+// credentials at N3. Only the removed imports were swapped at N2 to keep
+// typecheck green (deriveHolderSeed → the demo-issuer hkdf branch,
+// CredentialPayload → LegacyCredentialPayload).
 import { expect, it } from "vitest";
 import {
   createCommitment,
   daysSinceEpoch,
   decryptJson,
-  deriveHolderSeed,
   deriveVaultKey,
   encryptJson,
+  hkdfDerive,
   verifyCommitment,
 } from "@vgw/keys";
 import {
@@ -15,12 +21,12 @@ import {
   signCredential,
   verifyCredential,
 } from "@vgw/vc-kit";
-import type { CredentialPayload } from "./db";
+import type { LegacyCredentialPayload } from "./db";
 
 it("demo pipeline: derive -> sign -> encrypt -> decrypt -> disclose -> verify", async () => {
   const master = crypto.getRandomValues(new Uint8Array(32));
   const vaultKey = await deriveVaultKey(master);
-  const seed = await deriveHolderSeed(master, "demo-issuer.local");
+  const seed = await hkdfDerive(master, "vgw/v1/demo-issuer");
   const keyPair = await generateBbsKeyPair(seed);
 
   const birthDate = "1996-03-14";
@@ -41,8 +47,8 @@ it("demo pipeline: derive -> sign -> encrypt -> decrypt -> disclose -> verify", 
   const payload = await encryptJson(vaultKey, {
     vc: signed,
     commitmentOpening: { value: days, blinding: opening.blinding, commitment: opening.commitment },
-  } satisfies CredentialPayload);
-  const envelope = await decryptJson<CredentialPayload>(vaultKey, payload);
+  } satisfies LegacyCredentialPayload);
+  const envelope = await decryptJson<LegacyCredentialPayload>(vaultKey, payload);
 
   const derived = await deriveCredential({
     verifiableCredential: envelope.vc,

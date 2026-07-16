@@ -11,7 +11,6 @@ export {
   CREDENTIAL_CONFIGURATION_ID,
   PRE_AUTHORIZED_CODE_GRANT_TYPE,
   walletOfferLink,
-  type CommitmentOpeningLike,
   type CredentialConfiguration,
   type CredentialOffer,
   type CredentialRequest,
@@ -29,6 +28,7 @@ export {
 } from "./didkey.js";
 export {
   PROOF_JWT_TYP,
+  commitmentDigest,
   createProofJwt,
   verifyProofJwt,
   type CreateProofJwtOptions,

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  HOLDER_INFO_PREFIX,
+  ISSUANCE_POP_INFO_PREFIX,
   LINK_SECRET_INFO,
   PRESENTER_INFO_PREFIX,
   PRF_EVAL_INPUT,
   VAULT_INFO,
   decryptJson,
-  deriveHolderSeed,
+  deriveIssuancePopSeed,
   deriveLinkSecret,
   derivePresenterSeed,
   deriveVaultKey,
@@ -14,7 +14,7 @@ import {
   encryptJson,
   fromHex,
   hkdfDerive,
-  holderInfo,
+  issuancePopInfo,
   presenterInfo,
   previewSecret,
   toHex,
@@ -32,17 +32,17 @@ describe("domain-separation constants", () => {
     expect(PRF_EVAL_INPUT).toBe("vgw/v1/master-secret");
     expect(VAULT_INFO).toBe("vgw/v1/vault");
     expect(LINK_SECRET_INFO).toBe("vgw/v1/link-secret");
-    expect(HOLDER_INFO_PREFIX).toBe("vgw/v1/holder:");
+    expect(ISSUANCE_POP_INFO_PREFIX).toBe("vgw/v1/issuance-pop:");
     expect(PRESENTER_INFO_PREFIX).toBe("vgw/v1/presenter:");
-    expect(holderInfo(DMV)).toBe(`vgw/v1/holder:${DMV}`);
+    expect(issuancePopInfo(DMV)).toBe(`vgw/v1/issuance-pop:${DMV}`);
     expect(presenterInfo(SHOP)).toBe(`vgw/v1/presenter:${SHOP}`);
   });
 });
 
-describe("deriveHolderSeed / derivePresenterSeed", () => {
+describe("deriveIssuancePopSeed / derivePresenterSeed", () => {
   it("match fixed test vectors (regression pin)", async () => {
-    expect(toHex(await deriveHolderSeed(MASTER, DMV))).toBe(
-      "f4197dddffb8ad0c30821cd6331ce0c51e1d62b05cc79bcd28a7e57ebe59c4db",
+    expect(toHex(await deriveIssuancePopSeed(MASTER, DMV))).toBe(
+      "1f9e94085de66efb725b27c6181c43a883a9895f0311c1d2158b535d1626df70",
     );
     expect(toHex(await derivePresenterSeed(MASTER, SHOP))).toBe(
       "51bf08b2612ad66c37a31f7ad6b88752d33e44cba1f9eb35ce2d340664de698c",
@@ -50,19 +50,22 @@ describe("deriveHolderSeed / derivePresenterSeed", () => {
   });
 
   it("are deterministic", async () => {
-    const a = await deriveHolderSeed(MASTER, DMV);
-    const b = await deriveHolderSeed(MASTER, DMV);
+    const a = await deriveIssuancePopSeed(MASTER, DMV);
+    const b = await deriveIssuancePopSeed(MASTER, DMV);
     expect(toHex(a)).toBe(toHex(b));
   });
 
   it("are 32 bytes", async () => {
-    expect((await deriveHolderSeed(MASTER, DMV)).length).toBe(32);
+    expect((await deriveIssuancePopSeed(MASTER, DMV)).length).toBe(32);
     expect((await derivePresenterSeed(MASTER, SHOP)).length).toBe(32);
   });
 
   it("differ across origins (pairwise separation)", async () => {
-    const dmv = await deriveHolderSeed(MASTER, DMV);
-    const other = await deriveHolderSeed(MASTER, "https://other-issuer.example");
+    const dmv = await deriveIssuancePopSeed(MASTER, DMV);
+    const other = await deriveIssuancePopSeed(
+      MASTER,
+      "https://other-issuer.example",
+    );
     expect(toHex(dmv)).not.toBe(toHex(other));
 
     const shop = await derivePresenterSeed(MASTER, SHOP);
@@ -73,16 +76,25 @@ describe("deriveHolderSeed / derivePresenterSeed", () => {
     expect(toHex(shop)).not.toBe(toHex(rentals));
   });
 
-  it("differ across branches for the same origin (holder vs presenter)", async () => {
-    const holder = await deriveHolderSeed(MASTER, DMV);
+  it("differ across branches for the same origin (issuance-pop vs presenter)", async () => {
+    const issuancePop = await deriveIssuancePopSeed(MASTER, DMV);
     const presenter = await derivePresenterSeed(MASTER, DMV);
-    expect(toHex(holder)).not.toBe(toHex(presenter));
+    expect(toHex(issuancePop)).not.toBe(toHex(presenter));
+  });
+
+  it("differs from the retired holder branch (new derivation, not a rename)", async () => {
+    // N2 replaced `vgw/v1/holder:<origin>` with `vgw/v1/issuance-pop:<origin>`
+    // (MIGRATION §6). A different info string MUST give a different seed —
+    // reusing the holder bytes would silently keep the old key alive.
+    const issuancePop = await deriveIssuancePopSeed(MASTER, DMV);
+    const legacyHolder = await hkdfDerive(MASTER, `vgw/v1/holder:${DMV}`);
+    expect(toHex(issuancePop)).not.toBe(toHex(legacyHolder));
   });
 
   it("differ from the vault branch", async () => {
     const vaultBytes = await hkdfDerive(MASTER, VAULT_INFO);
-    const holder = await deriveHolderSeed(MASTER, DMV);
-    expect(toHex(vaultBytes)).not.toBe(toHex(holder));
+    const issuancePop = await deriveIssuancePopSeed(MASTER, DMV);
+    expect(toHex(vaultBytes)).not.toBe(toHex(issuancePop));
   });
 });
 
@@ -107,10 +119,10 @@ describe("deriveLinkSecret", () => {
     expect(deriveLinkSecret.length).toBe(1);
   });
 
-  it("differs from the vault, holder, and presenter branches", async () => {
+  it("differs from the vault, issuance-pop, and presenter branches", async () => {
     const link = toHex(await deriveLinkSecret(MASTER));
     expect(link).not.toBe(toHex(await hkdfDerive(MASTER, VAULT_INFO)));
-    expect(link).not.toBe(toHex(await deriveHolderSeed(MASTER, DMV)));
+    expect(link).not.toBe(toHex(await deriveIssuancePopSeed(MASTER, DMV)));
     expect(link).not.toBe(toHex(await derivePresenterSeed(MASTER, SHOP)));
   });
 
@@ -185,7 +197,7 @@ describe("describeHierarchy", () => {
     expect(infos).toEqual([
       VAULT_INFO,
       LINK_SECRET_INFO,
-      holderInfo(DMV),
+      issuancePopInfo(DMV),
       presenterInfo(SHOP),
       presenterInfo("https://rentals.verygoodwallet.com"),
     ]);
@@ -196,6 +208,12 @@ describe("describeHierarchy", () => {
     }
   });
 
+  it("labels the per-issuer branch as the issuance PoP seed", async () => {
+    const tree = await describeHierarchy(origins);
+    const popNode = tree.children.find((n) => n.info === issuancePopInfo(DMV));
+    expect(popNode?.label).toBe(`issuance PoP seed (${DMV})`);
+  });
+
   it("includes hashed previews when a master is provided", async () => {
     const tree = await describeHierarchy({ master: MASTER, ...origins });
     expect(tree.preview).toBe("630dcd29");
@@ -203,9 +221,9 @@ describe("describeHierarchy", () => {
       expect(child.preview).toMatch(/^[0-9a-f]{8}$/);
     }
     // Previews match previewSecret of the actual derived seeds.
-    const holderNode = tree.children.find((n) => n.info === holderInfo(DMV));
-    expect(holderNode?.preview).toBe(
-      await previewSecret(await deriveHolderSeed(MASTER, DMV)),
+    const popNode = tree.children.find((n) => n.info === issuancePopInfo(DMV));
+    expect(popNode?.preview).toBe(
+      await previewSecret(await deriveIssuancePopSeed(MASTER, DMV)),
     );
     const vaultNode = tree.children.find((n) => n.info === VAULT_INFO);
     expect(vaultNode?.preview).toBe(
@@ -219,9 +237,9 @@ describe("describeHierarchy", () => {
 
   it("previews never expose raw derived bytes", async () => {
     const tree = await describeHierarchy({ master: MASTER, ...origins });
-    const holderSeedHex = toHex(await deriveHolderSeed(MASTER, DMV));
+    const popSeedHex = toHex(await deriveIssuancePopSeed(MASTER, DMV));
     for (const child of tree.children) {
-      expect(holderSeedHex).not.toContain(child.preview);
+      expect(popSeedHex).not.toContain(child.preview);
     }
   });
 

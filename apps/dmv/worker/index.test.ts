@@ -3,16 +3,19 @@
  * with a fixed test env. The worker is WebCrypto + pure JS (no CF-only
  * APIs), so these run in plain Node.
  *
- * The centerpiece is a full end-to-end pass of the pinned M2 contract:
- * offer -> offer-by-reference -> token -> real PoP JWT -> signed VC with a
- * verifiable Poseidon birthdate commitment opening.
+ * The centerpiece is a full end-to-end pass of the pinned N2 contract:
+ * offer -> offer-by-reference -> token -> link-secret commitment + PoP JWT
+ * signing its digest -> credkit blind-signed VC that passes the holder's
+ * receipt check (`verifyIssuedCredkitCredential`). No commitment opening
+ * travels; the issuer never sees the link secret.
  */
 
 import { describe, expect, it } from "vitest";
-import { daysSinceEpoch, verifyCommitment } from "@vgw/keys";
+import { toBase64Url } from "@vgw/keys";
 import {
   CREDENTIAL_CONFIGURATION_ID,
   PRE_AUTHORIZED_CODE_GRANT_TYPE,
+  commitmentDigest,
   createProofJwt,
   ed25519KeyPairFromSeed,
   mintSignedToken,
@@ -23,6 +26,12 @@ import {
   type Oid4vciErrorResponse,
   type TokenResponse,
 } from "@vgw/protocols";
+import {
+  createHolderBinding,
+  verifyIssuedCredkitCredential,
+  type HolderBinding,
+  type VerifiableCredential,
+} from "@vgw/vc-kit";
 import app, { type OfferResponseBody } from "./index.js";
 import type { DmvBindings } from "./env.js";
 import type { OfferCodePayload } from "./tokens.js";
@@ -35,9 +44,12 @@ const TEST_ENV: DmvBindings = {
 /** `app.request` resolves bare paths against http://localhost. */
 const TEST_ISSUER_ORIGIN = "http://localhost";
 
-/** Fixed holder key so the expected pairwise did:key is deterministic. */
+/** Fixed issuance-PoP key so the expected pairwise did:key is deterministic. */
 const HOLDER_SEED = new Uint8Array(32).fill(7);
 const HOLDER_DID = ed25519KeyPairFromSeed(HOLDER_SEED).did;
+
+/** The wallet's one-for-life link secret (fixed for determinism). */
+const LINK_SECRET = new Uint8Array(32).fill(5);
 
 const SUBJECT = {
   givenName: "Jamie",
@@ -320,23 +332,38 @@ describe("POST /oid4vci/token", () => {
 });
 
 describe("POST /oid4vci/credential", () => {
-  it("issues a bound, commitment-carrying VC end-to-end", async () => {
+  /** The wallet side of the N2 request: commitment + PoP signing its digest. */
+  async function credentialRequestBody(
+    binding: HolderBinding,
+    nonce: string,
+  ): Promise<Record<string, unknown>> {
+    return {
+      credential_configuration_id: CREDENTIAL_CONFIGURATION_ID,
+      proof: {
+        proof_type: "jwt",
+        jwt: createProofJwt({
+          seed: HOLDER_SEED,
+          audience: TEST_ISSUER_ORIGIN,
+          nonce,
+          commitmentDigest: await commitmentDigest(binding.commitmentWithProof),
+        }),
+      },
+      vgw_holder_commitment: toBase64Url(binding.commitmentWithProof),
+    };
+  }
+
+  it("blind-issues a credkit DL end-to-end that passes the holder receipt check", async () => {
     const { credential_offer } = await createOffer();
     expect(credential_offer.credential_issuer).toBe(TEST_ISSUER_ORIGIN);
 
     const token = await exchangeForToken(preAuthorizedCode(credential_offer));
 
-    const jwt = createProofJwt({
-      seed: HOLDER_SEED,
-      audience: credential_offer.credential_issuer,
-      nonce: token.c_nonce,
-    });
+    // Wallet side: commit to the link secret, then prove possession of the
+    // PoP key AND of this very commitment (its digest is signed into the PoP).
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
     const res = await postJson(
       "/oid4vci/credential",
-      {
-        credential_configuration_id: CREDENTIAL_CONFIGURATION_ID,
-        proof: { proof_type: "jwt", jwt },
-      },
+      await credentialRequestBody(binding, token.c_nonce),
       { authorization: `Bearer ${token.access_token}` },
     );
     expect(res.status).toBe(200);
@@ -345,12 +372,13 @@ describe("POST /oid4vci/credential", () => {
     const vc = body.credentials[0]?.credential;
     expect(vc).toBeDefined();
     const proof = vc?.["proof"] as Record<string, unknown>;
-    expect(proof["cryptosuite"]).toBe("bbs-2023");
+    expect(proof["cryptosuite"]).toBe("credkit-bbs-sha-2026");
     expect(proof["type"]).toBe("DataIntegrityProof");
 
-    // No subject id, deliberately: bbs-2023 derivation reveals node ids
+    // No subject id, deliberately: selective disclosure reveals node ids
     // structurally, so an embedded holder DID would correlate every
-    // presentation of this credential across verifiers.
+    // presentation of this credential across verifiers. Binding lives in the
+    // blind-signed link-secret commitment instead.
     const subject = vc?.["credentialSubject"] as Record<string, unknown>;
     expect(subject["id"]).toBeUndefined();
 
@@ -358,20 +386,137 @@ describe("POST /oid4vci/credential", () => {
     expect(license["given_name"]).toBe(SUBJECT.givenName);
     expect(license["family_name"]).toBe(SUBJECT.familyName);
     expect(license["birth_date"]).toBe(SUBJECT.birthDate);
+    // The Poseidon handle is gone: age predicates prove against the hidden
+    // date1900 twin, not a disclosed commitment.
+    expect(license["birthDateCommitment"]).toBeUndefined();
 
     const issuer = vc?.["issuer"] as Record<string, unknown>;
     expect(issuer["name"]).toBe("Utopia DMV");
     expect(String(issuer["id"]).startsWith("did:key:")).toBe(true);
 
-    // The signed commitment and the returned opening must agree — and the
-    // opening must actually open the commitment to the birthdate.
-    const opening = body.vgw_commitment_opening;
-    expect(opening).toBeDefined();
-    expect(license["birthDateCommitment"]).toBe(opening?.commitment);
-    expect(opening?.value).toBe(daysSinceEpoch(SUBJECT.birthDate));
-    expect(
-      verifyCommitment(opening?.value ?? -1, opening?.blinding ?? "", opening?.commitment ?? ""),
-    ).toBe(true);
+    // No opening travels — there is nothing the issuer could open.
+    expect("vgw_commitment_opening" in body).toBe(false);
+
+    // Holder receipt check: the credential really is blind-signed over THIS
+    // wallet's link secret with THIS issuance's blind.
+    const receivedVc = vc as unknown as VerifiableCredential;
+    await expect(
+      verifyIssuedCredkitCredential({
+        verifiableCredential: receivedVc,
+        holderBinding: {
+          linkSecret: LINK_SECRET,
+          secretProverBlind: binding.secretProverBlind,
+        },
+      }),
+    ).resolves.toBe(true);
+
+    // …and fails closed for anyone who does not hold the secret + blind.
+    await expect(
+      verifyIssuedCredkitCredential({
+        verifiableCredential: receivedVc,
+        holderBinding: {
+          linkSecret: new Uint8Array(32).fill(6),
+          secretProverBlind: binding.secretProverBlind,
+        },
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("rejects a request without vgw_holder_commitment", async () => {
+    const { credential_offer } = await createOffer();
+    const token = await exchangeForToken(preAuthorizedCode(credential_offer));
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const body = await credentialRequestBody(binding, token.c_nonce);
+    delete body["vgw_holder_commitment"];
+    const res = await postJson("/oid4vci/credential", body, {
+      authorization: `Bearer ${token.access_token}`,
+    });
+    const error = await expectOauthError(res, 400, "invalid_credential_request");
+    expect(error.error_description).toContain("vgw_holder_commitment");
+  });
+
+  it("rejects a commitment that is not valid base64url", async () => {
+    const { credential_offer } = await createOffer();
+    const token = await exchangeForToken(preAuthorizedCode(credential_offer));
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const body = await credentialRequestBody(binding, token.c_nonce);
+    body["vgw_holder_commitment"] = "not+valid/base64url!";
+    const res = await postJson("/oid4vci/credential", body, {
+      authorization: `Bearer ${token.access_token}`,
+    });
+    const error = await expectOauthError(res, 400, "invalid_credential_request");
+    expect(error.error_description).toContain("base64url");
+  });
+
+  it("rejects well-formed base64url that is not a valid credkit commitment", async () => {
+    const { credential_offer } = await createOffer();
+    const token = await exchangeForToken(preAuthorizedCode(credential_offer));
+    // Garbage bytes with a MATCHING digest: the PoP passes, blind-signing
+    // must still refuse the commitment itself (fail-closed at the crypto).
+    const garbage = new Uint8Array(144).fill(9);
+    const jwt = createProofJwt({
+      seed: HOLDER_SEED,
+      audience: TEST_ISSUER_ORIGIN,
+      nonce: token.c_nonce,
+      commitmentDigest: await commitmentDigest(garbage),
+    });
+    const res = await postJson(
+      "/oid4vci/credential",
+      {
+        credential_configuration_id: CREDENTIAL_CONFIGURATION_ID,
+        proof: { proof_type: "jwt", jwt },
+        vgw_holder_commitment: toBase64Url(garbage),
+      },
+      { authorization: `Bearer ${token.access_token}` },
+    );
+    const error = await expectOauthError(res, 400, "invalid_credential_request");
+    expect(error.error_description).toContain("vgw_holder_commitment rejected");
+  });
+
+  it("rejects a PoP whose digest was minted for a different commitment", async () => {
+    const { credential_offer } = await createOffer();
+    const token = await exchangeForToken(preAuthorizedCode(credential_offer));
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const otherBinding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const jwt = createProofJwt({
+      seed: HOLDER_SEED,
+      audience: TEST_ISSUER_ORIGIN,
+      nonce: token.c_nonce,
+      commitmentDigest: await commitmentDigest(otherBinding.commitmentWithProof),
+    });
+    const res = await postJson(
+      "/oid4vci/credential",
+      {
+        credential_configuration_id: CREDENTIAL_CONFIGURATION_ID,
+        proof: { proof_type: "jwt", jwt },
+        vgw_holder_commitment: toBase64Url(binding.commitmentWithProof),
+      },
+      { authorization: `Bearer ${token.access_token}` },
+    );
+    const error = await expectOauthError(res, 400, "invalid_proof");
+    expect(error.error_description).toContain("vgw_commitment_digest");
+  });
+
+  it("rejects a PoP that signs no commitment digest at all", async () => {
+    const { credential_offer } = await createOffer();
+    const token = await exchangeForToken(preAuthorizedCode(credential_offer));
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const jwt = createProofJwt({
+      seed: HOLDER_SEED,
+      audience: TEST_ISSUER_ORIGIN,
+      nonce: token.c_nonce,
+    });
+    const res = await postJson(
+      "/oid4vci/credential",
+      {
+        credential_configuration_id: CREDENTIAL_CONFIGURATION_ID,
+        proof: { proof_type: "jwt", jwt },
+        vgw_holder_commitment: toBase64Url(binding.commitmentWithProof),
+      },
+      { authorization: `Bearer ${token.access_token}` },
+    );
+    const error = await expectOauthError(res, 400, "invalid_proof");
+    expect(error.error_description).toContain("missing vgw_commitment_digest");
   });
 
   it("rejects a missing Authorization header", async () => {
@@ -438,40 +583,26 @@ describe("POST /oid4vci/credential", () => {
   it("rejects a proof over the wrong nonce", async () => {
     const { credential_offer } = await createOffer();
     const token = await exchangeForToken(preAuthorizedCode(credential_offer));
-    const jwt = createProofJwt({
-      seed: HOLDER_SEED,
-      audience: credential_offer.credential_issuer,
-      nonce: "not-the-c-nonce",
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const body = await credentialRequestBody(binding, "not-the-c-nonce");
+    const res = await postJson("/oid4vci/credential", body, {
+      authorization: `Bearer ${token.access_token}`,
     });
-    const res = await postJson(
-      "/oid4vci/credential",
-      {
-        credential_configuration_id: CREDENTIAL_CONFIGURATION_ID,
-        proof: { proof_type: "jwt", jwt },
-      },
-      { authorization: `Bearer ${token.access_token}` },
-    );
-    const body = await expectOauthError(res, 400, "invalid_proof");
-    expect(body.error_description).toContain("nonce");
+    const error = await expectOauthError(res, 400, "invalid_proof");
+    expect(error.error_description).toContain("nonce");
   });
 
   it("rejects a proof with a tampered signature", async () => {
     const { credential_offer } = await createOffer();
     const token = await exchangeForToken(preAuthorizedCode(credential_offer));
-    const jwt = createProofJwt({
-      seed: HOLDER_SEED,
-      audience: credential_offer.credential_issuer,
-      nonce: token.c_nonce,
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const body = await credentialRequestBody(binding, token.c_nonce);
+    const proof = body["proof"] as { proof_type: "jwt"; jwt: string };
+    proof.jwt =
+      proof.jwt.slice(0, -4) + (proof.jwt.endsWith("AAAA") ? "BBBB" : "AAAA");
+    const res = await postJson("/oid4vci/credential", body, {
+      authorization: `Bearer ${token.access_token}`,
     });
-    const tampered = jwt.slice(0, -4) + (jwt.endsWith("AAAA") ? "BBBB" : "AAAA");
-    const res = await postJson(
-      "/oid4vci/credential",
-      {
-        credential_configuration_id: CREDENTIAL_CONFIGURATION_ID,
-        proof: { proof_type: "jwt", jwt: tampered },
-      },
-      { authorization: `Bearer ${token.access_token}` },
-    );
     await expectOauthError(res, 400, "invalid_proof");
   });
 });

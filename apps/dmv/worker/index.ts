@@ -7,7 +7,7 @@
  * GET  /.well-known/openid-credential-issuer  issuer metadata
  * GET  /oid4vci/offer/:code                   offer-by-reference fetch
  * POST /oid4vci/token                         pre-authorized code -> access token
- * POST /oid4vci/credential                    key proof -> signed VC + opening
+ * POST /oid4vci/credential                    commitment + key proof -> blind-signed VC
  * ```
  *
  * Statelessness: the pre-authorized code and the access token are HMAC-signed
@@ -19,10 +19,11 @@
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { createCommitment, daysSinceEpoch, toBase64Url } from "@vgw/keys";
+import { fromBase64Url, toBase64Url } from "@vgw/keys";
 import {
   CREDENTIAL_CONFIGURATION_ID,
   PRE_AUTHORIZED_CODE_GRANT_TYPE,
+  commitmentDigest,
   mintSignedToken,
   readSignedToken,
   verifyProofJwt,
@@ -36,11 +37,12 @@ import {
 } from "@vgw/protocols";
 import {
   CREDENTIALS_V2_CONTEXT_URL,
+  UTOPIA_DL_NUMERIC_DECLARATIONS,
   VDL_V1_CONTEXT_URL,
   VDL_AAMVA_V1_CONTEXT_URL,
   VGW_CONTEXT_URL,
   buildUtopiaDriversLicense,
-  signCredential,
+  issueCredkitCredential,
 } from "@vgw/vc-kit";
 import { getIssuerKeyPair, resolveTokenSecret, type DmvBindings } from "./env.js";
 import { OfferValidationError, parseOfferInput, type OfferInput } from "./offers.js";
@@ -158,7 +160,7 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
     const origin = new URL(c.req.url).origin;
     // vgw_issuer_did lets verifiers pin this issuer's signing DID by fetching
     // it over our TLS origin (stand-in for a future did:web DID document).
-    const keyPair = await getIssuerKeyPair(c.env);
+    const keyPair = getIssuerKeyPair(c.env);
     const metadata: IssuerMetadata = {
       credential_issuer: origin,
       credential_endpoint: `${origin}/oid4vci/credential`,
@@ -410,14 +412,47 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
       );
     }
 
-    // The proof must be addressed to THIS issuer (aud = our origin) and echo
-    // the c_nonce carried in the verified access token.
+    // Holder binding (MIGRATION §3.3): the wallet's link-secret commitment
+    // rides as a request extension — base64url of the credkit
+    // commitmentWithProof bytes. Issuance is always holder-bound; a request
+    // without a decodable commitment cannot be fulfilled.
+    if (
+      typeof request.vgw_holder_commitment !== "string" ||
+      request.vgw_holder_commitment === ""
+    ) {
+      return c.json(
+        ...oauthError(
+          400,
+          "invalid_credential_request",
+          "missing vgw_holder_commitment (base64url credkit commitment-with-proof)",
+        ),
+      );
+    }
+    let holderCommitment: Uint8Array;
+    try {
+      holderCommitment = fromBase64Url(request.vgw_holder_commitment);
+      if (holderCommitment.length === 0) throw new Error("empty commitment");
+    } catch {
+      return c.json(
+        ...oauthError(
+          400,
+          "invalid_credential_request",
+          "vgw_holder_commitment is not valid base64url",
+        ),
+      );
+    }
+
+    // The proof must be addressed to THIS issuer (aud = our origin), echo the
+    // c_nonce carried in the verified access token, AND sign the digest of
+    // the commitment received above — liveness of a party holding THIS
+    // request's commitment, not a bare key bound to nothing (§3.3).
     const origin = new URL(c.req.url).origin;
     try {
       verifyProofJwt({
         jwt: request.proof.jwt,
         audience: origin,
         nonce: access.c_nonce,
+        expectedCommitmentDigest: await commitmentDigest(holderCommitment),
       });
     } catch (error) {
       return c.json(
@@ -429,36 +464,51 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
       );
     }
 
-    // Commit to the birthdate; the opening goes back to the wallet in the
-    // response (vgw_commitment_opening) — the issuer knows the birthdate
-    // anyway, so this costs no privacy. Blind issuance is future work.
-    const birthDays = daysSinceEpoch(access.birthDate);
-    const opening = createCommitment(birthDays);
-
-    // Deliberately NO subjectId: bbs-2023 selective disclosure structurally
-    // reveals a node's `id` whenever any claim under it is selected, so an
-    // embedded holder DID would ride along in EVERY derived proof — one
-    // correlation handle shared by all verifiers, defeating unlinkability.
-    // Issuance is holder-bound by the PoP JWT (verified above) and by
-    // possession of the base proof; that caveat is documented, not faked.
-    const keyPair = await getIssuerKeyPair(c.env);
+    // Deliberately NO subjectId: selective disclosure structurally reveals a
+    // node's `id` whenever any claim under it is selected, so an embedded
+    // holder DID would ride along in EVERY derived proof — one correlation
+    // handle shared by all verifiers, defeating unlinkability. Holder binding
+    // is the blind-signed link-secret commitment instead: the issuer signs
+    // one message it never sees, and no birthDateCommitment exists anymore —
+    // the birth_date is numeric-declared (date1900) so age predicates prove
+    // against a hidden, per-presentation-randomized twin.
+    const keyPair = getIssuerKeyPair(c.env);
     const unsigned = buildUtopiaDriversLicense({
       givenName: access.givenName,
       familyName: access.familyName,
       birthDate: access.birthDate,
       documentNumber: access.documentNumber,
-      birthDateCommitment: opening.commitment,
       issuer: { id: keyPair.controller, name: ISSUER_DISPLAY_NAME },
     });
-    const signed = await signCredential({ credential: unsigned, keyPair });
+    let signed;
+    try {
+      signed = await issueCredkitCredential({
+        credential: unsigned,
+        keyPair,
+        numericDeclarations: UTOPIA_DL_NUMERIC_DECLARATIONS,
+        holderCommitment,
+      });
+    } catch (error) {
+      // The document, key, and declarations are server-controlled — an
+      // issuance failure here means the CLIENT-supplied commitment did not
+      // validate (wrong length, bad proof of knowledge, or not exactly one
+      // committed message). That is a bad request, not a server fault.
+      return c.json(
+        ...oauthError(
+          400,
+          "invalid_credential_request",
+          `vgw_holder_commitment rejected: ${
+            error instanceof Error ? error.message : "invalid commitment"
+          }`,
+        ),
+      );
+    }
 
+    // No vgw_commitment_opening anymore: nothing to open — the committed
+    // link secret is the holder's, and the wallet validates the credential
+    // with the credkit receipt check instead.
     const response: CredentialResponse = {
-      credentials: [{ credential: signed }],
-      vgw_commitment_opening: {
-        value: birthDays,
-        blinding: opening.blinding,
-        commitment: opening.commitment,
-      },
+      credentials: [{ credential: signed as Record<string, unknown> }],
     };
     return c.json(response);
   });

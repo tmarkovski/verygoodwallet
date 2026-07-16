@@ -6,15 +6,16 @@
 import { useEffect, useState } from "react";
 import { describeHierarchy, type DerivationNode } from "@vgw/keys";
 import { useSession } from "../session";
-import { DEMO_ISSUER_ORIGIN } from "../services/demo";
 import { DEMO_SITE_ORIGINS } from "../services/demoSites";
 
 /**
- * Origins shown as branches — the two deployed verifiers, matching what
- * /present actually derives against (presenter branches are keyed by the
- * verifier's exact origin).
+ * Origins shown as branches, matching what the flows actually derive
+ * against: the deployed DMV for the per-issuer issuance-PoP branch (N2 —
+ * `deriveIssuancePopSeed` is keyed by the issuer's exact origin; the local
+ * demo issuer uses its own `vgw/v1/demo-issuer` branch, not shown here) and
+ * the two deployed verifiers for the presenter branches.
  */
-const ISSUER_ORIGINS = [DEMO_ISSUER_ORIGIN];
+const ISSUER_ORIGINS = [DEMO_SITE_ORIGINS.dmv];
 const VERIFIER_ORIGINS = [DEMO_SITE_ORIGINS.shop, DEMO_SITE_ORIGINS.rentals];
 
 function Node({ node, root = false }: { node: DerivationNode; root?: boolean }) {

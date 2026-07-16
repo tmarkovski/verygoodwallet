@@ -1,18 +1,26 @@
 /**
- * IndexedDB persistence ('vgw' database, v2) via `idb`.
+ * IndexedDB persistence ('vgw' database, DB_VERSION 3) via `idb`.
  *
  * - `accounts`     — passkey accounts. The credential id and PRF capability
  *                    are plaintext; a `simulatedSecret` exists only for
  *                    accounts whose authenticator lacks PRF support.
  * - `credentials`  — stored credentials. `payload` is the `encryptJson`
- *                    output of the full `{ vc, commitmentOpening? }` envelope
- *                    under the vault key; only `meta` is plaintext, for list
- *                    rendering while the wallet is locked.
- * - `presentations`— the presentation log (v2, for the cross-verifier
- *                    exhibit): who was shown what, at which tier, under
- *                    which pairwise presenter DID. Fully encrypted — the log
- *                    names verifiers and disclosed values, so it is exactly
- *                    as sensitive as the credentials themselves.
+ *                    output of the versioned `CredentialPayload` envelope
+ *                    (`{ version: 3, vc, secretProverBlind }`) under the
+ *                    vault key; only `meta` is plaintext, for list rendering
+ *                    while the wallet is locked.
+ * - `presentations`— the presentation log (added at DB_VERSION 2, for the
+ *                    cross-verifier exhibit): who was shown what, at which
+ *                    tier, under which pairwise presenter DID. Fully
+ *                    encrypted — the log names verifiers and disclosed
+ *                    values, so it is exactly as sensitive as the
+ *                    credentials themselves.
+ *
+ * Version disambiguation (they share a number by coincidence, MIGRATION
+ * Appendix B): the ENVELOPE `version: 3` is a field inside the encrypted
+ * JSON payload naming its schema; the IndexedDB `DB_VERSION = 3` is the
+ * database schema version that gates the `upgrade` callback. Bumping one
+ * does not bump the other.
  */
 
 import { openDB, deleteDB, type DBSchema, type IDBPDatabase } from "idb";
@@ -32,7 +40,10 @@ export interface AccountRecord {
 
 export type NewAccountRecord = Omit<AccountRecord, "id">;
 
-/** Private opening of the birthdate commitment (for the ZK tier, M4). */
+/**
+ * @deprecated Transitional (dies at N3/N4 with the old presentation flow):
+ * private opening of the retired Poseidon birthdate commitment.
+ */
 export interface CommitmentOpening {
   /** Committed value: birth date as days since the Unix epoch. */
   value: number;
@@ -42,8 +53,34 @@ export interface CommitmentOpening {
   commitment: string;
 }
 
-/** The JSON envelope encrypted into `CredentialRecord.payload`. */
+/**
+ * The JSON envelope encrypted into `CredentialRecord.payload` — the
+ * versioned v3 shape written since N2 (credkit blind issuance).
+ *
+ * `version: 3` is the ENVELOPE schema version (a payload field), distinct
+ * from the IndexedDB `DB_VERSION` below. The link secret is deliberately
+ * absent: it is re-derived from the passkey PRF, never stored. The
+ * per-credential `secretProverBlind` IS stored — it is random at each
+ * commit, not re-derivable, and losing it bricks the credential
+ * (MIGRATION §6); passkey sync moves the master, not IndexedDB, so
+ * cross-device recovery of the blind needs an explicit credential-store
+ * export (unspecified N2 design point, MIGRATION §13).
+ */
 export interface CredentialPayload {
+  version: 3;
+  vc: VerifiableCredential;
+  /** base64url of the 32-byte blind scalar (`scalarToBase64Url` in @vgw/keys). */
+  secretProverBlind: string;
+}
+
+/**
+ * @deprecated Transitional (dies at N3): the unversioned pre-N2 envelope
+ * shape. Nothing writes it anymore — DB_VERSION 3 cleared all legacy
+ * records — but the not-yet-reworked presentation path (`presentation.ts`
+ * and its frozen tests, rewritten at N3) still types its decrypted inputs
+ * with it.
+ */
+export interface LegacyCredentialPayload {
   vc: VerifiableCredential;
   commitmentOpening?: CommitmentOpening;
 }
@@ -96,14 +133,18 @@ interface VgwSchema extends DBSchema {
 }
 
 const DB_NAME = "vgw";
-const DB_VERSION = 2;
+/**
+ * IndexedDB schema version — NOT the credential-envelope `version` (see the
+ * module note): v3 is the N2 credkit cutover that cleared legacy records.
+ */
+const DB_VERSION = 3;
 
 let dbPromise: Promise<IDBPDatabase<VgwSchema>> | null = null;
 
 function getDb(): Promise<IDBPDatabase<VgwSchema>> {
   if (dbPromise === null) {
     const promise = openDB<VgwSchema>(DB_NAME, DB_VERSION, {
-      upgrade(db, oldVersion) {
+      upgrade(db, oldVersion, _newVersion, tx) {
         if (oldVersion < 1) {
           db.createObjectStore("accounts", { keyPath: "id", autoIncrement: true });
           const credentials = db.createObjectStore("credentials", {
@@ -118,6 +159,17 @@ function getDb(): Promise<IDBPDatabase<VgwSchema>> {
             autoIncrement: true,
           });
           presentations.createIndex("accountId", "accountId");
+        }
+        if (oldVersion >= 1 && oldVersion < 3) {
+          // N2 credkit cutover (MIGRATION Appendix B): pre-v3 credential
+          // records are opaque AES-GCM ciphertext of the legacy
+          // `{ vc, commitmentOpening? }` envelope. This upgrade callback has
+          // no vault key, so it CANNOT rewrite them — and even unlocked, a
+          // legacy bbs-2023 credential contains no credkit blind to add.
+          // They are incompatible with the credkit presentation flow and are
+          // cleared here; users reissue from the DMV. Accounts and the
+          // presentation log are untouched (their shapes are unchanged).
+          void tx.objectStore("credentials").clear();
         }
       },
       // Another tab requested an upgrade or deleteDB. idb only auto-closes a

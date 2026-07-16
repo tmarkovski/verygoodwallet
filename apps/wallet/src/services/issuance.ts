@@ -1,47 +1,51 @@
 /**
  * OID4VCI wallet side — accept a credential offer from a remote issuer over
- * the pre-authorized code flow (milestone M2, replacing the local demo issuer
- * for real network issuance).
+ * the pre-authorized code flow (credkit blind issuance since N2).
  *
  * The flow mirrors the pinned wire contract in @vgw/protocols:
  *
  *   offer (by reference) → issuer metadata → token (pre-authorized code)
- *   → proof-of-possession JWT (pairwise Ed25519 did:key) → credential
+ *   → link-secret commitment (`createHolderBinding`) + PoP JWT signing the
+ *     commitment digest (pairwise-per-issuer Ed25519 key) → blind-signed
+ *     credential
  *
  * Every protocol message is emitted to the inspector drawer as it crosses the
  * wire — the drawer IS the product. Before anything is stored the wallet
- * verifies, fail-closed: subject binding to its own pairwise DID, the
- * issuer's commitment opening against the signed birthDateCommitment, and a
- * full cryptographic roundtrip (derive a minimal disclosure, verify the
- * issuer's BBS signature). Only then is the credential encrypted into the
- * vault, exactly like the demo path.
+ * verifies, fail-closed: subject binding (no foreign subject id), issuer
+ * proof ownership, and the credkit holder RECEIPT CHECK — the whole pipeline
+ * is recomputed and the issuer's blind signature verified against the
+ * wallet's own link secret and this issuance's blind. Only then is the
+ * credential encrypted into the vault as a versioned v3 envelope; the blind
+ * is stored (not re-derivable), the link secret never is (PRF-derived).
  */
 
 import {
-  deriveHolderSeed,
+  deriveIssuancePopSeed,
+  deriveLinkSecret,
   encryptJson,
   previewSecret,
-  verifyCommitment,
+  scalarToBase64Url,
+  toBase64Url,
 } from "@vgw/keys";
 import {
   PRE_AUTHORIZED_CODE_GRANT_TYPE,
+  commitmentDigest,
   createProofJwt,
   ed25519KeyPairFromSeed,
-  type CommitmentOpeningLike,
   type CredentialOffer,
   type CredentialRequest,
   type CredentialResponse,
   type IssuerMetadata,
 } from "@vgw/protocols";
 import {
-  deriveCredential,
-  verifyCredential,
+  createHolderBinding,
+  verifyIssuedCredkitCredential,
+  type HolderBinding,
   type VerifiableCredential,
 } from "@vgw/vc-kit";
 import { inspect } from "../inspector/events";
 import {
   addCredential,
-  type CommitmentOpening,
   type CredentialPayload,
   type CredentialRecord,
 } from "./db";
@@ -55,9 +59,9 @@ export const ISSUANCE_STEPS = [
   { id: "fetching-offer", label: "Fetching the credential offer" },
   { id: "fetching-metadata", label: "Reading issuer metadata" },
   { id: "requesting-token", label: "Redeeming the pre-authorized code" },
-  { id: "creating-proof", label: "Proving possession of the holder key" },
-  { id: "requesting-credential", label: "Requesting the credential" },
-  { id: "verifying", label: "Verifying the issuer's signature" },
+  { id: "creating-proof", label: "Committing to the link secret & proving possession" },
+  { id: "requesting-credential", label: "Requesting the blind-signed credential" },
+  { id: "verifying", label: "Verifying the issuer's blind signature" },
   { id: "storing", label: "Encrypting into the vault" },
 ] as const;
 
@@ -208,7 +212,7 @@ export type AcceptCredentialOfferOptions = {
 /**
  * Run the full pre-authorized code flow against a remote issuer and store the
  * received credential encrypted, exactly like the demo path: only `meta` ends
- * up in plaintext; the VC and its commitment opening live inside the vault.
+ * up in plaintext; the VC and its `secretProverBlind` live inside the vault.
  */
 export async function acceptCredentialOffer(
   opts: AcceptCredentialOfferOptions,
@@ -222,8 +226,8 @@ export async function acceptCredentialOffer(
 
   // Snapshot the master secret before the first await: logout() zeroes the
   // session's buffer IN PLACE, so a mid-flight lock would otherwise turn the
-  // holder derivation below into HKDF over all-zero input — a "pairwise" key
-  // anyone can recompute. The copy is zeroed on every exit path instead.
+  // PoP-seed and link-secret derivations below into HKDF over all-zero
+  // input — keys anyone can recompute. The copy is zeroed on every exit path.
   const masterSecret = opts.masterSecret.slice();
   try {
     return await runAcceptCredentialOffer(opts, masterSecret, step);
@@ -257,35 +261,61 @@ async function runAcceptCredentialOffer(
   step("requesting-token");
   const token = await requestToken(metadata.token_endpoint, offer);
 
-  // 4. Pairwise holder key for THIS issuer only (unlinkability across
-  // issuers comes from the per-origin HKDF branch), then the PoP JWT over
-  // the issuer's c_nonce.
+  // 4. Two derivations, two jobs (MIGRATION §3.3, §6). BINDING: the ONE
+  // master-derived link secret — the same at every issuance, or credentials
+  // won't link — blind-committed via createHolderBinding; the issuer signs
+  // the commitment without ever seeing the secret. FRESHNESS: a pairwise
+  // Ed25519 PoP key for THIS issuer only (its kid is issuer-visible, so a
+  // reused key would be a cross-issuer correlation handle), whose JWT signs
+  // the issuer's c_nonce AND the commitment's digest — attesting liveness of
+  // a party holding this very commitment.
   step("creating-proof");
-  const holderSeed = await deriveHolderSeed(masterSecret, issuerOrigin);
-  const holder = ed25519KeyPairFromSeed(holderSeed);
+  const popSeed = await deriveIssuancePopSeed(masterSecret, issuerOrigin);
+  const holder = ed25519KeyPairFromSeed(popSeed);
   inspect.emit({
-    label: "Holder seed derived",
+    label: "Issuance PoP seed derived",
     data: {
       issuerOrigin,
-      preview: await previewSecret(holderSeed),
-      holderDid: holder.did,
+      preview: await previewSecret(popSeed),
+      popDid: holder.did,
+    },
+  });
+  const linkSecret = await deriveLinkSecret(masterSecret);
+  const binding = createHolderBinding({ linkSecret });
+  const commitment = toBase64Url(binding.commitmentWithProof);
+  const digest = await commitmentDigest(binding.commitmentWithProof);
+  inspect.emit({
+    label: "Link-secret commitment created",
+    data: {
+      scheme: "credkit blind-BBS commit (BLS12-381)",
+      linkSecretPreview: await previewSecret(linkSecret),
+      commitmentBytes: binding.commitmentWithProof.length,
+      commitmentDigest: digest,
     },
   });
   const jwt = createProofJwt({
-    seed: holderSeed,
+    seed: popSeed,
     audience: offer.credential_issuer,
     nonce: token.c_nonce,
+    commitmentDigest: digest,
   });
   inspect.emit({
     label: "Proof-of-possession JWT created",
-    data: { jwt, audience: offer.credential_issuer, nonce: token.c_nonce },
+    data: {
+      jwt,
+      audience: offer.credential_issuer,
+      nonce: token.c_nonce,
+      vgw_commitment_digest: digest,
+    },
   });
 
-  // 5. Request the credential with the bearer token + key proof.
+  // 5. Request the credential: bearer token + key proof + the commitment as
+  // a request extension (the standard proof slot stays untouched — §3.3).
   step("requesting-credential");
   const request: CredentialRequest = {
     credential_configuration_id: firstConfigurationId(offer),
     proof: { proof_type: "jwt", jwt },
+    vgw_holder_commitment: commitment,
   };
   const response = await requestCredential(
     metadata.credential_endpoint,
@@ -294,18 +324,20 @@ async function runAcceptCredentialOffer(
   );
   const vc = extractCredential(response, metadata.credential_endpoint);
 
-  // 6. Fail-closed integrity checks before anything touches the vault.
+  // 6. Fail-closed integrity checks (incl. the credkit receipt check) before
+  // anything touches the vault.
   step("verifying");
-  await verifyReceivedCredential(vc, holder.did, response.vgw_commitment_opening);
+  await verifyReceivedCredential(vc, holder.did, binding);
 
-  // 7. Store. The commitment opening goes INSIDE the encrypted envelope —
-  // it is the private input to the ZK tier (M4) and must never be plaintext.
+  // 7. Store the versioned v3 envelope. The blind goes INSIDE the encrypted
+  // envelope, scalar-encoded (it is a bigint; JSON.stringify would throw) —
+  // it is random per issuance and NOT re-derivable: losing it bricks the
+  // credential. The link secret is deliberately not stored (PRF-derived).
   step("storing");
   const envelope: CredentialPayload = {
+    version: 3,
     vc,
-    ...(response.vgw_commitment_opening !== undefined
-      ? { commitmentOpening: toCommitmentOpening(response.vgw_commitment_opening) }
-      : {}),
+    secretProverBlind: scalarToBase64Url(binding.secretProverBlind),
   };
   const payload = await encryptJson(opts.vaultKey, envelope);
   inspect.emit({
@@ -429,12 +461,6 @@ async function requestCredential(
       `The issuer's credential endpoint (${credentialEndpoint}) returned no credentials array`,
     );
   }
-  const opening = raw["vgw_commitment_opening"];
-  if (opening !== undefined && !isCommitmentOpening(opening)) {
-    throw new Error(
-      `The issuer's credential endpoint (${credentialEndpoint}) returned a malformed vgw_commitment_opening`,
-    );
-  }
   return raw as unknown as CredentialResponse;
 }
 
@@ -466,24 +492,24 @@ function extractCredential(
  */
 async function verifyReceivedCredential(
   vc: VerifiableCredential,
-  holderDid: string,
-  opening: CommitmentOpeningLike | undefined,
+  popDid: string,
+  binding: HolderBinding,
 ): Promise<void> {
-  // Subject binding: an ABSENT subject id is the expected shape — bbs-2023
-  // derivation reveals node ids structurally, so the issuer deliberately
-  // omits the holder DID (issuance is holder-bound by the PoP JWT instead).
+  // Subject binding: an ABSENT subject id is the expected shape — selective
+  // disclosure reveals node ids structurally, so the issuer deliberately
+  // omits any holder DID (holder binding is the blind-signed link secret).
   // But if a credential DOES name a subject, it must be this wallet's
-  // pairwise DID, or someone else's credential could be planted in the vault.
+  // pairwise PoP DID, or someone else's credential could be planted here.
   const subject = vc.credentialSubject;
   if (subject === undefined || Array.isArray(subject)) {
     throw new Error(
-      "The received credential has no single credentialSubject to bind to this wallet's holder key",
+      "The received credential has no single credentialSubject to bind to this wallet",
     );
   }
   const subjectId = subject["id"];
-  if (subjectId !== undefined && subjectId !== holderDid) {
+  if (subjectId !== undefined && subjectId !== popDid) {
     throw new Error(
-      `The received credential is bound to "${String(subjectId)}" instead of this wallet's holder DID "${holderDid}" — refusing to store it`,
+      `The received credential is bound to "${String(subjectId)}" instead of this wallet's DID "${popDid}" — refusing to store it`,
     );
   }
 
@@ -513,62 +539,27 @@ async function verifyReceivedCredential(
     );
   }
 
-  // Commitment opening: the issuer's claimed opening must actually open the
-  // commitment that was SIGNED into the credential — otherwise the vault
-  // would store a useless (or maliciously wrong) private input for the ZK tier.
-  const signedCommitment = birthDateCommitmentOf(vc);
-  if (opening !== undefined) {
-    if (signedCommitment === undefined) {
-      throw new Error(
-        "The issuer returned a commitment opening but the credential carries no birthDateCommitment",
-      );
-    }
-    if (opening.commitment !== signedCommitment) {
-      throw new Error(
-        "The issuer's commitment opening refers to a different commitment than the one signed into the credential",
-      );
-    }
-    if (!verifyCommitment(opening.value, opening.blinding, opening.commitment)) {
-      throw new Error(
-        "The issuer's commitment opening does not open the birthDateCommitment signed into the credential",
-      );
-    }
-    inspect.emit({
-      label: "Commitment opening verified",
-      data: {
-        scheme: "poseidon2(daysSinceEpoch(birthDate), blinding)",
-        commitment: opening.commitment,
-      },
-    });
-  }
-
-  // Cryptographic roundtrip: derive a disclosure and verify it against the
-  // issuer DID, so the wallet has actually checked the BBS signature (not
-  // just the JSON shape) before trusting the credential. The commitment
-  // pointer when present, else the whole subject — this derivation never
-  // leaves the device, so its breadth costs no privacy.
-  const pointers = [
-    signedCommitment !== undefined
-      ? "/credentialSubject/driversLicense/birthDateCommitment"
-      : "/credentialSubject",
-  ];
-  const derived = await deriveCredential({
+  // The credkit holder receipt check (replaces the retired opening
+  // validation AND the old derive/verify roundtrip): recompute the whole
+  // pipeline from the received credential and verify the issuer's blind
+  // signature against the wallet's own link secret and this issuance's
+  // blind. True means the credential is exactly what was requested — signed
+  // by the key in its proof, bound to OUR link secret, twins intact. False
+  // means it must never enter the vault.
+  const receiptOk = await verifyIssuedCredkitCredential({
     verifiableCredential: vc,
-    selectivePointers: pointers,
-  });
-  const result = await verifyCredential({ credential: derived, expectedIssuer: issuer });
-  inspect.emit({
-    label: "Issuer signature verified",
-    data: {
-      verified: result.verified,
-      issuer,
-      selectivePointers: pointers,
-      ...(result.error !== undefined ? { error: result.error } : {}),
+    holderBinding: {
+      linkSecret: binding.linkSecret,
+      secretProverBlind: binding.secretProverBlind,
     },
   });
-  if (!result.verified) {
+  inspect.emit({
+    label: "Issuer blind signature verified (receipt check)",
+    data: { verified: receiptOk, issuer, cryptosuite: "credkit-bbs-sha-2026" },
+  });
+  if (!receiptOk) {
     throw new Error(
-      `The issuer's BBS signature did not verify (${result.error ?? "unknown error"}) — refusing to store the credential`,
+      "The issuer's blind signature did not verify against this wallet's link secret — refusing to store the credential",
     );
   }
 }
@@ -652,33 +643,6 @@ function firstConfigurationId(offer: CredentialOffer): string {
     throw new Error("The credential offer lists no credential_configuration_ids");
   }
   return id;
-}
-
-function isCommitmentOpening(value: unknown): value is CommitmentOpeningLike {
-  return (
-    isRecord(value) &&
-    typeof value["value"] === "number" &&
-    Number.isSafeInteger(value["value"]) &&
-    typeof value["blinding"] === "string" &&
-    typeof value["commitment"] === "string"
-  );
-}
-
-function toCommitmentOpening(opening: CommitmentOpeningLike): CommitmentOpening {
-  return {
-    value: opening.value,
-    blinding: opening.blinding,
-    commitment: opening.commitment,
-  };
-}
-
-function birthDateCommitmentOf(vc: VerifiableCredential): string | undefined {
-  const subject = vc.credentialSubject;
-  if (subject === undefined || Array.isArray(subject)) return undefined;
-  const dl = subject["driversLicense"];
-  if (!isRecord(dl)) return undefined;
-  const commitment = dl["birthDateCommitment"];
-  return typeof commitment === "string" ? commitment : undefined;
 }
 
 /**

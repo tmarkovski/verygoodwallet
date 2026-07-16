@@ -7,23 +7,28 @@
 export { fromBase64Url, fromHex, toBase64Url, toHex, utf8 } from "./encoding.js";
 export { hkdfDerive } from "./hkdf.js";
 export {
-  HOLDER_INFO_PREFIX,
+  ISSUANCE_POP_INFO_PREFIX,
   LINK_SECRET_INFO,
   PRESENTER_INFO_PREFIX,
   PRF_EVAL_INPUT,
   VAULT_INFO,
-  deriveHolderSeed,
+  deriveIssuancePopSeed,
   deriveLinkSecret,
   derivePresenterSeed,
   deriveVaultKey,
   describeHierarchy,
-  holderInfo,
+  issuancePopInfo,
   presenterInfo,
   previewSecret,
   type DerivationNode,
   type DescribeHierarchyOptions,
 } from "./hierarchy.js";
 export { decryptJson, encryptJson } from "./vault.js";
+export {
+  BLS12_381_SCALAR_FIELD_ORDER,
+  scalarFromBase64Url,
+  scalarToBase64Url,
+} from "./scalar.js";
 export {
   BN254_SCALAR_FIELD,
   createCommitment,

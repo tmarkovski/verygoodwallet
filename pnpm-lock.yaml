@@ -309,6 +309,9 @@ importers:
 
   packages/keys:
     dependencies:
+      '@credkit/bbs':
+        specifier: github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/bbs
+        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs
       poseidon-lite:
         specifier: ^0.3.0
         version: 0.3.0
@@ -365,6 +368,9 @@ importers:
       '@credkit/bbs':
         specifier: github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/bbs
         version: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs
+      '@credkit/cryptosuite':
+        specifier: github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/cryptosuite
+        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/cryptosuite
       '@digitalbazaar/bbs-2023-cryptosuite':
         specifier: ^2.0.1
         version: 2.0.1
@@ -492,6 +498,21 @@ packages:
 
   '@credkit/bbs@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs':
     resolution: {path: /packages/bbs, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2}
+    version: 0.1.0
+    engines: {node: '>=20'}
+
+  '@credkit/cryptosuite@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/cryptosuite':
+    resolution: {path: /packages/cryptosuite, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2}
+    version: 0.1.0
+    engines: {node: '>=20'}
+
+  '@credkit/proofs@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/proofs':
+    resolution: {path: /packages/proofs, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2}
+    version: 0.1.0
+    engines: {node: '>=20'}
+
+  '@credkit/range@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/range':
+    resolution: {path: /packages/range, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2}
     version: 0.1.0
     engines: {node: '>=20'}
 
@@ -1900,6 +1921,25 @@ snapshots:
     dependencies:
       '@noble/curves': 2.2.0
       '@noble/hashes': 2.2.0
+
+  '@credkit/cryptosuite@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/cryptosuite':
+    dependencies:
+      '@credkit/bbs': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs
+      '@credkit/proofs': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/proofs
+      '@credkit/range': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/range
+      '@digitalbazaar/di-sd-primitives': 3.3.0
+      '@noble/hashes': 2.2.0
+      jsonld: 9.0.0
+
+  '@credkit/proofs@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/proofs':
+    dependencies:
+      '@credkit/bbs': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs
+      '@credkit/range': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/range
+
+  '@credkit/range@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/range':
+    dependencies:
+      '@credkit/bbs': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs
+      '@noble/curves': 2.2.0
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:

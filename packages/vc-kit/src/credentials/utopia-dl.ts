@@ -6,10 +6,15 @@
  * `https://www.w3.org/ns/credentials/v2` and validity uses
  * `validFrom`/`validUntil` instead of `issuanceDate`/`expirationDate`.
  *
- * The VGW context adds `birthDateCommitment` — a Poseidon commitment to the
- * birth date whose opening stays in the wallet vault; disclosing only the
- * commitment enables the ZK age-predicate tier without revealing the date.
+ * Since N2 the live DMV issues this credential via credkit blind issuance:
+ * `birth_date` is `xsd:date` and numeric-declared (`date1900`, see
+ * {@link UTOPIA_DL_NUMERIC_DECLARATIONS}) so age predicates prove against a
+ * hidden per-presentation-randomized twin — no disclosed commitment. The
+ * legacy `birthDateCommitment` (Poseidon) input survives only as a deprecated
+ * option for the pre-credkit bbs-2023 flow still exercised by the shop and
+ * rentals suites; it dies at N4 with the ZK rip-out (MIGRATION §10).
  */
+import type { NumericDeclarationEntry } from '@credkit/cryptosuite';
 import {
   CREDENTIALS_V2_CONTEXT_URL,
   VDL_V1_CONTEXT_URL,
@@ -17,6 +22,19 @@ import {
   VGW_CONTEXT_URL,
 } from '../contexts/index.js';
 import type { VerifiableCredential } from '../types.js';
+
+/**
+ * The credkit numeric declaration for this credential (MIGRATION §5):
+ * `birth_date` — an `xsd:date` per the vDL context — is declared as a
+ * `date1900` twin, invisible metadata bound into the base proof's header
+ * rather than a document field. It is what lets a holder prove any age
+ * cutoff live while the date itself stays hidden. Pass this to
+ * `issueCredkitCredential` at every DL issuance; an issuance without it
+ * signs a credential that can never carry an age predicate.
+ */
+export const UTOPIA_DL_NUMERIC_DECLARATIONS: readonly NumericDeclarationEntry[] = [
+  { pointer: '/credentialSubject/driversLicense/birth_date', encoder: 'date1900' },
+];
 
 /** Input for {@link buildUtopiaDriversLicense}. */
 export interface UtopiaDriversLicenseInput {
@@ -29,7 +47,14 @@ export interface UtopiaDriversLicenseInput {
   documentNumber: string;
   /** Defaults to 'UADMV'. */
   issuingAuthority?: string;
-  /** Poseidon(birthDate, blinding) commitment, multibase/hex string. */
+  /**
+   * @deprecated Transitional (dies at N4, MIGRATION §10): the pre-credkit
+   * Poseidon(birthDate, blinding) commitment for the retired ZK tier. The
+   * field is emitted only when provided; the credkit issuance flow never
+   * passes it — the age predicate proves against the hidden `date1900` twin
+   * instead. Kept solely so the old-flow shop/rentals suites keep compiling
+   * and passing until N4.
+   */
   birthDateCommitment?: string;
   issuer: { id: string; name?: string };
   /**

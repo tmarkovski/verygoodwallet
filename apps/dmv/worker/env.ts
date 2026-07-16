@@ -10,7 +10,7 @@
  */
 
 import { fromHex } from "@vgw/keys";
-import { generateBbsKeyPair, type BbsKeyPair } from "@vgw/vc-kit";
+import { generateCredkitBbsKeyPair, type CredkitBbsKeyPair } from "@vgw/vc-kit";
 
 /** Worker bindings (wrangler secrets/vars); all optional thanks to dev fallbacks. */
 export interface DmvBindings {
@@ -76,14 +76,20 @@ export function resolveTokenSecret(env: DmvBindings): string {
  * BLS12-381 keypair derivation is not cheap, and the key is a pure function
  * of the seed — derive it once per isolate. Keyed by seed (not a singleton)
  * so tests can exercise different envs against the same module instance.
+ *
+ * Since N2 this is the credkit key pair (synchronous `keyGen`). The issuer
+ * DID is UNCHANGED for a fixed ISSUER_SEED: credkit and the retired
+ * @digitalbazaar generator both implement the IETF BBS KeyGen and derive the
+ * same key from the same seed (pinned cross-library test in vc-kit), so
+ * verifiers keep discovering the same `vgw_issuer_did`.
  */
-const keyPairBySeed = new Map<string, Promise<BbsKeyPair>>();
+const keyPairBySeed = new Map<string, CredkitBbsKeyPair>();
 
-export function getIssuerKeyPair(env: DmvBindings): Promise<BbsKeyPair> {
+export function getIssuerKeyPair(env: DmvBindings): CredkitBbsKeyPair {
   const seed = resolveIssuerSeed(env);
   let keyPair = keyPairBySeed.get(seed);
   if (keyPair === undefined) {
-    keyPair = generateBbsKeyPair(fromHex(seed));
+    keyPair = generateCredkitBbsKeyPair(fromHex(seed));
     keyPairBySeed.set(seed, keyPair);
   }
   return keyPair;

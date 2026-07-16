@@ -4,10 +4,10 @@
  * ```
  * passkey PRF output ("master", never stored — re-derived per session)
  * └── HKDF-SHA-256 branches (domain-separated by `info`)
- *     ├── "vgw/v1/vault"                        → AES-GCM-256 vault key
- *     ├── "vgw/v1/link-secret"                  → 32-byte credkit link secret (ONE for all issuers)
- *     ├── "vgw/v1/holder:<issuer-origin>"       → 32-byte holder seed (per-issuer BBS keypair)
- *     └── "vgw/v1/presenter:<verifier-origin>"  → 32-byte presenter seed (per-verifier keypair)
+ *     ├── "vgw/v1/vault"                            → AES-GCM-256 vault key
+ *     ├── "vgw/v1/link-secret"                      → 32-byte credkit link secret (ONE for all issuers)
+ *     ├── "vgw/v1/issuance-pop:<issuer-origin>"     → 32-byte issuance-PoP seed (per-issuer Ed25519 key)
+ *     └── "vgw/v1/presenter:<verifier-origin>"      → 32-byte presenter seed (per-verifier keypair)
  * ```
  */
 
@@ -31,15 +31,22 @@ export const VAULT_INFO = "vgw/v1/vault";
  */
 export const LINK_SECRET_INFO = "vgw/v1/link-secret";
 
-/** HKDF `info` prefix for holder (per-issuer) branches. */
-export const HOLDER_INFO_PREFIX = "vgw/v1/holder:";
+/**
+ * HKDF `info` prefix for issuance-PoP (per-issuer) branches. Replaced the
+ * pre-credkit `vgw/v1/holder:` branch at N2 (MIGRATION §6): holder BINDING is
+ * now the blind-committed link secret; this branch keeps only the Ed25519 key
+ * that signs the OID4VCI request PoP JWT. It stays deliberately
+ * origin-scoped — the PoP `kid` is issuer-visible, so one reused key would be
+ * a cross-issuer correlation handle.
+ */
+export const ISSUANCE_POP_INFO_PREFIX = "vgw/v1/issuance-pop:";
 
 /** HKDF `info` prefix for presenter (per-verifier) branches. */
 export const PRESENTER_INFO_PREFIX = "vgw/v1/presenter:";
 
-/** Full HKDF `info` string for the holder branch bound to an issuer origin. */
-export function holderInfo(issuerOrigin: string): string {
-  return HOLDER_INFO_PREFIX + issuerOrigin;
+/** Full HKDF `info` string for the issuance-PoP branch bound to an issuer origin. */
+export function issuancePopInfo(issuerOrigin: string): string {
+  return ISSUANCE_POP_INFO_PREFIX + issuerOrigin;
 }
 
 /** Full HKDF `info` string for the presenter branch bound to a verifier origin. */
@@ -78,14 +85,18 @@ export async function deriveVaultKey(master: Uint8Array): Promise<CryptoKey> {
 }
 
 /**
- * Derive the 32-byte holder seed for an issuer origin. Feeds BBS BLS12-381
- * keypair generation, producing a pairwise `did:key` per issuer.
+ * Derive the 32-byte issuance-PoP seed for an issuer origin. Feeds the
+ * Ed25519 key that signs the OID4VCI request proof-of-possession JWT
+ * (freshness option (c), MIGRATION §3.3): the PoP proves request liveness of
+ * a party holding the commitment; holder BINDING is the separately-committed
+ * link secret ({@link deriveLinkSecret}). Pairwise per issuer so the
+ * issuer-visible `kid` never correlates two issuers.
  */
-export async function deriveHolderSeed(
+export async function deriveIssuancePopSeed(
   master: Uint8Array,
   issuerOrigin: string,
 ): Promise<Uint8Array> {
-  return hkdfDerive(master, holderInfo(issuerOrigin), 32);
+  return hkdfDerive(master, issuancePopInfo(issuerOrigin), 32);
 }
 
 /**
@@ -169,9 +180,9 @@ export async function describeHierarchy(
     info: LINK_SECRET_INFO,
     children: [],
   };
-  const holderNodes: DerivationNode[] = issuerOrigins.map((origin) => ({
-    label: `holder seed (${origin})`,
-    info: holderInfo(origin),
+  const issuancePopNodes: DerivationNode[] = issuerOrigins.map((origin) => ({
+    label: `issuance PoP seed (${origin})`,
+    info: issuancePopInfo(origin),
     children: [],
   }));
   const presenterNodes: DerivationNode[] = verifierOrigins.map((origin) => ({
@@ -183,7 +194,7 @@ export async function describeHierarchy(
   const root: DerivationNode = {
     label: "master secret (passkey PRF)",
     info: PRF_EVAL_INPUT,
-    children: [vaultNode, linkSecretNode, ...holderNodes, ...presenterNodes],
+    children: [vaultNode, linkSecretNode, ...issuancePopNodes, ...presenterNodes],
   };
 
   if (master !== undefined) {

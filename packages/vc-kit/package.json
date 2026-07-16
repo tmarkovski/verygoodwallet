@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@credkit/bbs": "0.1.0",
+    "@credkit/cryptosuite": "0.1.0",
     "@digitalbazaar/bbs-2023-cryptosuite": "^2.0.1",
     "@digitalbazaar/bls12-381-multikey": "^2.2.0",
     "@digitalbazaar/credentials-context": "^3.2.0",

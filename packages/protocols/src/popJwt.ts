@@ -7,6 +7,14 @@
  * nonce binds the proof to a token exchange, and `iat` freshness bounds
  * replay in lieu of single-use nonce tracking (documented demo tradeoff —
  * there is no server-side session state anywhere).
+ *
+ * Under credkit blind issuance (MIGRATION §3.3, option c) the payload also
+ * carries `vgw_commitment_digest` — the SHA-256 digest of the holder's
+ * link-secret commitment bytes — a VGW claim inside an otherwise-standard
+ * PoP JWT. The credential is bound to the link secret and carries no `cnf`
+ * key, so a bare PoP would attest a key bound to nothing; signing the digest
+ * makes it attest liveness of a party *holding* THIS request's commitment
+ * (possession, not fresh knowledge — the commitment is a public value).
  */
 
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -27,15 +35,43 @@ export interface ProofJwtPayload {
   aud: string;
   iat: number;
   nonce: string;
+  /**
+   * VGW extension (§3.3 option c): base64url SHA-256 digest of the raw
+   * `vgw_holder_commitment` bytes riding in the same credential request.
+   */
+  vgw_commitment_digest?: string;
+}
+
+/**
+ * SHA-256 over the RAW credkit `commitmentWithProof` bytes, base64url —
+ * the value signed into the PoP as `vgw_commitment_digest`. Shared by the
+ * wallet (signs it) and the issuer (recomputes it from the received
+ * commitment before verifying the PoP). Plain WebCrypto on purpose:
+ * @vgw/protocols carries wire types, never credkit.
+ */
+export async function commitmentDigest(
+  commitmentWithProof: Uint8Array,
+): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    commitmentWithProof as BufferSource,
+  );
+  return toBase64Url(new Uint8Array(digest));
 }
 
 export interface CreateProofJwtOptions {
-  /** 32-byte Ed25519 private key (the holder seed from `deriveHolderSeed`). */
+  /** 32-byte Ed25519 private key (the per-issuer seed from `deriveIssuancePopSeed`). */
   seed: Uint8Array;
   /** The credential issuer identifier (its origin). */
   audience: string;
   /** The `c_nonce` from the token response. */
   nonce: string;
+  /**
+   * base64url SHA-256 digest of the holder-commitment bytes (see
+   * {@link commitmentDigest}); signed into the payload as
+   * `vgw_commitment_digest` when present.
+   */
+  commitmentDigest?: string;
   /** Unix seconds; defaults to now. Override only in tests. */
   issuedAt?: number;
 }
@@ -53,6 +89,9 @@ export function createProofJwt(opts: CreateProofJwtOptions): string {
     aud: opts.audience,
     iat: opts.issuedAt ?? Math.floor(Date.now() / 1000),
     nonce: opts.nonce,
+    ...(opts.commitmentDigest !== undefined
+      ? { vgw_commitment_digest: opts.commitmentDigest }
+      : {}),
   };
   const signingInput = `${toBase64Url(utf8(JSON.stringify(header)))}.${toBase64Url(
     utf8(JSON.stringify(payload)),
@@ -67,6 +106,13 @@ export interface VerifyProofJwtOptions {
   audience: string;
   /** The `c_nonce` the issuer minted (carried inside the access token). */
   nonce: string;
+  /**
+   * When set, the payload MUST carry a `vgw_commitment_digest` equal to this
+   * value — the issuer recomputes it from the received commitment bytes
+   * ({@link commitmentDigest}), so a PoP minted for a different commitment
+   * (or minted with no commitment at all) fails verification.
+   */
+  expectedCommitmentDigest?: string;
   /** Reject proofs older than this. Default 600s. */
   maxAgeSeconds?: number;
   /** Tolerated forward clock drift for `iat`. Default 300s. */
@@ -172,6 +218,19 @@ export function verifyProofJwt(opts: VerifyProofJwtOptions): VerifiedProofJwt {
   }
   if (payload["nonce"] !== opts.nonce) {
     throw new Error("verifyProofJwt: nonce mismatch");
+  }
+  if (opts.expectedCommitmentDigest !== undefined) {
+    const digest = payload["vgw_commitment_digest"];
+    if (typeof digest !== "string" || digest === "") {
+      throw new Error(
+        "verifyProofJwt: missing vgw_commitment_digest — the proof does not attest the holder commitment",
+      );
+    }
+    if (digest !== opts.expectedCommitmentDigest) {
+      throw new Error(
+        "verifyProofJwt: vgw_commitment_digest mismatch — the proof was minted for a different commitment",
+      );
+    }
   }
   const iat = payload["iat"];
   if (typeof iat !== "number" || !Number.isFinite(iat)) {

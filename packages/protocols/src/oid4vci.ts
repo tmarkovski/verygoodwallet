@@ -80,40 +80,42 @@ export interface TokenResponse {
   c_nonce_expires_in: number;
 }
 
-/** Credential endpoint request body (sent with `Authorization: Bearer`). */
+/**
+ * Credential endpoint request body (sent with `Authorization: Bearer`).
+ *
+ * The `proof` slot stays the standard OID4VCI `proof_type: "jwt"` PoP —
+ * request freshness (MIGRATION §3.3, option c). Holder BINDING rides
+ * separately in `vgw_holder_commitment`, a documented VGW extension: the
+ * base64url-encoded credkit `commitmentWithProof` bytes committing to the
+ * wallet's link secret. The issuer blind-signs that commitment into the
+ * credential without ever seeing the secret; the PoP JWT additionally signs
+ * the commitment's SHA-256 digest (`vgw_commitment_digest`) so the liveness
+ * proof attests a party actually holding THIS commitment — possession, not
+ * fresh knowledge of the link secret (the commitment is a public value).
+ */
 export interface CredentialRequest {
   credential_configuration_id: string;
   proof: {
     proof_type: "jwt";
     jwt: string;
   };
+  /**
+   * base64url of the credkit `commitmentWithProof` bytes (the holder's
+   * link-secret commitment). Required by the VGW DMV since N2 — issuance is
+   * always holder-bound.
+   */
+  vgw_holder_commitment?: string;
 }
 
 /**
- * The Poseidon commitment opening the issuer hands back alongside the VC.
- * Structurally matches `@vgw/keys` `CommitmentResult` plus the committed
- * value; declared here (not imported) so the wire type is self-describing.
- */
-export interface CommitmentOpeningLike {
-  /** The committed integer — for the DL, birthdate as days since epoch. */
-  value: number;
-  /** `0x`-hex blinding factor. The wallet stores this privately in the vault. */
-  blinding: string;
-  /** `0x`-hex Poseidon commitment, as signed into the credential. */
-  commitment: string;
-}
-
-/**
- * Credential endpoint success response.
- *
- * `vgw_commitment_opening` is a documented VGW extension: the issuer knows
- * the birthdate anyway (it put it in the VC), so returning the opening it
- * committed to costs no privacy. Blind issuance — where the issuer signs a
- * commitment it cannot open — is future work.
+ * Credential endpoint success response. Since N2 (credkit blind issuance)
+ * the response carries ONLY the credentials: no commitment opening travels —
+ * the committed link secret is the holder's, the issuer never saw it, and
+ * the wallet validates the credential with the holder-side receipt check
+ * (`verifyIssuedCredkitCredential`) instead of opening a commitment.
  */
 export interface CredentialResponse {
   credentials: { credential: Record<string, unknown> }[];
-  vgw_commitment_opening?: CommitmentOpeningLike;
 }
 
 /** OAuth-style error body returned by the token and credential endpoints. */

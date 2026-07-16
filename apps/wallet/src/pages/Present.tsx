@@ -31,7 +31,10 @@ import {
   type QueryCandidates,
   type ZkAgeOption,
 } from "../services/presentation";
-import { listCredentials, type CredentialPayload } from "../services/db";
+// TODO(N3): the presentation path still speaks the legacy envelope; v3
+// (credkit) payloads decrypt fine but cannot be presented until N3 rewires
+// presentation.ts to credkit deriveProof/presentGraph (MIGRATION §12).
+import { listCredentials, type LegacyCredentialPayload } from "../services/db";
 import { recordPresentation } from "../services/activity";
 import { inspect } from "../inspector/events";
 import { InlineUnlock } from "../components/InlineUnlock";
@@ -167,7 +170,7 @@ export function Present() {
         const decrypted = await Promise.all(
           records.map(async (record) => ({
             record,
-            payload: await decryptJson<CredentialPayload>(vaultKey, record.payload),
+            payload: await decryptJson<LegacyCredentialPayload>(vaultKey, record.payload),
           })),
         );
         const result = matchCredentials(decrypted, params.request);
