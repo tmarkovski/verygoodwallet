@@ -10,35 +10,21 @@ import { credkitTsResolver } from "../../tooling/credkit-ts-resolver";
 //
 // Port 5176 (strict) so the wallet (5173), the DMV (5174), the shop (5175)
 // and the rentals site run side by side.
+//
+// (The pre-N4 `define: { "import.meta.url": ... }` workaround is gone: it
+// pinned import.meta.url for @digitalbazaar/credentials-context's
+// module-scope `new URL(...)`, which workerd rejects at script startup —
+// and that package left the Worker bundle with the bbs-2023 rip-out. The
+// smoke script still boots the built bundle under workerd to prove it.)
 export default defineConfig({
   plugins: [credkitTsResolver(), react(), tailwindcss(), cloudflare()],
-  environments: {
-    // Same workerd startup workaround as apps/dmv and apps/shop: pin
-    // import.meta.url for @digitalbazaar/credentials-context's module-scope
-    // `new URL(...)`, which otherwise throws under workerd and kills the
-    // Worker at script startup. Guarded by scripts/smoke.mjs.
-    vgw_rentals: {
-      define: {
-        "import.meta.url": JSON.stringify("file:///worker/index.js"),
-      },
-    },
-  },
   optimizeDeps: {
-    // The rentals client lazy-loads bb.js for UltraHonk verification;
-    // esbuild prebundling would relocate its JS away from the WASM it
-    // fetches relative to import.meta.url (dev-mode only issue). @credkit/*
-    // is TS source (.js specifiers) served through the resolver plugin
-    // pipeline, which dev prebundling would bypass.
-    exclude: ["@aztec/bb.js", "@credkit/bbs", "@credkit/range", "@credkit/proofs", "@credkit/cryptosuite"],
+    // @credkit/* is TS source (.js specifiers) served through the resolver
+    // plugin pipeline, which dev prebundling would bypass.
+    exclude: ["@credkit/bbs", "@credkit/range", "@credkit/proofs", "@credkit/cryptosuite"],
   },
   server: {
     port: 5176,
     strictPort: true,
-    // Mirror the deployed public/_headers: crossOriginIsolated unlocks
-    // multithreaded bb.js in dev too (single-threaded verify is ~6x slower).
-    headers: {
-      "Cross-Origin-Opener-Policy": "same-origin",
-      "Cross-Origin-Embedder-Policy": "require-corp",
-    },
   },
 });

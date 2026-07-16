@@ -1,8 +1,9 @@
 /**
  * Static JSON-LD contexts bundled with @vgw/vc-kit.
  *
- * All of these are registered on the package document loader at import time
- * (see src/loader.ts), so signing/deriving/verifying never hits the network.
+ * All of these back `credkitDocumentLoader` (src/credkit.ts) — the strict,
+ * offline loader passed to every credkit issue/present/verify call — so no
+ * operation ever hits the network. Unknown context URLs are a hard error.
  */
 import citizenshipV1 from './citizenship-v1.json';
 import citizenshipV3 from './citizenship-v3.json';
@@ -23,7 +24,13 @@ export const VDL_V1_CONTEXT_URL = 'https://w3id.org/vdl/v1';
 /** AAMVA vDL extension context URL. */
 export const VDL_AAMVA_V1_CONTEXT_URL = 'https://w3id.org/vdl/aamva/v1';
 
-/** VeryGoodWallet custom vocabulary context URL (birthDateCommitment, …). */
+/**
+ * VeryGoodWallet custom vocabulary context URL. Since N4 it defines no terms
+ * — the ZK tier's `birthDateCommitment`/`zkAgeProof` vocabulary is retired
+ * (age predicates prove against the hidden `date1900` twin instead; nothing
+ * is disclosed to hang a term on). The URL stays in the DL's `@context` and
+ * in `BUNDLED_CONTEXTS` as the anchored home for future VGW vocabulary.
+ */
 export const VGW_CONTEXT_URL = 'https://verygoodwallet.com/contexts/vgw/v1';
 
 /** W3C Data Integrity v2 context URL. */

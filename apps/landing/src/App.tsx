@@ -127,7 +127,7 @@ const CAST: {
   {
     name: "VeryGoodWallet",
     role: "The wallet",
-    line: "Lives at a URL, not in an app store. One passkey derives its vault key, its per-issuer identities, and its per-verifier identities.",
+    line: "Lives at a URL, not in an app store. One passkey derives its vault key, its per-issuer identities, and one lifelong link secret no one ever sees.",
     href: SITE_ORIGINS.wallet,
     band: "#0c1f21",
     bandText: "#d4b264",
@@ -222,14 +222,14 @@ function StampedPage() {
         </div>
 
         <p className="mt-10 text-[15px] leading-relaxed text-ink-dim">
-          Four stamps, two verifiers. Each site saw a different presenter key
-          and a freshly derived proof — the cryptography itself gives them
+          Four stamps, two verifiers. Neither site saw an identifier of any
+          kind — no key, no DID — and every proof, the age proofs included,
+          was a fresh re-randomized derivation. The cryptography gives them
           nothing to join. What could join them is only what you chose to
-          disclose: a name and license number that went to the rental counter
-          alone, and — because you took the ZK tier at both — one sealed
-          birthdate commitment both saw. The seal never opens; your wallet's
-          exhibit draws that line exactly. This page, in your wallet's
-          company, is the only place the whole journey exists.
+          disclose, and your name and license number went to the rental
+          counter alone; your wallet's exhibit draws that line exactly. This
+          page, in your wallet's company, is the only place the whole journey
+          exists.
         </p>
 
         <div className="mt-8 flex flex-wrap gap-3">
@@ -343,21 +343,24 @@ export default function App() {
               WebAuthn's PRF extension lets a web page ask your passkey for a
               deterministic secret at every unlock. Feed that through HKDF and
               the entire wallet falls out: the key that encrypts your
-              credentials at rest, a fresh identity for every issuer, a fresh
-              identity for every verifier. Nothing to back up — passkey sync
-              is the recovery story.
+              credentials at rest, a fresh identity for every issuer, and one
+              lifelong link secret that is blind-committed into every
+              credential without any issuer ever seeing it. Nothing to back
+              up — passkey sync is the recovery story.
             </p>
             <p>
-              The credentials are BBS signatures (bbs-2023), so every
-              presentation discloses exactly the claims you pick and is
-              cryptographically unlinkable from the last. And the birthdate
-              never travels at all: the license carries a Poseidon commitment
-              to it, and a Noir circuit proves "over 18" or "over 25" — any
-              cutoff, same commitment — in zero knowledge.
+              The credentials are BBS signatures (the credkit cryptosuite),
+              so every presentation discloses exactly the claims you pick and
+              is cryptographically unlinkable from the last. And the birthdate
+              never travels at all: the license seals it as a hidden numeric
+              twin, and a range proof shows "over 18" or "over 25" — any
+              cutoff, live, verified entirely on the verifier's server —
+              without ever revealing the date or leaving anything two
+              verifiers could match.
             </p>
           </div>
           <p className="mt-6 rounded-xl bg-accent-soft px-4 py-3 font-mono text-[12px] leading-relaxed text-ink">
-            passkey → PRF → HKDF → {"{"} vault key · holder keys · presenter keys {"}"}
+            passkey → PRF → HKDF → {"{"} vault key · link secret · issuance keys {"}"}
           </p>
         </section>
 
@@ -448,16 +451,23 @@ export default function App() {
             className="mt-7 block rounded-3xl border border-line bg-raised p-7 transition-transform duration-150 hover:-translate-y-0.5 hover:border-line-strong"
           >
             <h3 className="font-display text-xl font-bold tracking-tight">
-              How it works — and what fought back
+              How the first build worked — and what fought back
             </h3>
+            <p className="mt-2 text-[12px] leading-relaxed text-muted">
+              Field notes from the pre-credkit build. Its two honest
+              compromises — a matchable birthdate commitment and a ZK
+              verifier the server couldn't run — are exactly what the credkit
+              migration has since removed; the demo you just toured is the
+              upgraded stack.
+            </p>
             <ul className="mt-4 space-y-2 text-[13.5px] leading-relaxed text-ink-dim">
               <li>
                 · Why BBS proofs structurally leak embedded identifiers, and
                 what the issuer stopped embedding because of it
               </li>
               <li>
-                · Why Cloudflare Workers can't run the ZK verifier, and the
-                honest split that resulted
+                · Why Cloudflare Workers couldn't run that build's ZK
+                verifier, and the honest split that resulted
               </li>
               <li>
                 · Why "shared boolean = correlation" was a bug: one bit

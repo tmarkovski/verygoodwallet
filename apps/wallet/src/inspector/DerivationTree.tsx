@@ -12,11 +12,14 @@ import { DEMO_SITE_ORIGINS } from "../services/demoSites";
  * Origins shown as branches, matching what the flows actually derive
  * against: the deployed DMV for the per-issuer issuance-PoP branch (N2 —
  * `deriveIssuancePopSeed` is keyed by the issuer's exact origin; the local
- * demo issuer uses its own `vgw/v1/demo-issuer` branch, not shown here) and
- * the two deployed verifiers for the presenter branches.
+ * demo issuer uses its own `vgw/v1/demo-issuer` branch, not shown here).
+ *
+ * There are NO verifier branches — that absence is the exhibit. The
+ * pre-credkit wallet derived a presenter key per verifier origin; since the
+ * credkit migration a presentation carries no holder key or DID at all, so
+ * no per-verifier key exists to derive (retired at N4, not rotated).
  */
 const ISSUER_ORIGINS = [DEMO_SITE_ORIGINS.dmv];
-const VERIFIER_ORIGINS = [DEMO_SITE_ORIGINS.shop, DEMO_SITE_ORIGINS.rentals];
 
 function Node({ node, root = false }: { node: DerivationNode; root?: boolean }) {
   return (
@@ -57,7 +60,6 @@ export function DerivationTree() {
     void describeHierarchy({
       ...(masterSecret !== null ? { master: masterSecret } : {}),
       issuerOrigins: ISSUER_ORIGINS,
-      verifierOrigins: VERIFIER_ORIGINS,
     }).then((root) => {
       if (!cancelled) setTree(root);
     });
@@ -84,6 +86,13 @@ export function DerivationTree() {
       <p className="mt-3 text-[11px] leading-relaxed text-muted">
         Previews are the first 8 hex chars of SHA-256(secret). Raw key material
         never reaches the UI.
+      </p>
+      <p className="mt-2 text-[11px] leading-relaxed text-muted">
+        Notice what the tree does NOT have: a branch per verifier. Presenting
+        derives no key at all — the presentation carries no identifier — so
+        there is nothing to grow here when you visit a shop or a rental
+        counter. One link secret serves every issuer; it never leaves the
+        wallet.
       </p>
     </div>
   );

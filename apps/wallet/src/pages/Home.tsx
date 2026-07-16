@@ -104,7 +104,8 @@ function EmptyState({ onAdd, busy }: { onAdd: () => void; busy: boolean }) {
       <h2 className="mt-5 text-lg font-semibold">No credentials yet</h2>
       <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-ink-dim">
         Until the Utopia DMV portal opens, issue yourself a demo driver's
-        license — signed locally with bbs-2023 and stored encrypted.
+        license — blind-signed locally on the credkit BBS suite and stored
+        encrypted.
       </p>
       <Button onClick={onAdd} busy={busy} className="mt-6">
         {busy ? "Issuing…" : "Add demo credential"}

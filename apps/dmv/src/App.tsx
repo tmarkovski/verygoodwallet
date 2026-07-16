@@ -246,8 +246,9 @@ export default function App() {
 
       <footer className="border-t border-line py-6">
         <p className="mx-auto max-w-xl px-5 text-center text-[11px] leading-relaxed text-muted">
-          Demo issuer — OID4VCI pre-authorized code flow. The license is signed
-          with bbs-2023 and carries a Poseidon commitment to the birth date;
+          Demo issuer — OID4VCI pre-authorized code flow. The license is
+          blind-signed on the credkit BBS suite, bound to a holder secret the
+          DMV never sees, with the birth date sealed as a hidden numeric twin;
           nothing issued here is a real credential.
         </p>
       </footer>

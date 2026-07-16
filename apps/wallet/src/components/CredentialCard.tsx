@@ -40,7 +40,7 @@ export function CredentialCard({ meta }: { meta: CredentialMeta }) {
             {kindLabel(meta.kind)}
           </span>
           <span className="font-mono text-[10px] tracking-[0.2em] text-[#ece7d3]/45">
-            bbs-2023
+            credkit-bbs
           </span>
         </div>
       </div>

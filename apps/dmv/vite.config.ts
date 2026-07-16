@@ -9,6 +9,12 @@ import { credkitTsResolver } from "../../tooling/credkit-ts-resolver";
 // Worker + assets bundle under dist/.
 //
 // Port 5174 (strict) so the wallet (5173) and the DMV run side by side.
+//
+// (The pre-N4 `define: { "import.meta.url": ... }` workaround is gone: it
+// pinned import.meta.url for @digitalbazaar/credentials-context's
+// module-scope `new URL(...)`, which workerd rejects at script startup —
+// and that package left the Worker bundle with the bbs-2023 rip-out. The
+// smoke script still boots the built bundle under workerd to prove it.)
 export default defineConfig({
   plugins: [credkitTsResolver(), react(), tailwindcss(), cloudflare()],
   optimizeDeps: {
@@ -16,21 +22,6 @@ export default defineConfig({
     // esbuild without the resolver plugin, so serve it through the plugin
     // pipeline instead.
     exclude: ["@credkit/bbs", "@credkit/range", "@credkit/proofs", "@credkit/cryptosuite"],
-  },
-  environments: {
-    // The Worker bundle pulls in @digitalbazaar/credentials-context, whose
-    // module scope runs `new URL(..., import.meta.url)` for context metadata
-    // that is never dereferenced (vc-kit's loader serves the bundled JSON
-    // contexts). workerd gives bundled modules no valid base URL, so that
-    // throws during script startup — the deployed Worker would be dead on
-    // arrival. Pin import.meta.url to a fixed file: URL in the Worker
-    // environment only; the client build keeps the real thing. Guarded by
-    // scripts/smoke.mjs, which boots the built bundle under workerd.
-    vgw_dmv: {
-      define: {
-        "import.meta.url": JSON.stringify("file:///worker/index.js"),
-      },
-    },
   },
   server: {
     port: 5174,

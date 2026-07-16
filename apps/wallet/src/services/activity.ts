@@ -1,12 +1,14 @@
 /**
- * The presentation log behind the cross-verifier exhibit (M5).
+ * The presentation log behind the cross-verifier exhibit.
  *
  * The wallet is the only party that ever sees both sides of the
  * unlinkability story — each verifier sees exactly one presentation — so
  * the wallet keeps an encrypted record of what each verifier was shown and
- * renders the comparison: different pairwise presenter DIDs, unlinkable
+ * renders the comparison: no holder identifier anywhere, re-randomized
  * proofs, and (honestly) whichever disclosed VALUES would let two verifiers
- * join their records if they compared notes.
+ * join their records if they compared notes. Since the credkit migration
+ * the disclosed values are the ONLY candidates — the proofs themselves
+ * contribute nothing joinable.
  *
  * Entries are encrypted under the vault key like credentials are; a
  * best-effort write failure must never fail the presentation ceremony
@@ -70,8 +72,10 @@ export function latestPerVerifier(
  * the comparison honest:
  * - booleans (a one-bit flag like `age_over_18: true` is shared with half
  *   the population — it identifies nobody), and
- * - the tier-2 "proven in zero knowledge" narration, which is wallet UI
- *   text, not a value any verifier received.
+ * - the tier-2 "proven, not shown" narration, which is wallet UI text, not
+ *   a value any verifier received (the range proof bytes themselves are
+ *   re-randomized per presentation — nothing joinable). The legacy
+ *   "proven in zero knowledge" prefix covers pre-credkit log entries.
  */
 export function sharedDisclosedValues(
   a: PresentationLogEntry,
@@ -80,7 +84,11 @@ export function sharedDisclosedValues(
   const shared: { claim: string; value: unknown }[] = [];
   for (const [claim, value] of Object.entries(a.disclosed)) {
     if (typeof value === "boolean") continue;
-    if (typeof value === "string" && value.startsWith("proven in zero knowledge")) {
+    if (
+      typeof value === "string" &&
+      (value.startsWith("proven, not shown") ||
+        value.startsWith("proven in zero knowledge"))
+    ) {
       continue;
     }
     if (

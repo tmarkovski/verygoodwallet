@@ -6,13 +6,12 @@
  * `https://www.w3.org/ns/credentials/v2` and validity uses
  * `validFrom`/`validUntil` instead of `issuanceDate`/`expirationDate`.
  *
- * Since N2 the live DMV issues this credential via credkit blind issuance:
+ * Since N2 the DMV issues this credential via credkit blind issuance:
  * `birth_date` is `xsd:date` and numeric-declared (`date1900`, see
  * {@link UTOPIA_DL_NUMERIC_DECLARATIONS}) so age predicates prove against a
- * hidden per-presentation-randomized twin — no disclosed commitment. The
- * legacy `birthDateCommitment` (Poseidon) input survives only as a deprecated
- * option for the pre-credkit bbs-2023 flow still exercised by the shop and
- * rentals suites; it dies at N4 with the ZK rip-out (MIGRATION §10).
+ * hidden per-presentation-randomized twin — no disclosed commitment of any
+ * kind. (The pre-credkit `birthDateCommitment` Poseidon input was removed at
+ * N4 with the ZK rip-out, MIGRATION §10.)
  */
 import type { NumericDeclarationEntry } from '@credkit/cryptosuite';
 import {
@@ -47,15 +46,6 @@ export interface UtopiaDriversLicenseInput {
   documentNumber: string;
   /** Defaults to 'UADMV'. */
   issuingAuthority?: string;
-  /**
-   * @deprecated Transitional (dies at N4, MIGRATION §10): the pre-credkit
-   * Poseidon(birthDate, blinding) commitment for the retired ZK tier. The
-   * field is emitted only when provided; the credkit issuance flow never
-   * passes it — the age predicate proves against the hidden `date1900` twin
-   * instead. Kept solely so the old-flow shop/rentals suites keep compiling
-   * and passing until N4.
-   */
-  birthDateCommitment?: string;
   issuer: { id: string; name?: string };
   /**
    * ISO 8601 date-time; defaults to the start of the current UTC day.
@@ -77,8 +67,9 @@ const VALIDITY_YEARS = 6;
  * deliberately so: a flag that was true at issuance stays true, and one that
  * was false stays false even after the holder's birthday. That staleness is
  * the teaching point of the demo's tier ladder — precomputed flags require
- * the issuer to anticipate every cutoff AND every re-issuance, where the ZK
- * tier (M4) proves any cutoff from the committed birthdate at present time.
+ * the issuer to anticipate every cutoff AND every re-issuance, where the
+ * credkit range predicate proves ANY cutoff live against the hidden
+ * `date1900` twin at presentation time (MIGRATION §5).
  */
 const AGE_OVER_FLAGS = [18, 21, 25] as const;
 
@@ -119,7 +110,8 @@ function defaultValidUntil(validFrom: string): string {
 
 /**
  * Builds an unsigned Utopia Driver's License credential (VC 2.0), ready for
- * `signCredential`.
+ * `issueCredkitCredential` (pass {@link UTOPIA_DL_NUMERIC_DECLARATIONS}
+ * alongside it so the birth-date twin is declared).
  */
 export function buildUtopiaDriversLicense(
   input: UtopiaDriversLicenseInput
@@ -146,9 +138,6 @@ export function buildUtopiaDriversLicense(
     issue_date: validFrom,
     expiry_date: validUntil,
   };
-  if (input.birthDateCommitment !== undefined) {
-    driversLicense['birthDateCommitment'] = input.birthDateCommitment;
-  }
 
   const credentialSubject: Record<string, unknown> = {
     ...(input.subjectId !== undefined ? { id: input.subjectId } : {}),

@@ -9,16 +9,13 @@ export { hkdfDerive } from "./hkdf.js";
 export {
   ISSUANCE_POP_INFO_PREFIX,
   LINK_SECRET_INFO,
-  PRESENTER_INFO_PREFIX,
   PRF_EVAL_INPUT,
   VAULT_INFO,
   deriveIssuancePopSeed,
   deriveLinkSecret,
-  derivePresenterSeed,
   deriveVaultKey,
   describeHierarchy,
   issuancePopInfo,
-  presenterInfo,
   previewSecret,
   type DerivationNode,
   type DescribeHierarchyOptions,
@@ -29,10 +26,3 @@ export {
   scalarFromBase64Url,
   scalarToBase64Url,
 } from "./scalar.js";
-export {
-  BN254_SCALAR_FIELD,
-  createCommitment,
-  daysSinceEpoch,
-  verifyCommitment,
-  type CommitmentResult,
-} from "./commitment.js";

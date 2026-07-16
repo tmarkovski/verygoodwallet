@@ -1,8 +1,0 @@
-# Cross-origin isolation: gives the page SharedArrayBuffer, which lets
-# bb.js run its multithreaded WASM for tier-2 proving (measured on the live
-# deployment: ~33 s single-threaded vs seconds with threads). Safe here —
-# the wallet is fully self-contained (no cross-origin subresources), and its
-# DMV/shop API calls are CORS fetches, which COEP does not block.
-/*
-  Cross-Origin-Opener-Policy: same-origin
-  Cross-Origin-Embedder-Policy: require-corp

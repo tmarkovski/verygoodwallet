@@ -57,7 +57,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     path: "/welcome",
     title: "The entire signup",
     body: [
-      "No seed phrase, no account, no download. You're about to create one passkey — and its PRF secret will derive everything that follows: the vault key, a fresh identity per issuer, a fresh identity per verifier.",
+      "No seed phrase, no account, no download. You're about to create one passkey — and its PRF secret will derive everything that follows: the vault key, one lifelong link secret that binds credentials to you without ever identifying you, and a per-issuer key for talking to issuers.",
     ],
     action:
       "Name your wallet and create the passkey — you'll confirm twice, once to create it, once to unlock. Already have one on this device? Unlock it instead; the tour follows either way.",
@@ -90,8 +90,8 @@ export const TOUR_STOPS: readonly TourStop[] = [
     path: "/offer",
     title: "Collecting the license",
     body: [
-      "The wallet redeems the offer's one-time code, proves possession of a key derived only for this issuer, and verifies the DMV's BBS signature before storing anything.",
-      "One deliberate absence: no holder identifier inside the credential. BBS proofs structurally reveal embedded ids, so leaving it out is what keeps your presentations unlinkable later.",
+      "The wallet redeems the offer's one-time code, sends a blind commitment to its link secret, and proves possession of a key derived only for this issuer. The DMV signs a credential bound to a secret it never saw — then the wallet checks that blind signature before storing anything.",
+      "One deliberate absence: no holder identifier inside the credential. Binding lives in the hidden link secret instead of a visible id, which is what keeps your presentations unlinkable later.",
     ],
     action: "Press “Add to wallet”.",
   },
@@ -101,7 +101,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     title: "What you're actually holding",
     body: [
       "Every claim sits under one BBS signature and can be disclosed or withheld per presentation.",
-      "The odd one out is the birthdate commitment — not the date itself, but a Poseidon envelope sealed around it. The zero-knowledge tier proves statements about what's inside without opening it.",
+      "The quiet one is the birth date: alongside the visible claim, the DMV sealed a hidden numeric twin of it into the signature. The predicate tier proves statements about that twin — over 18, over 25, any cutoff — without ever showing the date.",
     ],
     ctaLabel: "Go somewhere age-gated — The Nightcap",
   },
@@ -111,7 +111,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     path: "/",
     title: "One bit of information",
     body: [
-      "The Nightcap needs to know exactly one thing: 18 or over. Watch its request — it will accept an age flag, or a birth date, or, best of all, just the sealed commitment plus a proof.",
+      "The Nightcap needs to know exactly one thing: 18 or over. Watch its request — it will accept an age flag, or a birth date, or, best of all, a live range proof that discloses nothing at all.",
     ],
     action: "Press “Verify with VeryGoodWallet”, then follow the link to your wallet.",
   },
@@ -120,8 +120,8 @@ export const TOUR_STOPS: readonly TourStop[] = [
     site: "wallet",
     title: "The tier that matters",
     body: [
-      "Pick tier 2 — prove the age, never the date. The wallet derives a presenter identity that exists only for this shop, a BBS proof that discloses nothing but the commitment, and a zero-knowledge proof that the sealed date clears today's 18+ cutoff.",
-      "Proving runs in this tab. The few seconds are real cryptography, not a spinner.",
+      "Pick tier 2 — prove the age, never the date. The wallet answers with a range proof over the hidden birth date: “clears today's 18+ cutoff” is all it says. No key, no DID, no identifier of any kind rides along.",
+      "Proving runs in this tab — real cryptography, not a spinner.",
     ],
     action: "Choose tier 2, press Share, then return to the shop.",
   },
@@ -131,7 +131,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     title: "What the shop learned",
     body: [
       "One proven bit: over 18. No name, no birthday, no document number.",
-      "Scroll the result panels: the presenter identity shown is pairwise — no other site will ever see it — and your own browser verified the proof (the exhibit explains why the server can't).",
+      "Scroll the result panels: the shop's own server verified the whole presentation — signature, replay binding, range proof, one verdict — and what it filed away is the point: one bit, and no identifier that could ever meet another verifier's records.",
     ],
     ctaLabel: "Now rent a car — Utopia Wheels",
   },
@@ -142,7 +142,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     title: "A different appetite",
     body: [
       "A rental counter can't serve anonymous customers. Utopia Wheels asks for your name, your license number, and over-25.",
-      "Same license, same sealed commitment — only the cutoff changed. One commitment can answer any age policy.",
+      "Same license, same hidden birth date — only the cutoff changed. One sealed date can answer any age policy, live, forever.",
     ],
     action: "Press “Verify with VeryGoodWallet”, then follow the link to your wallet.",
   },
@@ -151,8 +151,8 @@ export const TOUR_STOPS: readonly TourStop[] = [
     site: "wallet",
     title: "Same seal, different question",
     body: [
-      "Read the request: the identity claims ride alongside the same commitment, and the predicate now says 25, not 18.",
-      "The presenter identity is derived fresh for the rental counter. The one the shop saw never appears here.",
+      "Read the request: the identity claims the counter needs ride alongside the range proof, and the predicate now says 25, not 18.",
+      "And notice what the wallet does NOT derive: any identity for the counter. There is no per-verifier key to rotate, because presentations carry no key at all.",
     ],
     action: "Tier 2 again — Share, then return to Utopia Wheels.",
   },
@@ -162,7 +162,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     title: "Cleared for pickup",
     body: [
       "The counter got a name and a license number — that's the rental business — plus one proven bit: over 25.",
-      "And the identity that signed all of it is not the one the shop saw. Time for the punchline.",
+      "And it learned those claims because it asked for them, not because the cryptography leaked them. Time for the punchline.",
     ],
     ctaLabel: "See what they could compare — back to your wallet",
   },
@@ -172,8 +172,8 @@ export const TOUR_STOPS: readonly TourStop[] = [
     path: "/",
     title: "The exhibit",
     body: [
-      "“Across verifiers”, below your credential, shows both visits exactly as each verifier recorded them: two presenter identities the cryptography can never join, and proofs derived fresh each time.",
-      "And one honest catch: you took the ZK tier at both counters, so both saw the same birthdate commitment — the seal never opens, but the seal itself is a value they could match. Your name went only to the rental counter. The exhibit draws the exact line between what could be joined and what never can.",
+      "“Across verifiers”, below your credential, shows both visits exactly as each verifier recorded them: no identifier at either counter, and every proof re-randomized — even the age proofs share no value. The cryptography hands them nothing to join.",
+      "The only thing that could ever line up is a value you chose to disclose to both — and your name went only to the rental counter, so their notes don't meet. “Same person” is something this architecture lets you prove on purpose, with the link secret; it is never something verifiers discover on their own.",
     ],
     ctaLabel: "Collect your stamps",
   },

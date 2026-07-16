@@ -194,9 +194,11 @@ export function Offer() {
 
             <p className="mt-4 text-[13px] leading-relaxed text-ink-dim">
               Accepting redeems the offer's one-time code for an access token,
-              proves possession of a fresh pairwise key derived only for this
-              issuer, then verifies the issuer's signature on the credential
-              before storing it encrypted in your vault.
+              sends a blind commitment to your wallet's link secret (the
+              issuer signs it without ever seeing it), proves possession of a
+              fresh pairwise key derived only for this issuer, then verifies
+              the issuer's blind signature before storing the credential
+              encrypted in your vault.
             </p>
           </div>
 

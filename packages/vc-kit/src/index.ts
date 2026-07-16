@@ -1,10 +1,15 @@
 /**
- * @vgw/vc-kit — W3C VC 2.0 Data Integrity operations. Two proof stacks
- * coexist during the credkit migration (MIGRATION §12):
+ * @vgw/vc-kit — W3C VC 2.0 Data Integrity operations on the credkit stack
+ * (`credkit-bbs-sha-2026`, the one pinned era): live issuance since N2, live
+ * presentation + server-side verification since N3, sole stack since N4
+ * (the bbs-2023/eddsa-rdfc-2022 @digitalbazaar wrappers are gone).
  *
- * credkit (`credkit-bbs-sha-2026` — live issuance since N2, live
- * presentation + server-side verification since N3):
+ * This package is the ONLY path through which VGW apps touch `@credkit/*`
+ * (house pattern: apps import vc-kit facades, never credkit directly).
+ *
  * - `generateCredkitBbsKeyPair(seed)` — deterministic issuer keys, did:key ids
+ * - `bbsDidKeyFromPublicKey` / `bbsPublicKeyFromDidKey` — the validated codec
+ *   between configured issuer DIDs and credkit's raw G2 trust anchor
  * - `createHolderBinding(...)` — holder link-secret commitment (blind issuance)
  * - `issueCredkitCredential(...)` — issuer blind-signed base proof
  * - `verifyIssuedCredkitCredential(...)` — holder receipt check
@@ -19,30 +24,16 @@
  * - `mintSeededRangeParams(...)` + params codec/hash helpers — the published
  *   `/.well-known/credkit-params` alphabet (deterministic seeded mint)
  * - `credkitDocumentLoader` — the strict offline loader for every credkit call
- *
- * bbs-2023 + eddsa-rdfc-2022 (@digitalbazaar stack — no live callers since
- * N3, deleted at N4):
- * - `generateBbsKeyPair(seed)` — deterministic BBS keys with did:key ids
- * - `signCredential(...)` — issuer base proof (holder-only material)
- * - `deriveCredential(...)` — holder selective-disclosure derived proof
- * - `verifyCredential(...)` — relying-party verification of derived proofs
- * - `generateEd25519KeyPair(seed)` — deterministic presenter keys
- * - `signPresentation(...)` / `verifyPresentation(...)` — VP wrapper proofs
- *
- * Shared plumbing:
- * - `documentLoader` / `registerContext` / `resolveDid` — JSON-LD plumbing
  * - `buildUtopiaDriversLicense(...)` — demo credential template
  */
 export {
   bbsDidKeyFromPublicKey,
   bbsPublicKeyFromDidKey,
   credkitCiphersuite,
-  generateBbsKeyPair,
   generateCredkitBbsKeyPair,
   type CredkitBbsKeyPair,
 } from './keys.js';
 export { DEFAULT_MANDATORY_POINTERS } from './mandatory.js';
-export { signCredential, deriveCredential, verifyCredential } from './bbs.js';
 export {
   CREDKIT_CRYPTOSUITE,
   createHolderBinding,
@@ -84,9 +75,6 @@ export {
   type MintSeededRangeParamsOptions,
   type RangeParams,
 } from './credkitParams.js';
-export { generateEd25519KeyPair } from './ed25519.js';
-export { signPresentation, verifyPresentation } from './presentation.js';
-export { documentLoader, registerContext, resolveDid } from './loader.js';
 export {
   UTOPIA_DL_NUMERIC_DECLARATIONS,
   buildUtopiaDriversLicense,
@@ -104,12 +92,5 @@ export {
 export type {
   VerifiableCredential,
   VerifiablePresentation,
-  BbsKeyPair,
-  BbsSigner,
-  Ed25519KeyPair,
-  Ed25519Signer,
-  PresentedCredentialResult,
-  VerifyCredentialResult,
-  VerifyPresentationResult,
   JsonLdContextEntry,
 } from './types.js';

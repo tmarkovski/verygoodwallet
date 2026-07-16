@@ -7,13 +7,39 @@
  * DMV clerk (the UI) asserts the citizen record.
  */
 
-import { daysSinceEpoch } from "@vgw/keys";
-
 export const NAME_MAX_LENGTH = 80;
 
 /** 120 years in days — nobody older holds a Utopia license. */
 const MAX_AGE_DAYS = Math.ceil(120 * 365.25);
 const MS_PER_DAY = 86_400_000;
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Days since the Unix epoch for a `'YYYY-MM-DD'` date, computed in UTC.
+ * Throws on malformed strings and impossible calendar dates (the UTC
+ * round-trip catches e.g. `'2023-02-30'`). Local replacement for the
+ * Poseidon-era `daysSinceEpoch` that left `@vgw/keys` at N4 — the offer
+ * validation semantics are unchanged (MIGRATION Appendix B).
+ */
+function birthDateToEpochDays(isoDate: string): number {
+  const match = ISO_DATE.exec(isoDate);
+  if (!match) {
+    throw new Error(`expected 'YYYY-MM-DD', got ${JSON.stringify(isoDate)}`);
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const ms = Date.UTC(year, month - 1, day);
+  const roundTrip = new Date(ms);
+  if (
+    roundTrip.getUTCFullYear() !== year ||
+    roundTrip.getUTCMonth() !== month - 1 ||
+    roundTrip.getUTCDate() !== day
+  ) {
+    throw new Error(`invalid calendar date ${JSON.stringify(isoDate)}`);
+  }
+  return ms / MS_PER_DAY;
+}
 
 /** Same unambiguous alphabet the wallet's demo issuer uses (no I/L/O/0/1). */
 const DOCUMENT_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -68,10 +94,10 @@ export function parseOfferInput(body: unknown): OfferInput {
   if (typeof birthDate !== "string") {
     throw new OfferValidationError("birthDate is required");
   }
-  // daysSinceEpoch rejects malformed strings and impossible calendar dates.
+  // birthDateToEpochDays rejects malformed strings and impossible calendar dates.
   let birthDays: number;
   try {
-    birthDays = daysSinceEpoch(birthDate);
+    birthDays = birthDateToEpochDays(birthDate);
   } catch {
     throw new OfferValidationError("birthDate must be a real 'YYYY-MM-DD' date");
   }

@@ -6,9 +6,13 @@
  * └── HKDF-SHA-256 branches (domain-separated by `info`)
  *     ├── "vgw/v1/vault"                            → AES-GCM-256 vault key
  *     ├── "vgw/v1/link-secret"                      → 32-byte credkit link secret (ONE for all issuers)
- *     ├── "vgw/v1/issuance-pop:<issuer-origin>"     → 32-byte issuance-PoP seed (per-issuer Ed25519 key)
- *     └── "vgw/v1/presenter:<verifier-origin>"      → 32-byte presenter seed (per-verifier keypair)
+ *     └── "vgw/v1/issuance-pop:<issuer-origin>"     → 32-byte issuance-PoP seed (per-issuer Ed25519 key)
  * ```
+ *
+ * There is deliberately NO per-verifier branch: the credkit presentation
+ * carries no holder key or DID of any kind, so no presentation-side key
+ * exists to derive. The pre-credkit `vgw/v1/presenter:<verifier-origin>`
+ * branch was retired at N4 — not rotated, removed (MIGRATION §6).
  */
 
 import { toHex, utf8 } from "./encoding.js";
@@ -41,17 +45,9 @@ export const LINK_SECRET_INFO = "vgw/v1/link-secret";
  */
 export const ISSUANCE_POP_INFO_PREFIX = "vgw/v1/issuance-pop:";
 
-/** HKDF `info` prefix for presenter (per-verifier) branches. */
-export const PRESENTER_INFO_PREFIX = "vgw/v1/presenter:";
-
 /** Full HKDF `info` string for the issuance-PoP branch bound to an issuer origin. */
 export function issuancePopInfo(issuerOrigin: string): string {
   return ISSUANCE_POP_INFO_PREFIX + issuerOrigin;
-}
-
-/** Full HKDF `info` string for the presenter branch bound to a verifier origin. */
-export function presenterInfo(verifierOrigin: string): string {
-  return PRESENTER_INFO_PREFIX + verifierOrigin;
 }
 
 /**
@@ -97,17 +93,6 @@ export async function deriveIssuancePopSeed(
   issuerOrigin: string,
 ): Promise<Uint8Array> {
   return hkdfDerive(master, issuancePopInfo(issuerOrigin), 32);
-}
-
-/**
- * Derive the 32-byte presenter seed for a verifier origin. Feeds the
- * per-verifier presentation keypair, so no two verifiers see the same DID.
- */
-export async function derivePresenterSeed(
-  master: Uint8Array,
-  verifierOrigin: string,
-): Promise<Uint8Array> {
-  return hkdfDerive(master, presenterInfo(verifierOrigin), 32);
 }
 
 /**
@@ -157,18 +142,21 @@ export interface DescribeHierarchyOptions {
   /** When provided, each node gets a hashed `preview` of its derived secret. */
   master?: Uint8Array;
   issuerOrigins?: string[];
-  verifierOrigins?: string[];
 }
 
 /**
  * Build the derivation tree for the wallet inspector. Structure is always
  * returned; secret previews (hashed, never raw) are included only when
  * `master` is provided.
+ *
+ * Note what the tree does NOT contain: any per-verifier branch. Since the
+ * credkit migration a presentation carries no holder key or identifier, so
+ * there is no per-verifier key to derive — the absence is the exhibit.
  */
 export async function describeHierarchy(
   opts: DescribeHierarchyOptions,
 ): Promise<DerivationNode> {
-  const { master, issuerOrigins = [], verifierOrigins = [] } = opts;
+  const { master, issuerOrigins = [] } = opts;
 
   const vaultNode: DerivationNode = {
     label: "vault key (AES-GCM-256)",
@@ -185,16 +173,11 @@ export async function describeHierarchy(
     info: issuancePopInfo(origin),
     children: [],
   }));
-  const presenterNodes: DerivationNode[] = verifierOrigins.map((origin) => ({
-    label: `presenter seed (${origin})`,
-    info: presenterInfo(origin),
-    children: [],
-  }));
 
   const root: DerivationNode = {
     label: "master secret (passkey PRF)",
     info: PRF_EVAL_INPUT,
-    children: [vaultNode, linkSecretNode, ...issuancePopNodes, ...presenterNodes],
+    children: [vaultNode, linkSecretNode, ...issuancePopNodes],
   };
 
   if (master !== undefined) {

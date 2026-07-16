@@ -1,45 +1,15 @@
 /**
- * BBS BLS12-381 key generation.
- *
- * Two generations coexist during the credkit migration (MIGRATION.md §12):
- * - `generateBbsKeyPair` — the incumbent @digitalbazaar multikey path that
- *   feeds the live bbs-2023 issuance; retired at N2.
- * - `generateCredkitBbsKeyPair` + the did:key codec pair — the @credkit/bbs
- *   `keyGen` path (ciphersuite pinned to the sha-2026 era) whose raw
- *   `{ secretKey, publicKey }` feeds credkit `issueCredential`, and whose
- *   did:key encoding is byte-compatible with the incumbent `zUC7…` identity
- *   so the published `vgw_issuer_did` contract survives the swap.
+ * BBS BLS12-381 key generation — `generateCredkitBbsKeyPair` + the did:key
+ * codec pair: the @credkit/bbs `keyGen` path (ciphersuite pinned to the
+ * sha-2026 era) whose raw `{ secretKey, publicKey }` feeds credkit
+ * `issueCredential`, and whose did:key encoding is byte-compatible with the
+ * retired @digitalbazaar multikey `zUC7…` identity, so the published
+ * `vgw_issuer_did` contract survived the N2 issuance swap (both stacks
+ * implement the IETF BBS KeyGen — the pinned vector in
+ * test/credkit-keys.test.ts is the cross-library memory of that equality).
  */
-import * as Bls12381Multikey from '@digitalbazaar/bls12-381-multikey';
 import { getCiphersuite, g2FromBytes, keyGen, SUITE_BY_FIXTURE_DIR } from '@credkit/bbs';
 import { base58 } from '@scure/base';
-import { MULTIKEY_V1_CONTEXT_URL } from './contexts/index.js';
-import type { BbsKeyPair } from './types.js';
-
-/**
- * Deterministically generates a BLS12-381 BBS key pair (BBS_BLS12381_SHA256)
- * from a seed. The same seed always yields the same key pair, which is what
- * lets a passkey PRF output re-derive the wallet's keys on any device.
- *
- * The returned key pair carries did:key identifiers:
- * - `controller`: `did:key:<publicKeyMultibase>`
- * - `id`:         `did:key:<publicKeyMultibase>#<publicKeyMultibase>`
- *
- * @param seed - Key material, at least 32 bytes of entropy.
- */
-export async function generateBbsKeyPair(seed: Uint8Array): Promise<BbsKeyPair> {
-  const keyPair = await Bls12381Multikey.generateBbsKeyPair({
-    algorithm: Bls12381Multikey.ALGORITHMS.BBS_BLS12381_SHA256,
-    seed,
-  });
-
-  const did = `did:key:${keyPair.publicKeyMultibase}`;
-  keyPair.id = `${did}#${keyPair.publicKeyMultibase}`;
-  keyPair.controller = did;
-  keyPair['@context'] = MULTIKEY_V1_CONTEXT_URL;
-
-  return keyPair as unknown as BbsKeyPair;
-}
 
 /**
  * The pinned credkit ciphersuite era (MIGRATION.md §11): sha-2026, forever.
@@ -78,11 +48,13 @@ function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
 
 /**
  * Deterministically generate a credkit BBS key pair (IETF KeyGen, sha-2026
- * era) from ≥32 bytes of key material. Same seed, same key — and, verified by
- * a pinned cross-library vector, the SAME key `generateBbsKeyPair` derives
- * from that seed: both stacks implement the IETF BBS KeyGen, so the N2
- * issuance swap keeps the DMV's published issuer DID stable for a fixed
- * ISSUER_SEED (MIGRATION.md §7).
+ * era) from ≥32 bytes of key material. Same seed, same key — and, verified
+ * at N1 by a cross-library vector against the since-retired @digitalbazaar
+ * generator, the SAME key that stack derived from the same seed (both
+ * implement the IETF BBS KeyGen), which is why the N2 issuance swap kept the
+ * DMV's published issuer DID stable for a fixed ISSUER_SEED (MIGRATION.md
+ * §7). The pinned did:key vector in test/credkit-keys.test.ts carries that
+ * guarantee forward now that the legacy generator is gone.
  */
 export function generateCredkitBbsKeyPair(seed: Uint8Array): CredkitBbsKeyPair {
   const { secretKey, publicKey } = keyGen(credkitCiphersuite(), seed);

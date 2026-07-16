@@ -22,32 +22,40 @@ derivation.
 ```
 passkey PRF output
   └─ HKDF
-      ├─ vault key            AES-GCM over everything at rest
-      ├─ holder seed(issuer)  one keypair per issuer, for holder binding
-      └─ presenter seed(verifier origin)
-                              one keypair per verifier — pairwise identities
+      ├─ vault key             AES-GCM over everything at rest
+      ├─ link secret           ONE secret for life, blind-committed into every
+      │                        credential — holder binding no issuer ever sees
+      └─ issuance-PoP seed(issuer origin)
+                               one keypair per issuer, request freshness only
 ```
+
+Presentations derive no key at all: a credkit presentation carries no holder
+identifier of any kind, so there is no per-verifier branch.
 
 Passkey sync (iCloud Keychain, Google Password Manager) is the recovery story.
 The wallet is a static page; locking it is forgetting the derived keys.
 
 ## The story: age verification as a privacy ladder
 
-The Utopia DMV issues a driver's license as a W3C Verifiable Credential signed
-with `bbs-2023`. Two fictional businesses check ages — and the wallet lets you
-choose how much they learn:
+The Utopia DMV blind-issues a driver's license as a W3C Verifiable Credential
+on the `credkit-bbs-sha-2026` Data Integrity suite — bound to the wallet's
+link secret, which the DMV never sees. Two fictional businesses check ages —
+and the wallet lets you choose how much they learn:
 
 | Tier | Mechanism | What the verifier learns |
 |------|-----------|--------------------------|
 | 0 — Full disclosure | Present the whole credential | Everything (today's status quo) |
-| 1 — Selective disclosure | BBS derived proof of chosen claims | Only those claims (e.g. an `age_over_18` flag); presentations unlinkable across verifiers |
-| 2 — ZK predicate | Noir/UltraHonk proof over a Poseidon birthdate commitment | Only "old enough for *this* cutoff" — any cutoff, one credential, never the date |
+| 1 — Selective disclosure | BBS derived proof of chosen claims | Only those claims (e.g. an `age_over_18` flag, frozen at issuance); presentations unlinkable across verifiers |
+| 2 — Range predicate | credkit range proof over the *hidden* birth-date twin, verified entirely in the verifier's Worker | Only "old enough for *this* cutoff" — any cutoff, live, one credential, never the date |
 
 Present to both verifiers and the wallet's cross-verifier exhibit shows what
-they could learn by comparing notes — including the honest catch the demo itself
-surfaced: take the ZK tier at both counters and each sees the same issuer-signed
-commitment, a stable value colluding verifiers could match. The demo reports
-this instead of hiding it.
+they could learn by comparing notes: nothing, unless you disclosed the same
+value to both. The presentation carries no holder identifier, and every proof
+— the age proof included — is re-randomized per presentation, so the
+correlation handle the pre-credkit demo had to confess (a stable, matchable
+birthdate commitment) no longer exists. "Same person" across credentials is
+something the holder can *elect* to prove with the link secret, never
+something verifiers discover.
 
 ## The cast
 
@@ -61,9 +69,10 @@ this instead of hiding it.
 
 The State of Utopia issues no real licenses, the shop sells nothing, and the
 rental fleet is six SVGs. The cryptography, the protocols, and the timings are
-real: OID4VCI and OID4VP with DCQL, `bbs-2023` + `eddsa-rdfc-2022` data
-integrity, WebAuthn PRF + HKDF, and a Noir circuit proven in the browser via
-bb.js.
+real: OID4VCI and OID4VP with DCQL, the `credkit-bbs-sha-2026` Data Integrity
+suite over IETF BBS (blind issuance, selective disclosure, range predicates
+over hidden values), WebAuthn PRF + HKDF — with the whole verification, pure
+JS and no WASM, running inside each verifier's Cloudflare Worker.
 
 ## Repository layout
 
@@ -75,10 +84,10 @@ apps/
   shop/       verifier 1: Hono Worker (OID4VP) + UI (vgw-shop)
   rentals/    verifier 2: Hono Worker (OID4VP) + UI (vgw-rentals)
 packages/
-  vc-kit/     VC 2.0 + bbs-2023 sign/derive/verify, did:key, document loader
-  keys/       PRF → HKDF key hierarchy, pairwise DIDs, vault crypto
-  zk/         Noir circuit + prover/verifier wrappers (lazy-loaded WASM)
-  protocols/  OID4VCI/OID4VP/DCQL message types
+  vc-kit/     VC 2.0 on the credkit suite: blind issue, present, verify,
+              did:key codec, offline document loader (the ONLY @credkit/* door)
+  keys/       PRF → HKDF key hierarchy (link secret, issuance keys), vault crypto
+  protocols/  OID4VCI/OID4VP/DCQL message types (crypto-free)
   tour/       the guided tour: script, overlay, cross-origin URL plumbing
 ```
 

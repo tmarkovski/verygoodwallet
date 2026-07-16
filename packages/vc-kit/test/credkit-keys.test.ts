@@ -5,7 +5,6 @@ import {
   bbsDidKeyFromPublicKey,
   bbsPublicKeyFromDidKey,
   credkitCiphersuite,
-  generateBbsKeyPair,
   generateCredkitBbsKeyPair,
 } from '../src/index.js';
 
@@ -14,6 +13,12 @@ const SEED = new Uint8Array(Array.from({ length: 32 }, (_, i) => i));
 // Regression pin: keyGen(sha-2026 suite, 00 01 … 1f). If this moves, the
 // credkit KeyGen layout changed and every provisioned issuer key moves with
 // it — that is a version-bump conversation, not a test update.
+//
+// Provenance: this exact did:key was ALSO what the retired @digitalbazaar
+// generator derived from the same seed (verified live at N1, both stacks
+// implement the IETF BBS KeyGen) — which is why the N2 issuance swap kept
+// the DMV's published issuer DID stable. The cross-library test died with
+// the legacy generator at N4; this pinned vector is its memory.
 const PINNED_DID =
   'did:key:zUC75FYvkdGdpTxRPZ72Tky9MFcimnr4rMeRWXtRJD1RYBYMNzARr1GQ1MPWB4BpEoyvYaTmo72a4YrV5XatUNR2Q8MixtWmRL97e4funyHFPJyN6oMap2VGgNRDPe338VYXhfs';
 const PINNED_MULTIBASE = PINNED_DID.slice('did:key:'.length);
@@ -45,15 +50,6 @@ describe('generateCredkitBbsKeyPair', () => {
     const again = generateCredkitBbsKeyPair(SEED);
     expect(again.controller).toBe(kp.controller);
     expect(again.secretKey).toBe(kp.secretKey);
-  });
-
-  it('derives the SAME key as @digitalbazaar from the same seed (IETF KeyGen)', async () => {
-    // Both stacks implement the IETF BBS KeyGen, so a fixed ISSUER_SEED keeps
-    // the DMV's published issuer DID stable across the N2 issuance swap. If
-    // this ever breaks, the swap silently rotates the issuer identity.
-    const db = await generateBbsKeyPair(SEED);
-    const ck = generateCredkitBbsKeyPair(SEED);
-    expect(ck.controller).toBe(db.controller as string);
   });
 
   it('rejects key material shorter than 32 bytes', () => {

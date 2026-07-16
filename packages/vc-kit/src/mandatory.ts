@@ -1,8 +1,7 @@
 /**
- * Default mandatory pointers, shared by both proof stacks (bbs-2023 until
- * N4, credkit from N2). Kept in a dependency-free module on purpose: the
- * credkit facade must not drag the legacy @digitalbazaar loader graph in
- * just for three JSON pointers.
+ * Default mandatory pointers for credkit issuance (and, historically, the
+ * retired bbs-2023 stack — same set, same correlation caveat). Kept in a
+ * dependency-free module on purpose.
  */
 import type { VerifiableCredential } from './types.js';
 

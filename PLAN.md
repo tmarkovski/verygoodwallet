@@ -1,5 +1,16 @@
 # VeryGoodWallet — Re-imagined: Plan
 
+> **Superseded in part by [MIGRATION.md](MIGRATION.md)** (credkit migration,
+> landed N0–N4). This document remains the M0–M6 record, but three of its
+> designs no longer describe the running demo: the tier-2 mechanism is now a
+> credkit range proof over a hidden birth-date twin (the Noir/UltraHonk
+> circuit, the Poseidon `birthDateCommitment`, and `packages/zk` are deleted);
+> holder binding is now the blind-committed link secret (no longer "future
+> work"); verification runs entirely in the verifier Workers (no client-side
+> split); and presentations carry no per-verifier presenter DID — no holder
+> identifier at all. Sections below flagged *[superseded]* are kept as
+> history.
+
 ## Thesis
 
 **Your passkey is your wallet.** No seed phrase, no server-side key custody: a passkey's PRF
@@ -15,18 +26,21 @@ verification**, demonstrated as a three-tier privacy ladder:
 |------|-----------|--------------------------|
 | 0 — Full disclosure | Present the entire credential | Everything (today's status quo) |
 | 1 — Selective disclosure | BBS derived proof (`bbs-2023`) of chosen claims | Only disclosed claims, e.g. `age_over_18` flag; presentations unlinkable across verifiers |
-| 2 — ZK predicate | Noir circuit over a BBS-signed birthdate commitment | Only the predicate ("born before 2008-07-13"), for *any* cutoff — nothing else |
+| 2 — ZK predicate | Noir circuit over a BBS-signed birthdate commitment *[superseded: credkit range proof over a hidden birth-date twin — no disclosed commitment]* | Only the predicate ("born before 2008-07-13"), for *any* cutoff — nothing else |
 
 A deliberate teaching point at tier 1 vs 2: precomputed `age_over_NN` flags (the mdoc
-approach) require the issuer to anticipate every cutoff; the ZK tier proves any cutoff from
-a single committed birthdate.
+approach) require the issuer to anticipate every cutoff; the predicate tier proves any
+cutoff live from a single sealed birthdate. (The teaching point survives the credkit
+migration unchanged.)
 
 ## Decisions made
 
 - **Backend**: real OID4VCI / OID4VP endpoints on **Cloudflare Workers** (free tier). The
   wallet itself stays fully static and client-side.
 - **ZK**: real **Noir circuit** (birthdate commitment opening + range check), proven in the
-  browser via bb.js WASM. In scope as milestone M4.
+  browser via bb.js WASM. In scope as milestone M4. *[superseded at N3/N4: the circuit and
+  `packages/zk` are deleted; credkit's CCS range proofs (pure JS, BLS12-381) do the job with
+  server-side verification — MIGRATION §10]*
 - **Demo scope**: issuer + **two** verifiers, so pairwise-DID/unlinkability is shown, not told.
 - **Monorepo**: everything in this repo; greenfield Vite apps, legacy `web/` (CRA) retired at
   cutover; vestigial .NET `api/` removed.
@@ -57,7 +71,7 @@ verygoodwallet/
 │   ├── vc-kit/            # VC 2.0 + bbs-2023 sign/derive/verify, did:key, document loader
 │   │                      #   (ported from web/src/services/bbs.ts + security.ts)
 │   ├── keys/              # PRF → HKDF key hierarchy, pairwise DID derivation, vault crypto
-│   ├── zk/                # Noir circuit + prover/verifier wrappers (lazy-loaded WASM)
+│   ├── zk/                # Noir circuit + prover/verifier wrappers [deleted at N4]
 │   ├── protocols/         # OID4VCI/OID4VP/DCQL message types + DC API adapter
 │   └── ui/                # shared components: credential cards, JSON inspector, consent UI
 └── PLAN.md
@@ -75,18 +89,31 @@ passkey PRF output (never stored, re-derived per session)
     └── "presenter:<verifier-origin>" → per-verifier keypair → signs presentations
 ```
 
+*[superseded at N2–N4: the live branches are `vgw/v1/vault`, `vgw/v1/link-secret` (ONE
+credkit link secret for all issuers — the holder binding), and
+`vgw/v1/issuance-pop:<issuer-origin>` (request-freshness PoP only). The presenter branch is
+deleted: credkit presentations carry no holder key or DID — MIGRATION §6]*
+
 - **PRF only.** largeBlob is dropped — PRF won the extension war. The existing simulated-key
   fallback stays for browsers without PRF support (clearly labeled in the UI).
 - **Unlinkability story**: credential subject identifier is *not disclosed* by default; BBS
   derived proofs are unlinkable across presentations; each verifier sees a different
   presenter DID. Honest caveat documented in-app: cryptographic holder binding that is
   itself unlinkable (BBS blind binding / per-verifier pseudonyms, draft-irtf-cfrg-bbs) is
-  called out as future work, not faked.
+  called out as future work, not faked. *[superseded at N2/N3: that future work landed —
+  holder binding is the blind-committed link secret (IETF blind-BBS), and the verifier now
+  sees NO identifier at all rather than a pairwise one — MIGRATION §0, §6]*
 - **Credential format**: W3C VC Data Model 2.0, Data Integrity `bbs-2023` proofs. The Utopia
   DL gains a `birthDateCommitment` claim: Poseidon(dob, blinding) with the opening stored
-  privately in the wallet vault.
+  privately in the wallet vault. *[superseded: the suite is `credkit-bbs-sha-2026` and the
+  commitment claim is deleted — the birth date is a hidden `date1900` numeric twin instead]*
 
 ## ZK design (tier 2)
+
+*[This whole section is superseded and the artifacts are deleted (N3/N4): tier 2 is now a
+credkit CCS range proof over the hidden `date1900` twin, verified entirely in the verifier's
+Worker — no commitment travels, no WASM, no split verdict. Kept as the M4 record —
+MIGRATION §10.]*
 
 Noir circuit, deliberately small:
 
@@ -122,8 +149,9 @@ Stretch (not in scope): longfellow-style ZK over ECDSA-signed mdocs.
    response via `direct_post` to the shop Worker; result page shows a
    "what did the verifier actually learn" diff per tier.
 4. **Second presentation (rentals)** — different disclosure set (name, license number,
-   over-25 via ZK with a different cutoff — same commitment). A cross-verifier exhibit shows
-   the two verifiers' views side by side: nothing correlates.
+   over-25 proven with a different cutoff — same sealed birthdate *[post-credkit: same
+   hidden twin, no shared commitment value]*). A cross-verifier exhibit shows the two
+   verifiers' views side by side: nothing correlates.
 5. **DC API exhibit** — the shop also offers the native-wallet path (works against e.g. a
    Google Wallet test mdoc on Android) with an explainer of the web-wallet gap. DC API call
    isolated behind an adapter in `packages/protocols` (protocol strings still churn pre-CR).

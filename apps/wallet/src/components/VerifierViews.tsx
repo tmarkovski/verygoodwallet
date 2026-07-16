@@ -1,12 +1,15 @@
 /**
- * The cross-verifier exhibit (M5): what each verifier actually saw, side by
+ * The cross-verifier exhibit: what each verifier actually saw, side by
  * side, from the only vantage point that has both — the wallet.
  *
- * The claim being demonstrated: presentations are pairwise (a different
- * presenter DID per verifier) and BBS derivations are unlinkable, so the
+ * The claim being demonstrated (upgraded by the credkit migration): a
+ * presentation carries NO holder identifier of any kind, and every proof —
+ * including the age range proof — is re-randomized per presentation, so the
  * ONLY thing that can ever correlate two visits is a value the holder chose
  * to disclose to both. The comparison computes that intersection from the
- * real log and says so, honestly, in either direction.
+ * real log and says so, honestly, in either direction. (The pre-credkit
+ * exhibit had to confess a shared birthdate commitment here; that handle no
+ * longer exists.)
  */
 
 import { useEffect, useState } from "react";
@@ -41,20 +44,22 @@ function VerifierCard({ entry }: { entry: PresentationLogEntry }) {
         {entry.verifierOrigin}
       </p>
       <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
-        Saw this presenter identifier
+        Holder identifier it saw
       </p>
       {entry.presenterDid === "" ? (
-        // Entries since N3: the credkit presentation carries no holder key
-        // or DID at all — there is no identifier to show, which IS the point.
+        // The credkit presentation carries no holder key or DID at all —
+        // there is no identifier to show, which IS the exhibit.
         <p className="mt-1 text-[12px] text-ink-dim">
           None — the presentation carried no holder key or DID.
         </p>
       ) : (
+        // Pre-credkit log entries recorded the pairwise presenter DID that
+        // stack actually disclosed; render history honestly.
         <p
           className="mt-1 inline-block rounded bg-gold-soft px-1.5 py-0.5 font-mono text-[11px] text-gold"
           title={entry.presenterDid}
         >
-          {shortDid(entry.presenterDid)}
+          {shortDid(entry.presenterDid)} (pre-credkit entry)
         </p>
       )}
       <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
@@ -126,10 +131,10 @@ export function VerifierViews() {
         What each verifier saw
       </h2>
       <p className="mt-2 text-[13px] leading-relaxed text-ink-dim">
-        Every presentation is signed by a presenter key that exists for one
-        verifier only, and every BBS proof is a fresh, unlinkable derivation.
-        This log is the wallet's own record — the verifiers can't see it, or
-        each other's.
+        Every presentation goes out with no holder key or DID at all, and
+        every proof — the age proof included — is a fresh, re-randomized
+        derivation. This log is the wallet's own record — the verifiers can't
+        see it, or each other's.
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -148,9 +153,12 @@ export function VerifierViews() {
         <div className="mt-3 rounded-2xl bg-ok-soft p-4">
           <p className="text-[13px] font-semibold text-ok">Nothing to join.</p>
           <p className="mt-1 text-[12px] leading-relaxed text-ink-dim">
-            Different presenter DIDs, unlinkable proofs, and no value disclosed
-            to both — if {first!.verifierName} and {second!.verifierName}{" "}
-            compared their records, nothing would line up.
+            No identifiers, re-randomized proofs, and no value disclosed to
+            both — if {first!.verifierName} and {second!.verifierName}{" "}
+            compared their records, nothing would line up. If you ever WANT
+            two presentations provably joined — "same person holds both
+            credentials" — that's a proof your wallet's link secret can make
+            on purpose. Linking is holder-elected here, never discovered.
           </p>
         </div>
       ) : (
@@ -174,15 +182,14 @@ export function VerifierViews() {
               </div>
             ))}
           </dl>
-          {shared.some(({ claim }) => claim === "birthDateCommitment") && (
-            <p className="mt-2 border-t border-danger/20 pt-2 text-[12px] leading-relaxed text-ink-dim">
-              The birthdate commitment is the subtle one: use the ZK tier at
-              two verifiers and both see the same issuer-signed seal. Neither
-              ever learns the date inside — but the seal itself is a stable
-              value. Making even the seal presentation-unique is what full
-              anonymous credentials would add on top of this demo.
-            </p>
-          )}
+          <p className="mt-2 border-t border-danger/20 pt-2 text-[12px] leading-relaxed text-ink-dim">
+            Every value here is one you consented to disclose at both
+            counters — the proofs themselves contribute nothing joinable, not
+            even at the predicate tier. (The pre-credkit demo had to confess
+            a shared birthdate commitment on this panel; that handle no
+            longer exists.) Withhold a value from one verifier and this list
+            shrinks.
+          </p>
         </div>
       )}
     </section>

@@ -15,7 +15,6 @@
     "@vgw/protocols": "workspace:*",
     "@vgw/tour": "workspace:*",
     "@vgw/vc-kit": "workspace:*",
-    "@vgw/zk": "workspace:*",
     "idb": "^8.0.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

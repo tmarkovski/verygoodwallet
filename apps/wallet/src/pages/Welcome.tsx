@@ -158,8 +158,9 @@ export function Welcome() {
               </svg>
             }
           >
-            The passkey's PRF output feeds an HKDF tree: vault key, per-issuer
-            holder keys, per-verifier presenter keys. Nothing to back up.
+            The passkey's PRF output feeds an HKDF tree: vault key, one
+            lifelong link secret, per-issuer issuance keys. Nothing to back
+            up.
           </Step>
           <Step
             title="Encrypted at rest"
@@ -182,8 +183,9 @@ export function Welcome() {
               </svg>
             }
           >
-            BBS signatures (bbs-2023) let you reveal single claims — and each
-            presentation is unlinkable from the last.
+            BBS signatures (credkit) let you reveal single claims, or prove
+            facts about hidden ones — and each presentation is unlinkable
+            from the last.
           </Step>
         </ol>
       </section>

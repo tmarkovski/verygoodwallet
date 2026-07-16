@@ -23,50 +23,6 @@ export interface VerifiableCredential {
   [key: string]: unknown;
 }
 
-/** Signer interface exposed by a BBS key pair (consumed by DataIntegrityProof). */
-export interface BbsSigner {
-  algorithm: string;
-  id?: string;
-  sign(options: { data: Uint8Array }): Promise<Uint8Array>;
-  multisign?(options: {
-    header: Uint8Array;
-    messages: Uint8Array[];
-  }): Promise<Uint8Array>;
-}
-
-/**
- * A BLS12-381 BBS key pair with `did:key` identifiers, as produced by
- * {@link generateBbsKeyPair}. Wraps a `@digitalbazaar/bls12-381-multikey`
- * key pair interface.
- */
-export interface BbsKeyPair {
-  /** Multikey context URL. */
-  '@context': string;
-  /** Verification method id: `did:key:<mb>#<mb>`. */
-  id: string;
-  /** Controller DID: `did:key:<mb>`. */
-  controller: string;
-  /** Multibase-encoded (zUC7…) BLS12-381 G2 public key. */
-  publicKeyMultibase: string;
-  /** Multibase-encoded secret key (present for locally generated keys). */
-  secretKeyMultibase?: string;
-  /** Returns a signer usable with DataIntegrityProof (bbs-2023). */
-  signer(): BbsSigner;
-  /** Exports the key pair as a Multikey document. */
-  export(options?: {
-    publicKey?: boolean;
-    secretKey?: boolean;
-    includeContext?: boolean;
-  }): Promise<Record<string, unknown>>;
-  [key: string]: unknown;
-}
-
-/** Result of {@link verifyCredential}. */
-export interface VerifyCredentialResult {
-  verified: boolean;
-  error?: string;
-}
-
 /**
  * A W3C VC Data Model 2.0 presentation (unsigned or signed). Open-world like
  * {@link VerifiableCredential}.
@@ -74,55 +30,15 @@ export interface VerifyCredentialResult {
 export interface VerifiablePresentation {
   '@context': JsonLdContextEntry | JsonLdContextEntry[];
   type: string | string[];
-  /** The presenter's DID — the VP proof's verification method must belong to it. */
+  /**
+   * A presenter DID. Credkit presentations never carry one — the holder is
+   * bound cryptographically via the blind-committed link secret, and credkit
+   * rejects a `holder` property outright — so on the live stack this field
+   * is always absent. It stays in the open-world type because foreign VPs
+   * may carry it.
+   */
   holder?: string;
   verifiableCredential?: VerifiableCredential | VerifiableCredential[];
   proof?: Record<string, unknown> | Record<string, unknown>[];
   [key: string]: unknown;
-}
-
-/** Signer interface exposed by an Ed25519 key pair (consumed by DataIntegrityProof). */
-export interface Ed25519Signer {
-  algorithm: string;
-  id?: string;
-  sign(options: { data: Uint8Array }): Promise<Uint8Array>;
-}
-
-/**
- * An Ed25519 Multikey pair with `did:key` identifiers, as produced by
- * {@link generateEd25519KeyPair}. Wraps a `@digitalbazaar/ed25519-multikey`
- * key pair interface.
- */
-export interface Ed25519KeyPair {
-  /** Multikey context URL. */
-  '@context': string;
-  /** Verification method id: `did:key:<mb>#<mb>`. */
-  id: string;
-  /** Controller DID: `did:key:<mb>`. */
-  controller: string;
-  /** Multibase-encoded (z6Mk…) Ed25519 public key. */
-  publicKeyMultibase: string;
-  /** Multibase-encoded secret key (present for locally generated keys). */
-  secretKeyMultibase?: string;
-  /** Returns a signer usable with DataIntegrityProof (eddsa-rdfc-2022). */
-  signer(): Ed25519Signer;
-  [key: string]: unknown;
-}
-
-/** Per-credential outcome inside {@link VerifyPresentationResult}. */
-export interface PresentedCredentialResult {
-  credential: VerifiableCredential;
-  verified: boolean;
-  error?: string;
-}
-
-/** Result of {@link verifyPresentation}. */
-export interface VerifyPresentationResult {
-  /** True only when the VP proof AND every embedded credential verified. */
-  verified: boolean;
-  /** The presenter DID the VP proof is bound to (present when the VP proof verified). */
-  holder?: string;
-  /** One entry per embedded credential, in presentation order. */
-  credentials: PresentedCredentialResult[];
-  error?: string;
 }

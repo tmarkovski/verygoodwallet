@@ -1,17 +1,15 @@
 /**
  * Credential detail: ID-card-like claim layout, plus actions —
- * Verify (derive a minimal disclosure, then verify it, with timing),
- * Raw JSON (the decrypted VC), and Delete.
+ * Verify (the credkit holder receipt check: re-run the whole issuance
+ * pipeline and check the issuer's blind signature against this wallet's own
+ * link secret and stored blind, with timing), Raw JSON (the decrypted VC),
+ * and Delete.
  */
 
 import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
-import { decryptJson } from "@vgw/keys";
-import {
-  deriveCredential,
-  verifyCredential,
-  type VerifiableCredential,
-} from "@vgw/vc-kit";
+import { decryptJson, deriveLinkSecret, scalarFromBase64Url } from "@vgw/keys";
+import { verifyIssuedCredkitCredential, type VerifiableCredential } from "@vgw/vc-kit";
 import { useSession } from "../session";
 import {
   deleteCredential,
@@ -19,14 +17,10 @@ import {
   type CredentialPayload,
   type CredentialRecord,
 } from "../services/db";
-import { issuerDid } from "../services/meta";
 import { inspect } from "../inspector/events";
 import { CredentialCard } from "../components/CredentialCard";
 import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
 import { JsonTree } from "../inspector/JsonTree";
-
-/** Minimal disclosure: reveal only the birthdate commitment (the ZK teaser). */
-const MINIMAL_POINTERS = ["/credentialSubject/driversLicense/birthDateCommitment"];
 
 const CLAIM_LABELS: [key: string, label: string][] = [
   ["given_name", "Given name"],
@@ -37,7 +31,6 @@ const CLAIM_LABELS: [key: string, label: string][] = [
   ["issuing_country", "Issuing country"],
   ["issue_date", "Issued"],
   ["expiry_date", "Expires"],
-  ["birthDateCommitment", "Birthdate commitment"],
 ];
 
 function claimsOf(vc: VerifiableCredential): Record<string, unknown> | null {
@@ -62,9 +55,6 @@ function formatClaim(key: string, value: unknown): string {
       });
     }
   }
-  if (key === "birthDateCommitment" && value.length > 26) {
-    return `${value.slice(0, 14)}…${value.slice(-10)}`;
-  }
   return value;
 }
 
@@ -72,13 +62,12 @@ interface VerifyOutcome {
   verified: boolean;
   error?: string;
   ms: number;
-  derived: VerifiableCredential;
 }
 
 export function CredentialDetail() {
   const params = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { account, vaultKey, locked } = useSession();
+  const { account, masterSecret, vaultKey, locked } = useSession();
 
   const [record, setRecord] = useState<CredentialRecord | null | undefined>(undefined);
   const [payload, setPayload] = useState<CredentialPayload | null>(null);
@@ -145,45 +134,44 @@ export function CredentialDetail() {
   const vc = payload?.vc ?? null;
   const claims = vc !== null ? claimsOf(vc) : null;
 
-  // TODO(N3): this action still runs the bbs-2023 derive/verify roundtrip and
-  // reports "Not verified" (gracefully) for the credkit credentials issued
-  // since N2 — the wallet cannot derive credkit presentations until N3
-  // rewires this to deriveProof/the receipt check (MIGRATION §12).
+  // The credkit holder receipt check (MIGRATION §6): recompute the whole
+  // issuance pipeline from the stored credential and verify the issuer's
+  // blind signature against this wallet's own re-derived link secret and the
+  // credential's stored blind. Green means "authentic, and bound to THIS
+  // wallet's secret" — a check only the holder can run, because only the
+  // holder has both halves.
   const verify = async () => {
-    if (vc === null || verifying) return;
+    if (vc === null || payload === null || masterSecret === null || verifying) return;
     setVerifying(true);
     setOutcome(null);
     try {
       const start = performance.now();
-      const derived = await deriveCredential({
+      const linkSecret = await deriveLinkSecret(masterSecret);
+      const secretProverBlind = scalarFromBase64Url(payload.secretProverBlind);
+      const verified = await verifyIssuedCredkitCredential({
         verifiableCredential: vc,
-        selectivePointers: MINIMAL_POINTERS,
-      });
-      inspect.emit({
-        label: "Derived proof created (selective disclosure)",
-        data: { selectivePointers: MINIMAL_POINTERS },
-      });
-      const result = await verifyCredential({
-        credential: derived,
-        ...(issuerDid(vc) !== undefined ? { expectedIssuer: issuerDid(vc) } : {}),
+        holderBinding: { linkSecret, secretProverBlind },
       });
       const ms = Math.round(performance.now() - start);
       inspect.emit({
-        label: "Derived proof verified",
-        data: { verified: result.verified, ms, ...(result.error !== undefined ? { error: result.error } : {}) },
+        label: "Holder receipt check re-run",
+        data: { verified, ms },
       });
       setOutcome({
-        verified: result.verified,
-        ...(result.error !== undefined ? { error: result.error } : {}),
+        verified,
+        ...(verified
+          ? {}
+          : {
+              error:
+                "The issuer's blind signature did not verify against this wallet's link secret and this credential's stored blind.",
+            }),
         ms,
-        derived,
       });
     } catch (err) {
       setOutcome({
         verified: false,
         error: describeError(err),
         ms: 0,
-        derived: { "@context": [], type: [] },
       });
     } finally {
       setVerifying(false);
@@ -230,7 +218,7 @@ export function CredentialDetail() {
                   {label}
                 </dt>
                 <dd
-                  className={`mt-1 text-sm ${key === "birthDateCommitment" || key === "document_number" ? "font-mono text-[13px]" : "font-medium"}`}
+                  className={`mt-1 text-sm ${key === "document_number" ? "font-mono text-[13px]" : "font-medium"}`}
                   title={typeof claims[key] === "string" ? (claims[key] as string) : undefined}
                 >
                   {formatClaim(key, claims[key])}
@@ -303,19 +291,9 @@ export function CredentialDetail() {
                 }`}
               >
                 {outcome.verified
-                  ? "A derived proof disclosing only the birthdate commitment was created and checked against the issuer's DID. The verifier learned nothing else."
+                  ? "The whole issuance pipeline was recomputed and the DMV's blind signature verified against this wallet's own link secret and this credential's stored blind — authentic, and bound to this wallet. Only the holder can run this check: no one else has both halves."
                   : outcome.error ?? "Verification failed."}
               </p>
-              {outcome.verified && (
-                <details className="mt-2">
-                  <summary className="cursor-pointer select-none text-xs text-muted hover:text-ink-dim">
-                    Derived credential (what a verifier would see)
-                  </summary>
-                  <div className="mt-2 max-h-80 overflow-y-auto rounded-xl bg-canvas p-3">
-                    <JsonTree value={outcome.derived} defaultOpen={false} />
-                  </div>
-                </details>
-              )}
             </div>
           )}
 

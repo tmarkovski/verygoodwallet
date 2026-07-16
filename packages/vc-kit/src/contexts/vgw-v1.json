@@ -1,10 +1,5 @@
 {
   "@context": {
-    "@protected": true,
-    "birthDateCommitment": "https://verygoodwallet.com/vocab#birthDateCommitment",
-    "zkAgeProof": {
-      "@id": "https://verygoodwallet.com/vocab#zkAgeProof",
-      "@type": "@json"
-    }
+    "@protected": true
   }
 }

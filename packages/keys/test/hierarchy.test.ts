@@ -2,20 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   ISSUANCE_POP_INFO_PREFIX,
   LINK_SECRET_INFO,
-  PRESENTER_INFO_PREFIX,
   PRF_EVAL_INPUT,
   VAULT_INFO,
   decryptJson,
   deriveIssuancePopSeed,
   deriveLinkSecret,
-  derivePresenterSeed,
   deriveVaultKey,
   describeHierarchy,
   encryptJson,
   fromHex,
   hkdfDerive,
   issuancePopInfo,
-  presenterInfo,
   previewSecret,
   toHex,
 } from "../src/index.js";
@@ -25,7 +22,6 @@ const MASTER = fromHex(
 );
 
 const DMV = "https://dmv.verygoodwallet.com";
-const SHOP = "https://shop.verygoodwallet.com";
 
 describe("domain-separation constants", () => {
   it("are exactly the protocol-mandated strings", () => {
@@ -33,62 +29,43 @@ describe("domain-separation constants", () => {
     expect(VAULT_INFO).toBe("vgw/v1/vault");
     expect(LINK_SECRET_INFO).toBe("vgw/v1/link-secret");
     expect(ISSUANCE_POP_INFO_PREFIX).toBe("vgw/v1/issuance-pop:");
-    expect(PRESENTER_INFO_PREFIX).toBe("vgw/v1/presenter:");
     expect(issuancePopInfo(DMV)).toBe(`vgw/v1/issuance-pop:${DMV}`);
-    expect(presenterInfo(SHOP)).toBe(`vgw/v1/presenter:${SHOP}`);
   });
 });
 
-describe("deriveIssuancePopSeed / derivePresenterSeed", () => {
-  it("match fixed test vectors (regression pin)", async () => {
+describe("deriveIssuancePopSeed", () => {
+  it("matches the fixed test vector (regression pin)", async () => {
     expect(toHex(await deriveIssuancePopSeed(MASTER, DMV))).toBe(
       "1f9e94085de66efb725b27c6181c43a883a9895f0311c1d2158b535d1626df70",
     );
-    expect(toHex(await derivePresenterSeed(MASTER, SHOP))).toBe(
-      "51bf08b2612ad66c37a31f7ad6b88752d33e44cba1f9eb35ce2d340664de698c",
-    );
   });
 
-  it("are deterministic", async () => {
+  it("is deterministic and 32 bytes", async () => {
     const a = await deriveIssuancePopSeed(MASTER, DMV);
     const b = await deriveIssuancePopSeed(MASTER, DMV);
     expect(toHex(a)).toBe(toHex(b));
+    expect(a.length).toBe(32);
   });
 
-  it("are 32 bytes", async () => {
-    expect((await deriveIssuancePopSeed(MASTER, DMV)).length).toBe(32);
-    expect((await derivePresenterSeed(MASTER, SHOP)).length).toBe(32);
-  });
-
-  it("differ across origins (pairwise separation)", async () => {
+  it("differs across origins (pairwise separation)", async () => {
     const dmv = await deriveIssuancePopSeed(MASTER, DMV);
     const other = await deriveIssuancePopSeed(
       MASTER,
       "https://other-issuer.example",
     );
     expect(toHex(dmv)).not.toBe(toHex(other));
-
-    const shop = await derivePresenterSeed(MASTER, SHOP);
-    const rentals = await derivePresenterSeed(
-      MASTER,
-      "https://rentals.verygoodwallet.com",
-    );
-    expect(toHex(shop)).not.toBe(toHex(rentals));
   });
 
-  it("differ across branches for the same origin (issuance-pop vs presenter)", async () => {
-    const issuancePop = await deriveIssuancePopSeed(MASTER, DMV);
-    const presenter = await derivePresenterSeed(MASTER, DMV);
-    expect(toHex(issuancePop)).not.toBe(toHex(presenter));
-  });
-
-  it("differs from the retired holder branch (new derivation, not a rename)", async () => {
+  it("differs from the retired holder and presenter branches (new derivation, not a rename)", async () => {
     // N2 replaced `vgw/v1/holder:<origin>` with `vgw/v1/issuance-pop:<origin>`
-    // (MIGRATION §6). A different info string MUST give a different seed —
-    // reusing the holder bytes would silently keep the old key alive.
+    // (MIGRATION §6), and N4 removed `vgw/v1/presenter:<origin>` outright.
+    // A different info string MUST give a different seed — reusing retired
+    // bytes would silently keep an old key alive under a new name.
     const issuancePop = await deriveIssuancePopSeed(MASTER, DMV);
     const legacyHolder = await hkdfDerive(MASTER, `vgw/v1/holder:${DMV}`);
+    const retiredPresenter = await hkdfDerive(MASTER, `vgw/v1/presenter:${DMV}`);
     expect(toHex(issuancePop)).not.toBe(toHex(legacyHolder));
+    expect(toHex(issuancePop)).not.toBe(toHex(retiredPresenter));
   });
 
   it("differ from the vault branch", async () => {
@@ -119,11 +96,10 @@ describe("deriveLinkSecret", () => {
     expect(deriveLinkSecret.length).toBe(1);
   });
 
-  it("differs from the vault, issuance-pop, and presenter branches", async () => {
+  it("differs from the vault and issuance-pop branches", async () => {
     const link = toHex(await deriveLinkSecret(MASTER));
     expect(link).not.toBe(toHex(await hkdfDerive(MASTER, VAULT_INFO)));
     expect(link).not.toBe(toHex(await deriveIssuancePopSeed(MASTER, DMV)));
-    expect(link).not.toBe(toHex(await derivePresenterSeed(MASTER, SHOP)));
   });
 
   it("differs across masters", async () => {
@@ -184,27 +160,33 @@ describe("previewSecret", () => {
 describe("describeHierarchy", () => {
   const origins = {
     issuerOrigins: [DMV],
-    verifierOrigins: [SHOP, "https://rentals.verygoodwallet.com"],
   };
 
   it("returns the full tree structure without a master (no previews)", async () => {
     const tree = await describeHierarchy(origins);
     expect(tree.info).toBe(PRF_EVAL_INPUT);
     expect(tree.preview).toBeUndefined();
-    expect(tree.children).toHaveLength(5);
+    expect(tree.children).toHaveLength(3);
 
     const infos = tree.children.map((node) => node.info);
     expect(infos).toEqual([
       VAULT_INFO,
       LINK_SECRET_INFO,
       issuancePopInfo(DMV),
-      presenterInfo(SHOP),
-      presenterInfo("https://rentals.verygoodwallet.com"),
     ]);
     for (const child of tree.children) {
       expect(child.preview).toBeUndefined();
       expect(child.children).toEqual([]);
       expect(child.label.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("has no per-verifier branch of any kind — the presenter key is retired, not rotated", async () => {
+    // The credkit presentation carries no holder identifier, so no
+    // presentation-side key exists to derive (MIGRATION §6, N4).
+    const tree = await describeHierarchy(origins);
+    for (const child of tree.children) {
+      expect(child.info).not.toContain("presenter");
     }
   });
 

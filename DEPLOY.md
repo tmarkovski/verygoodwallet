@@ -252,12 +252,14 @@ With both dev servers running (`pnpm dev:dmv`, `pnpm dev:shop`):
 VGW_E2E=1 pnpm --filter @vgw/shop test
 ```
 
-runs `apps/shop/worker/e2e.test.ts` — real issuance at the dev DMV, a real
-tier-1 presentation into the dev shop, the under-18 denial, a replay
-rejection against the live Durable Object, and the tier-2 flow: a real
-UltraHonk proof round-trips, the Worker records it, and the suite verifies
-the stored payload with the same `@vgw/zk` call the shop client makes.
-(Skipped without `VGW_E2E=1`.)
+runs `apps/shop/worker/e2e.test.ts` — the BUILT DMV Worker blind-issues a
+credkit DL, the suite runs the wallet-side crypto (holder binding, receipt
+check, params pinning, `presentGraph`) in-process, and the BUILT shop Worker
+verifies the WHOLE presentation server-side: tier-1 disclosure, the under-18
+prover fail-closed throw, a replay rejection against the live Durable
+Object, and the tier-2 range-proof round trip ending in one Worker verdict —
+no client-side verification step exists anymore. (Skipped without
+`VGW_E2E=1`.)
 
 ## Deploying the Utopia Wheels verifier (rentals)
 
@@ -268,8 +270,8 @@ Identical shape to the shop — one Hono OID4VP Worker + static UI +
 `TRUSTED_ISSUER_DID` discovery. What differs is only the policy: the rentals
 DCQL profile requires `given_name` + `family_name` + `document_number` in
 every claim_set alternative, and gates on **over-25** (age_over_25 flag /
-birth_date fallback / ZK predicate over the same birthdate commitment with
-`vgw_zk.years: 25`).
+birth_date fallback / `vgw_predicates` range proof over the hidden
+birth-date twin with a 25-year cutoff).
 
 The same consequences follow: rotating the DMV's `ISSUER_SEED` requires
 redeploying the rentals Worker too (its issuer pin is discovered at deploy
@@ -291,27 +293,13 @@ VGW_E2E=1 pnpm --filter @vgw/rentals test
 
 runs `apps/rentals/worker/e2e.test.ts` — the over-25 clearance with identity
 disclosed, the 22-year-old denial (over 18 is not over 25), a replay
-rejection, the tier-2 over-25 proof round trip, the live cutoff-policy
-rejection, and the M5 unlinkability exhibit end to end: one credential
-presented to both live verifiers, asserting each recorded a different
-pairwise presenter DID and that no disclosed value appears in both records.
+rejection, the tier-2 over-25 range-proof round trip, the live cutoff-policy
+rejection, and the unlinkability exhibit end to end: one credential
+presented to both live verifiers, asserting NEITHER recorded any holder
+identifier (the credkit presentation carries none) and that no disclosed
+value appears in both records.
 
-### ZK circuit artifacts (packages/zk)
-
-The tier-2 circuit ships as checked-in artifacts (`packages/zk/artifacts/`):
-the compiled Noir program and the UltraHonk verification key. After editing
-`packages/zk/circuit/` or bumping the pinned `@noir-lang/*`/`@aztec/bb.js`
-versions, regenerate with:
-
-```sh
-pnpm --filter @vgw/zk compile
-```
-
-A test recompiles the circuit and fails CI if the checked-in artifact is
-stale. Note the trust split baked into the design: the verifier Workers
-validate everything about a tier-2 presentation EXCEPT the UltraHonk proof
-(Workers cannot instantiate WASM from bytes, and bb.js wouldn't fit the free
-plan's 3 MiB script cap); the proof itself is verified by each verifier's
-client against the verification key bundled into its build. Redeploying the
-shop and rentals Workers after regenerating artifacts keeps prover and
-verifiers in agreement.
+(The pre-credkit "ZK circuit artifacts" section is gone with `packages/zk`:
+there is no circuit to compile, no verification key to pin, and no
+client-side verification step — credkit range proofs are pure JS and the
+whole verdict is computed in each verifier's Worker.)
