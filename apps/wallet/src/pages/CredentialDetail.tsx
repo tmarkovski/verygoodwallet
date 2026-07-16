@@ -18,6 +18,7 @@ import {
   type CredentialRecord,
 } from "../services/db";
 import { inspect } from "../inspector/events";
+import { cardFace } from "../services/meta";
 import { CredentialCard } from "../components/CredentialCard";
 import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
 import { JsonTree } from "../inspector/JsonTree";
@@ -220,7 +221,10 @@ export function CredentialDetail() {
       </Link>
 
       <div className="mx-auto max-w-md">
-        <CredentialCard meta={record.meta} />
+        <CredentialCard
+          meta={record.meta}
+          face={payload !== null ? cardFace(payload.vc) : undefined}
+        />
       </div>
 
       {decryptError !== null && (

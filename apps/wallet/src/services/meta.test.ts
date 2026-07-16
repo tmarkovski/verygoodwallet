@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { VerifiableCredential } from "@vgw/vc-kit";
 import {
+  cardFace,
   credentialKind,
   issuerDid,
   issuerDisplayName,
@@ -90,5 +91,65 @@ describe("metaFromCredential", () => {
     const { name: _name, ...rest } = BASE_VC;
     const meta = metaFromCredential(rest as VerifiableCredential);
     expect(meta.name).toBe("Driver's license");
+  });
+});
+
+describe("cardFace", () => {
+  it("builds the DL face: holder, document number, MM/YYYY expiry", () => {
+    const vc: VerifiableCredential = {
+      ...BASE_VC,
+      credentialSubject: {
+        driversLicense: {
+          given_name: "Avery",
+          family_name: "Fontaine",
+          document_number: "UDL-3F7K-9Q2M",
+          expiry_date: "2031-07-13T00:00:00Z",
+        },
+      },
+    };
+    expect(cardFace(vc)).toEqual({
+      holder: "AVERY FONTAINE",
+      fields: [
+        { label: "No.", value: "UDL-3F7K-9Q2M" },
+        { label: "Expires", value: "07/2031" },
+      ],
+    });
+  });
+
+  it("builds the resident face: holder, district, postal code", () => {
+    const vc: VerifiableCredential = {
+      ...BASE_VC,
+      type: ["VerifiableCredential", "UtopiaResidentRegistrationCredential"],
+      credentialSubject: {
+        type: ["Person", "UtopiaResident"],
+        givenName: "Avery",
+        familyName: "Fontaine",
+        districtName: "Port Azure",
+        stateFips: "11",
+        postalCode: "40125",
+      },
+    };
+    expect(cardFace(vc)).toEqual({
+      holder: "AVERY FONTAINE",
+      fields: [
+        { label: "District", value: "Port Azure" },
+        { label: "Postal", value: "40125" },
+      ],
+    });
+  });
+
+  it("omits missing halves instead of failing", () => {
+    const vc: VerifiableCredential = {
+      ...BASE_VC,
+      credentialSubject: { driversLicense: { given_name: "Avery" } },
+    };
+    expect(cardFace(vc)).toEqual({ holder: "AVERY", fields: [] });
+  });
+
+  it("returns null for unknown subject shapes", () => {
+    expect(cardFace(BASE_VC)).toBeNull();
+    expect(
+      cardFace({ ...BASE_VC, credentialSubject: undefined } as unknown as VerifiableCredential),
+    ).toBeNull();
   });
 });

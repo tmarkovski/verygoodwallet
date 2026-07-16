@@ -5,8 +5,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate } from "react-router";
+import { decryptJson } from "@vgw/keys";
 import { useSession } from "../session";
-import { listCredentials, type AccountRecord, type CredentialRecord } from "../services/db";
+import {
+  listCredentials,
+  type AccountRecord,
+  type CredentialPayload,
+  type CredentialRecord,
+} from "../services/db";
+import { cardFace, type CardFace } from "../services/meta";
 import { addDemoCredential } from "../services/demo";
 import { CredentialCard } from "../components/CredentialCard";
 import { VerifierViews } from "../components/VerifierViews";
@@ -138,6 +145,31 @@ function CredentialList() {
     void refresh();
   }, [refresh]);
 
+  // Card faces (holder + document fields) come from the DECRYPTED payloads,
+  // best-effort: with no vault key — or on any decrypt hiccup — the cards
+  // simply render their generic plates from plaintext meta.
+  const [faces, setFaces] = useState<Record<number, CardFace>>({});
+  useEffect(() => {
+    if (records === null || vaultKey === null) return;
+    let cancelled = false;
+    void (async () => {
+      const loaded: Record<number, CardFace> = {};
+      for (const record of records) {
+        try {
+          const payload = await decryptJson<CredentialPayload>(vaultKey, record.payload);
+          const face = cardFace(payload.vc);
+          if (face !== null) loaded[record.id] = face;
+        } catch {
+          // Face is a bonus — never fail the list over it.
+        }
+      }
+      if (!cancelled) setFaces(loaded);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [records, vaultKey]);
+
   const addDemo = async () => {
     if (accountId === undefined || masterSecret === null || vaultKey === null || busy) {
       return;
@@ -203,7 +235,7 @@ function CredentialList() {
                 to={`/credentials/${record.id}`}
                 className="block rounded-3xl transition-transform duration-300 ease-out hover:-translate-y-2 focus-visible:-translate-y-2 active:scale-[0.99]"
               >
-                <CredentialCard meta={record.meta} />
+                <CredentialCard meta={record.meta} face={faces[record.id]} />
               </Link>
             </li>
           ))}

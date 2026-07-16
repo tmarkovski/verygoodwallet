@@ -152,15 +152,17 @@ body {
  * Intaglio primitives.
  *
  * .guilloche — the credential-card face: two low-opacity engraved
- * line-fields (repeating radial rings from opposite corners) over a deep
- * petrol plate. Cards keep this dark face in BOTH color schemes, like
- * physical cards in a wallet, so the colors here are deliberately literal.
- * The two line inks are custom properties so `services/color.ts` can pick
- * an engraving tint per credential kind.
+ * line-fields over a dark plate. Cards keep a dark face in BOTH color
+ * schemes, like physical cards in a wallet, so the colors here are
+ * deliberately literal. Plate stops and line inks are custom properties
+ * so `services/color.ts` can give each document series its own face;
+ * the default geometry is the license's corner rosettes.
  */
 .guilloche {
   --guilloche-line-a: rgb(236 231 211 / 0.05);
   --guilloche-line-b: rgb(201 168 106 / 0.05);
+  --guilloche-plate-a: #143134;
+  --guilloche-plate-b: #0f2629;
   background:
     repeating-radial-gradient(
       circle at 115% -20%,
@@ -172,19 +174,40 @@ body {
       transparent 0 9px,
       var(--guilloche-line-b) 9px 10px
     ),
-    linear-gradient(150deg, #143134 0%, #0f2629 100%);
+    linear-gradient(150deg, var(--guilloche-plate-a) 0%, var(--guilloche-plate-b) 100%);
+}
+
+/*
+ * .guilloche-tide — the resident registration's engraving: shallow
+ * concentric arcs swelling from far above and below the card, a nautical
+ * chart's depth contours instead of the license's corner rosettes.
+ */
+.guilloche-tide {
+  background:
+    repeating-radial-gradient(
+      120% 90% at 50% -110%,
+      transparent 0 9px,
+      var(--guilloche-line-a) 9px 10px
+    ),
+    repeating-radial-gradient(
+      130% 100% at 50% 220%,
+      transparent 0 11px,
+      var(--guilloche-line-b) 11px 12px
+    ),
+    linear-gradient(150deg, var(--guilloche-plate-a) 0%, var(--guilloche-plate-b) 100%);
 }
 
 /*
  * .seal-authority — the red engraved seal, the mark of authority on card
- * faces and the verify-success proof moment. Size comes from the consumer.
+ * faces and the verify-success proof moment. Size comes from the consumer;
+ * `--seal-well` sinks the ring into whatever plate the seal sits on.
  */
 .seal-authority {
   border-radius: 50%;
   background: repeating-conic-gradient(#d64545 0 8deg, #b03636 8deg 16deg);
   opacity: 0.9;
   box-shadow:
-    inset 0 0 0 3px #0f2629,
+    inset 0 0 0 3px var(--seal-well, #0f2629),
     inset 0 0 0 4px #d64545;
 }
 

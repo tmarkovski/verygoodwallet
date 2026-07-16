@@ -41,3 +41,20 @@ describe("cardTheme", () => {
     expect(tints.size).toBe(4);
   });
 });
+
+describe("curated document series", () => {
+  it("gives the two DMV documents visibly different faces", () => {
+    const dl = cardTheme("Iso18013DriversLicenseCredential");
+    const resident = cardTheme("UtopiaResidentRegistrationCredential");
+    expect(dl.pattern).toBe("rosette");
+    expect(resident.pattern).toBe("tide");
+    expect(dl.plateA).not.toBe(resident.plateA);
+    expect(dl.lineA).not.toBe(resident.lineA);
+  });
+
+  it("falls back to the petrol rosette plate for unknown kinds", () => {
+    const theme = cardTheme("SomeFutureCredential");
+    expect(theme.pattern).toBe("rosette");
+    expect(theme.plateA).toBe("#143134");
+  });
+});

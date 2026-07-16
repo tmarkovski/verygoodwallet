@@ -60,6 +60,72 @@ export function issuerDid(vc: VerifiableCredential): string | undefined {
   return issuer?.id;
 }
 
+/** One short labelled value on a card face, e.g. `No. UDL-3F7K-9Q2M`. */
+export interface CardFaceField {
+  label: string;
+  value: string;
+}
+
+/**
+ * What a card face shows beyond the plaintext meta: the holder line and up
+ * to two document fields. Derived from the DECRYPTED credential — this is
+ * display data for an unlocked wallet, never stored in the clear, so a
+ * locked wallet still renders only the generic plate.
+ */
+export interface CardFace {
+  holder?: string;
+  fields: CardFaceField[];
+}
+
+const asString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.length > 0 ? value : undefined;
+
+/** "Avery" + "Fontaine" → "AVERY FONTAINE" (either half optional). */
+function holderLine(given: unknown, family: unknown): string | undefined {
+  const name = [asString(given), asString(family)].filter(Boolean).join(" ");
+  return name.length > 0 ? name.toUpperCase() : undefined;
+}
+
+/** ISO date(-time) → "MM/YYYY", the terse card-face expiry format. */
+function monthYear(value: unknown): string | undefined {
+  const match = typeof value === "string" ? /^(\d{4})-(\d{2})/.exec(value) : null;
+  return match !== null ? `${match[2]}/${match[1]}` : undefined;
+}
+
+/** Kind-specific face data for a decrypted credential (null = plate only). */
+export function cardFace(vc: VerifiableCredential): CardFace | null {
+  const subject = vc.credentialSubject;
+  if (subject === undefined || Array.isArray(subject)) return null;
+  const bag = subject as Record<string, unknown>;
+
+  // Utopia DL: the claims live under the driversLicense node (snake_case).
+  const dl = bag["driversLicense"];
+  if (typeof dl === "object" && dl !== null && !Array.isArray(dl)) {
+    const claims = dl as Record<string, unknown>;
+    const fields: CardFaceField[] = [];
+    const documentNumber = asString(claims["document_number"]);
+    if (documentNumber !== undefined) fields.push({ label: "No.", value: documentNumber });
+    const expires = monthYear(claims["expiry_date"]);
+    if (expires !== undefined) fields.push({ label: "Expires", value: expires });
+    const holder = holderLine(claims["given_name"], claims["family_name"]);
+    return holder !== undefined || fields.length > 0 ? { holder, fields } : null;
+  }
+
+  // Utopia Resident Registration: flat subject typed ['Person','UtopiaResident'].
+  const types = bag["type"];
+  if ((Array.isArray(types) ? types : [types]).includes("UtopiaResident")) {
+    const fields: CardFaceField[] = [];
+    const district = asString(bag["districtName"]);
+    if (district !== undefined) fields.push({ label: "District", value: district });
+    const postal = asString(bag["postalCode"]);
+    if (postal !== undefined) fields.push({ label: "Postal", value: postal });
+    const holder = holderLine(bag["givenName"], bag["familyName"]);
+    return holder !== undefined || fields.length > 0 ? { holder, fields } : null;
+  }
+
+  return null;
+}
+
 /** Derive the plaintext list metadata from a (signed) credential. */
 export function metaFromCredential(vc: VerifiableCredential): CredentialMeta {
   const kind = credentialKind(vc);
