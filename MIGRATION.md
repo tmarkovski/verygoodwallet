@@ -88,17 +88,21 @@ Every decision below has a reason; to overturn one, overturn the reason.
    verifier to issuer for the base showcases. It reuses existing issuer infrastructure and unlocks
    *both* the residency (set-membership) and cross-credential (link-secret) demos. Cross-issuer
    linking — the strongest form of FINDINGS §8 — is the stretch act D (Nightcap becomes an issuer).
-3. **The OID4VCI holder-binding proof becomes the credkit commitment-with-proof**, replacing the
-   EdDSA PoP JWT. The commitment is a proof of *knowledge* of the link secret, and blind issuance
-   binds the credential to that secret — so it subsumes the PoP's *binding* role. It does **not**
-   carry the issuer's `c_nonce`: credkit's `Commit` follows the IETF blind-BBS draft, whose proof
-   absorbs only the blind generators and the commitment points, no external nonce (verified in
-   `credkit/packages/bbs/src/blind.ts`, `blindChallenge`). Freshness/anti-replay rests on the
-   OID4VCI access token and the authorization-code flow that minted it — the standard `ldp_vc` basis
-   — and a replayed commitment buys nothing, since the credential it yields is bound to a secret only
-   the holder knows. (If a later flow ever needs the commitment to stand alone outside that channel,
-   `blindChallenge` can thread an external nonce; a spec divergence not worth taking now.) It is a
-   VGW-namespaced `proof_type` — non-standard, flagged honestly (as `vgw_zk` was).
+3. **Holder binding is the credkit commitment-with-proof, carried as an OID4VCI credential-request
+   extension — not a proprietary `proof_type`.** The commitment proves *knowledge* of the link
+   secret, and blind issuance binds the credential to it (the issuer never sees the secret). It does
+   **not** carry the issuer's `c_nonce`: credkit's `Commit` follows the IETF blind-BBS draft, whose
+   proof absorbs only the blind generators and the commitment points, no external nonce (verified in
+   `credkit/packages/bbs/src/blind.ts`, `blindChallenge`). So **binding and freshness are separate
+   concerns**, and only binding is settled here. Request freshness/anti-replay is decided at N2:
+   either **(a)** lean on the pre-authorized access token and send no PoP — a replayed commitment
+   buys nothing, since the credential it yields is bound to a secret only the holder knows — or
+   **(c)** keep the standard OID4VCI `proof_type: jwt` PoP on top. Because the commitment rides as an
+   extension field, **(c) is purely additive to (a)**: the binding handshake is byte-identical, (c)
+   only layers the standard PoP for real request liveness — and keeping the commitment *out* of the
+   `proof_type` slot is what preserves that (a proprietary proof_type would fork the wire shape and
+   foreclose (c)). Option **(b)** — threading a nonce into `blindChallenge` — is rejected: it breaks
+   the IETF `Commit` fixture fidelity that is a core credkit value (FINDINGS §1–3).
 4. **Land the core migration (N0–N4) before the new showcases (N5–N6).** N0–N4 are a strict upgrade
    of the existing age story; the new capabilities build on a stable base.
 5. **Consume credkit as published, versioned packages** (credkit becomes a **public repo**). VGW deps
@@ -119,9 +123,10 @@ one-statement VP — one API for both arities, and challenge/domain folding for 
 
 **Issue** (DMV Worker + wallet — replaces the PoP-JWT + Poseidon dance):
 ```ts
-// wallet: one secret for life, committed blindly — PoK of the secret; freshness from the OID4VCI token
-const binding = createHolderBinding();          // { linkSecret, commitmentWithProof, secretProverBlind }
-// → send binding.commitmentWithProof in the OID4VCI credential request
+// wallet: the ONE master-derived link secret, committed blindly — the SAME secret at every issuance,
+// or credentials won't link. Bare createHolderBinding() mints a FRESH random secret (issue.ts) — don't.
+const binding = createHolderBinding({ linkSecret: deriveLinkSecret(master) }); // { linkSecret, commitmentWithProof, secretProverBlind }
+// → send binding.commitmentWithProof as an OID4VCI credential-request extension (§3.3; freshness a/c at N2)
 
 // DMV Worker: blind-sign; the issuer never sees the secret
 const { verifiableCredential } = await issueCredential({
@@ -132,7 +137,8 @@ const { verifiableCredential } = await issueCredential({
   numericDeclarations: [{ pointer: "/credentialSubject/driversLicense/birth_date", encoder: "date1900" }],
   holderCommitment: binding.commitmentWithProof,
 });
-// wallet persists { verifiableCredential, linkSecret, secretProverBlind } encrypted in the vault
+// wallet persists { verifiableCredential, secretProverBlind } in the vault; secretProverBlind is
+// per-credential (random, not re-derivable). The link secret is re-derived from the PRF, not stored.
 ```
 
 **Present** (wallet — the three tiers collapse into one API; the N-credential path is new):
@@ -224,9 +230,14 @@ branching — the machinery exists. The shift:
   so there is no presenter signature and no per-verifier DID. The "each verifier sees a different DID"
   exhibit *upgrades* to "the verifier sees no identifier at all." Retire the branch, or keep it only
   for transport-level plumbing.
-- **Vault:** `secretProverBlind` joins `linkSecret` as must-persist material. Losing it bricks the
-  credential (credkit `blind.ts`), so the encrypted-IndexedDB + passkey-sync recovery story now
-  explicitly covers it.
+- **Threading & vault:** `deriveLinkSecret(master)` returns the **same** secret every session, and
+  VGW must feed *that* into every issuance (`createHolderBinding({ linkSecret })`). The bare
+  `createHolderBinding()` mints a fresh random secret per call (`issue.ts:48,57`) — which passes the
+  single-credential age demo but silently breaks cross-credential equality (showcase C) and the
+  one-secret-for-life property. So the link secret is re-derived from the PRF, never stored; the
+  per-credential must-persist item is `secretProverBlind` (random at each `commit`, not re-derivable —
+  losing it bricks that credential). The encrypted-IndexedDB + passkey-sync recovery story covers
+  `secretProverBlind`.
 
 ---
 
@@ -235,12 +246,14 @@ branching — the machinery exists. The shift:
 `@vgw/protocols` produces no proof material — it is wire types + a matcher + a PoP JWT. `ldp_vc`
 stays; `claimPathToPointer` (RFC-6901) stays. Concrete edits:
 
-- **`oid4vci.ts`** — the credential request's holder-binding proof changes from an EdDSA PoP JWT to
-  the credkit **commitment-with-proof** (a VGW-namespaced `proof_type`; decision §3.3). Remove
-  `CommitmentOpeningLike` and `vgw_commitment_opening` from `CredentialResponse` — no opening travels;
-  the secret is the holder's, blind-signed.
-- **`popJwt.ts`** — replaced by a commitment builder/verifier (issuer-side `commit`/`blindSign`
-  verification).
+- **`oid4vci.ts`** — the credential request gains a **holder-commitment extension field** carrying the
+  credkit commitment-with-proof (§3.3); binding leaves the standard `proof` slot untouched. Whether
+  that slot still carries a `proof_type: jwt` PoP (freshness) or is dropped is the N2 decision (§3.3,
+  a vs c). Remove `CommitmentOpeningLike` and `vgw_commitment_opening` from `CredentialResponse` — no
+  opening travels; the secret is the holder's, blind-signed.
+- **`popJwt.ts`** — kept under (c) (it *is* the freshness proof), removed under (a) — the N2 decision.
+  The commitment's builder/verifier (holder `commit` / issuer `blindSign`-verify) is added regardless:
+  it is the binding, orthogonal to the PoP.
 - **`oid4vp.ts`** — the predicate extension generalizes. `DcqlZkAgePredicate { predicate:"age_over",
   years, claim_id }` → a credkit predicate descriptor carrying range claims (`pointer, kind, bound,
   digits`), membership claims (`pointer`), equalities, and a **params reference** (hash + fetch URL).
@@ -316,8 +329,9 @@ state) as passing tests; B is largely a matter of pointing those at Utopia geogr
 unlinkability + opt-in linking); "each verifier sees a different DID" (→ "sees no identifier"); the
 `age_over` flags (→ tier-1 rung + staleness contrast).
 
-**Replaced:** vc-kit `bbs.ts`/`presentation.ts`/`keys.ts` crypto bodies; `popJwt.ts`;
-`deriveHolderSeed`/`derivePresenterSeed`; the `vgw_commitment_opening` issuance path.
+**Replaced:** vc-kit `bbs.ts`/`presentation.ts`/`keys.ts` crypto bodies; `popJwt.ts` (retired under
+freshness-option a, kept under c — §3.3); `deriveHolderSeed`/`derivePresenterSeed`; the
+`vgw_commitment_opening` issuance path.
 
 ---
 
@@ -353,7 +367,7 @@ encoder registry can be referenced/published openly rather than embedded per dep
 |---|---|
 | **N0** | ✅ Worker-viability proven under workerd (spike result below); consumption **decided** — publish credkit as public packages (§11). Remaining: credkit publish prerequisites, then VGW pins a version. Full `issueCredential`/`verifyProof` under workerd deferred to N2/N3 (needs a document loader + the pinned VP envelope) |
 | **N1** | Link secret in `@vgw/keys` (`deriveLinkSecret`); issuer key via `@credkit/bbs` `keyGen` |
-| **N2** | DMV reissues the DL with credkit + the `date1900` twin; OID4VCI carries the commitment-with-proof; drop Poseidon + opening; wallet persists `linkSecret`/`secretProverBlind` |
+| **N2** | DMV reissues the DL with credkit + the `date1900` twin; OID4VCI request carries the commitment-with-proof as an extension (freshness a-vs-c decided here, §3.3); drop Poseidon + opening; wallet threads the master-derived link secret and persists per-credential `secretProverBlind` |
 | **N3** | Wallet `deriveProof`; shop/rentals **server-side** `verifyProof`; generalize the DCQL predicate extension; publish range params; delete client bb.js |
 | **N4** | Rip out `packages/zk` + `commitment.ts`; retire the bbs-2023 / eddsa wrappers; reframe the exhibits |
 | **N5** | Resident Registration credential → residency set-membership (B) and cross-credential link secret (C) via `presentGraph`/`verifyGraph` |
@@ -404,6 +418,9 @@ risk. Spike harness kept under the session scratchpad (`credkit-spike/`), not co
 - Whether `credkit-bbs-sha-2026` or `-shake-2026` is the pinned era (once chosen, it is forever for
   cross-credential equality) — decided at credkit publish time (§11).
 - Whether credkit source-publishes (`main: src/index.ts`) or ships a built `dist` (§11).
+- OID4VCI request freshness (§3.3): rely on the pre-authorized access token alone (a), or keep the
+  standard `proof_type: jwt` PoP (c). Deferred to N2; the commitment-as-extension framing keeps it
+  additive, so nothing before N2 depends on the choice.
 - Credential status / revocation — unaddressed, and out of scope for the showcase as written. If it
   becomes needed, a status-list entry is an ordinary disclosable claim and can ride along as
   mandatory-disclosed content, but the mechanism (and its own correlation surface) is unspecified here.
@@ -423,7 +440,7 @@ keys from `@credkit/bbs`.
 - Encoders: `date1900` (xsd:date → days since 1900-01-01), `uint64` ([0, 2⁶⁴)).
 
 **Issue**
-- `createHolderBinding(options?) → HolderBinding { linkSecret, commitmentWithProof, secretProverBlind }` — holder-side; persist all three, losing `secretProverBlind` bricks the credential.
+- `createHolderBinding(options?) → HolderBinding { linkSecret, commitmentWithProof, secretProverBlind }` — holder-side. **Pass `{ linkSecret: deriveLinkSecret(master) }`**: the default mints a *fresh random* secret per call (`issue.ts:48,57`), which breaks cross-credential linking. `secretProverBlind` is per-credential and must be persisted (losing it bricks the credential); the link secret is re-derived from the PRF, not stored.
 - `issueCredential(IssueOptions) → { verifiableCredential }`, where `IssueOptions = { document, keyPair, verificationMethod, cryptosuite?, proofPurpose?, mandatoryPointers?, numericDeclarations?: {pointer, encoder}[], holderCommitment?: commitmentWithProof, documentLoader?, hmacKey? }`
 - `verifyIssuedCredential(ReceiptCheckOptions) → boolean`
 
@@ -471,9 +488,9 @@ keys from `@credkit/bbs`.
 | String | File (~line) | Change |
 |---|---|---|
 | `"ldp_vc"` | oid4vci.ts:43; oid4vp.ts:71, :301 | keep (credkit is still ldp_vc) |
-| `proof_type:"jwt"` | oid4vci.ts:88 | → credkit commitment-with-proof (VGW proof_type) |
+| `proof_type:"jwt"` | oid4vci.ts:88 | keep (freshness, option c) or drop (option a); binding rides a separate request extension — §3.3 |
 | `CommitmentOpeningLike`, `vgw_commitment_opening` | oid4vci.ts:97, :116 | remove |
-| `"openid4vci-proof+jwt"` / `"EdDSA"` | popJwt.ts:17, :131 | replace `popJwt` with commit/blindSign verify |
+| `"openid4vci-proof+jwt"` / `"EdDSA"` | popJwt.ts:17, :131 | keep (option c) or remove (option a); add commit/blindSign verify for binding regardless — §3.3 |
 | `"age_over"` | oid4vp.ts:58, :364 | generalize `DcqlZkAgePredicate` → range/membership/equality + params ref |
 | `claimPathToPointer` | dcql.ts:35 | keep (same RFC-6901 pointers) |
 | `"openid4vp-v1-unsigned"` | dcApi.ts:19 | keep |
