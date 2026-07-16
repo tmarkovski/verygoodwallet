@@ -267,8 +267,12 @@ branching — the machinery exists. The shift:
   single-credential age demo but silently breaks cross-credential equality (showcase C) and the
   one-secret-for-life property. So the link secret is re-derived from the PRF, never stored; the
   per-credential must-persist item is `secretProverBlind` (random at each `commit`, not re-derivable —
-  losing it bricks that credential). The encrypted-IndexedDB + passkey-sync recovery story covers
-  `secretProverBlind`.
+  losing it bricks that credential). Recovery needs its own mechanism: passkey/PRF sync regenerates the
+  **master** on a new device (so the vault key and the re-derived link secret come back), but it does
+  **not** move IndexedDB — the credentials and their non-derivable blinds live there and do not ride the
+  passkey. So a blind survives device loss only via an explicit **encrypted export/backup/sync of the
+  credential store**; encrypted-IndexedDB alone is at-rest protection on one device, not a cross-device
+  recovery channel. That export mechanism is unspecified here — an N2 design point (§13).
 
 ---
 
@@ -467,6 +471,11 @@ risk. Spike harness kept under the session scratchpad (`credkit-spike/`), not co
   binds the session and, under (c), the PoP key, which may require reopening option (b)'s rejected
   `blindChallenge` change and its fixture-fidelity cost. It applies under both (a) and (c); unspecified
   here — an N2 design point.
+- Credential-store backup / recovery (§6). `secretProverBlind` is random per `commit` and not
+  re-derivable, so losing it bricks the credential — and passkey/PRF sync moves the master, not
+  IndexedDB. A real cross-device story needs an explicit **encrypted export/backup/sync of the
+  credential store** (the blind travels inside it, scalar-encoded per §7). Mechanism, cadence, and its
+  correlation surface are unspecified here — an N2 design point.
 - Credential status / revocation — unaddressed, and out of scope for the showcase as written. If it
   becomes needed, a status-list entry is an ordinary disclosable claim and can ride along as
   mandatory-disclosed content, but the mechanism (and its own correlation surface) is unspecified here.
@@ -486,7 +495,7 @@ keys from `@credkit/bbs`.
 - Encoders: `date1900` (xsd:date → days since 1900-01-01), `uint64` ([0, 2⁶⁴)).
 
 **Issue**
-- `createHolderBinding(options?) → HolderBinding { linkSecret, commitmentWithProof, secretProverBlind }` — holder-side. **Pass `{ linkSecret: deriveLinkSecret(master) }`**: the default mints a *fresh random* secret per call (`issue.ts:48,57`), which breaks cross-credential linking. `secretProverBlind` is per-credential and must be persisted (losing it bricks the credential); the link secret is re-derived from the PRF, not stored.
+- `createHolderBinding(options?) → HolderBinding { linkSecret, commitmentWithProof, secretProverBlind }` — holder-side. **Pass `{ linkSecret: deriveLinkSecret(master) }`**: the default mints a *fresh random* secret per call (`issue.ts:48,57`), which breaks cross-credential linking. `secretProverBlind` is per-credential and must be persisted (losing it bricks the credential) — it is a **bigint scalar**, so scalar-encode it before `encryptJson` (§7 vault note); the link secret is re-derived from the PRF, not stored.
 - `issueCredential(IssueOptions) → { verifiableCredential }`, where `IssueOptions = { document, keyPair, verificationMethod, cryptosuite?, proofPurpose?, mandatoryPointers?, numericDeclarations?: {pointer, encoder}[], holderCommitment?: commitmentWithProof, documentLoader?, hmacKey? }`
 - `verifyIssuedCredential(ReceiptCheckOptions) → boolean`
 
@@ -543,7 +552,8 @@ keys from `@credkit/bbs`.
 
 **Keys edits**
 - `packages/keys/src/hierarchy.ts` — keep `PRF_EVAL_INPUT="vgw/v1/master-secret"`(~21); ADD `deriveLinkSecret(master)` under a new **non-origin-scoped** info `vgw/v1/link-secret`; REPLACE `deriveHolderSeed`(~76) with `deriveIssuancePopSeed(master, issuerOrigin)` under pairwise info `vgw/v1/issuance-pop:<issuer-origin>` when option (c) is selected; `derivePresenterSeed`(~87) is vestigial.
-- `packages/keys/src/vault.ts` — `encryptJson`/`decryptJson` must now also persist `{ linkSecret, secretProverBlind }`.
+- `packages/keys/src/vault.ts` — the persisted per-credential envelope is `{ verifiableCredential, secretProverBlind }` (**not** `linkSecret` — it is re-derived from the PRF, §6). Watch the encoding: `secretProverBlind` is a **bigint scalar** (`Scalar = bigint`, `credkit/packages/bbs/src/core.ts:18`), and `encryptJson` calls `JSON.stringify`, which *throws* on a bigint. Encode it at the persistence boundary — `i2osp(secretProverBlind, 32)` → base64url, reusing `@credkit/bbs`'s `i2osp`/`os2ip` (`utils.ts:25,38`) rather than a hand-rolled encoder — and `os2ip` + range-check (`< r`) on read. `encryptJson`/`decryptJson` themselves stay JSON-only; scalars never reach them raw.
+- `apps/wallet/src/services/db.ts` — credential-store **schema migration** (v2→v3): the stored payload today is the `encryptJson` output of `{ vc, commitmentOpening? }`; drop the Poseidon-era `commitmentOpening` and add the encoded `secretProverBlind`. Bump the `idb` version and add the upgrade path; decode/validate blinds on retrieval.
 
 **New (N5)**
 - `packages/vc-kit/src/credentials/utopia-resident.ts` — Utopia Resident Registration, DMV-issued, numeric declarations `stateFips` (uint64, set-membership) + `postalCode` (uint64, range); reuse `citizenship-v1/v3` contexts.
