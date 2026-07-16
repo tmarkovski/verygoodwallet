@@ -1,5 +1,5 @@
 /**
- * Where the tour's "now rent a car" CTA points. Unlike walletOrigin, a
+ * Where the tour's "rent a car" CTA points. Unlike walletOrigin, a
  * production default is safe here — the link carries no secrets, only the
  * tour's stop id. Flipped to the custom domain at the M6 cutover.
  */

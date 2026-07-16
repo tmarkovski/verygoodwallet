@@ -103,7 +103,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
       "Every claim sits under one BBS signature and can be disclosed or withheld per presentation.",
       "The quiet one is the birth date: alongside the visible claim, the DMV sealed a hidden numeric twin of it into the signature. The predicate tier proves statements about that twin — over 18, over 25, any cutoff — without ever showing the date.",
     ],
-    ctaLabel: "Go somewhere age-gated — The Nightcap",
+    ctaLabel: "Get carded — The Nightcap",
   },
   {
     id: "shop",
@@ -133,7 +133,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
       "One proven bit: over 18. No name, no birthday, no document number.",
       "Scroll the result panels: the shop's own server verified the whole presentation — signature, replay binding, range proof, one verdict — and what it filed away is the point: one bit, and no identifier that could ever meet another verifier's records.",
     ],
-    ctaLabel: "Now rent a car — Utopia Wheels",
+    ctaLabel: "Rent a car — Utopia Wheels",
   },
   {
     id: "rentals",
@@ -164,7 +164,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
       "The counter got a name and a license number — that's the rental business — plus one proven bit: over 25.",
       "And it learned those claims because it asked for them, not because the cryptography leaked them. Time for the punchline.",
     ],
-    ctaLabel: "See what they could compare — back to your wallet",
+    ctaLabel: "Punchline — your wallet",
   },
   {
     id: "finale",

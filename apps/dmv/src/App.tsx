@@ -33,8 +33,9 @@ interface OfferResponseBody {
   wallet_link?: string;
 }
 
-const INPUT_CLASS =
-  "mt-1.5 w-full rounded-xl border border-line-strong bg-raised px-4 py-2.5 text-sm text-ink placeholder:text-muted";
+const CONTROL_CLASS =
+  "w-full rounded-xl border border-line-strong bg-raised px-4 py-2.5 text-sm text-ink placeholder:text-muted";
+const INPUT_CLASS = `mt-1.5 ${CONTROL_CLASS}`;
 
 function Field({
   id,
@@ -293,19 +294,35 @@ export default function App() {
               ) : (
                 <>
                   <Field id="district" label="Home district">
-                    <select
-                      id="district"
-                      value={districtFips}
-                      onChange={(e) => applyDistrict(Number(e.target.value))}
-                      required
-                      className={INPUT_CLASS}
-                    >
-                      {UTOPIA_DISTRICTS.map((d) => (
-                        <option key={d.fips} value={d.fips}>
-                          {d.name} — {d.coastal ? "coastal" : "inland"} (district {d.fips})
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative mt-1.5">
+                      <select
+                        id="district"
+                        value={districtFips}
+                        onChange={(e) => applyDistrict(Number(e.target.value))}
+                        required
+                        className={`${CONTROL_CLASS} block appearance-none truncate pr-10`}
+                      >
+                        {UTOPIA_DISTRICTS.map((d) => (
+                          <option key={d.fips} value={d.fips}>
+                            {d.name} — {d.coastal ? "coastal" : "inland"} (district {d.fips})
+                          </option>
+                        ))}
+                      </select>
+                      <svg
+                        viewBox="0 0 16 16"
+                        aria-hidden="true"
+                        className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+                      >
+                        <path
+                          d="M4 6l4 4 4-4"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </div>
                   </Field>
                   <Field id="postal-code" label="Postal code">
                     <input

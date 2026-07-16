@@ -20,6 +20,7 @@ import { useSession } from "../session";
 import { decryptJson } from "@vgw/keys";
 import type { VerifiableCredential } from "@vgw/vc-kit";
 import { isInsecureIssuerOrigin } from "../services/issuance";
+import { DEMO_SITE_ORIGINS } from "../services/demoSites";
 import {
   compositePresentationSteps,
   compositeStatements,
@@ -113,6 +114,38 @@ function returnHref(redirectUri: string, tourStopId: string | undefined): string
   } catch {
     return redirectUri; // not an absolute URL — leave it untouched
   }
+}
+
+/**
+ * Cross-site link to the DMV for "you don't hold this credential" dead
+ * ends — opens in a new window so the pending request stays on this page.
+ */
+function DmvLink({ label }: { label: string }) {
+  return (
+    <a
+      href={DEMO_SITE_ORIGINS.dmv}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-baseline gap-1 text-ink underline decoration-accent/70 underline-offset-2 hover:decoration-accent"
+    >
+      {label}
+      <svg
+        viewBox="0 0 16 16"
+        aria-hidden="true"
+        className="h-3 w-3 shrink-0 self-center"
+      >
+        <path
+          d="M6.25 4H4.5A1.5 1.5 0 0 0 3 5.5v6A1.5 1.5 0 0 0 4.5 13h6a1.5 1.5 0 0 0 1.5-1.5V9.75M9.75 3H13v3.25M12.5 3.5 7.75 8.25"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      <span className="sr-only">(opens in a new window)</span>
+    </a>
+  );
 }
 
 function DisclosureList({ entries }: { entries: Record<string, unknown> }) {
@@ -486,39 +519,37 @@ export function Present() {
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">
           {preview.verifierName} has its answer
         </h1>
-        <div className="mt-6 rounded-3xl border border-line bg-surface p-6">
-          <p className="text-[13px] leading-relaxed text-ink-dim">
-            The proof was bound to this request's nonce and to{" "}
-            <span className="font-mono text-[12px]">{preview.verifierOrigin}</span>{" "}
-            — it cannot be replayed elsewhere — and it carried no holder key
-            or identifier of any kind. The inspector holds every message that
-            crossed the wire.
-          </p>
-          {composite && compositeStatementsResolved !== null ? (
-            <div className="mt-4 rounded-2xl border border-line bg-canvas p-4">
+        <p className="mt-3 text-[13px] leading-relaxed text-ink-dim">
+          The proof was bound to this request's nonce and to{" "}
+          <span className="font-mono text-[12px]">{preview.verifierOrigin}</span>{" "}
+          — it cannot be replayed elsewhere — and it carried no holder key
+          or identifier of any kind. The inspector holds every message that
+          crossed the wire.
+        </p>
+        {composite && compositeStatementsResolved !== null ? (
+          <div className="mt-6 rounded-3xl border border-line bg-surface p-5">
+            <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+              What was shared (one linked presentation)
+            </p>
+            <CompositeSections
+              statements={compositeStatementsResolved}
+              linked={compositeLinked}
+            />
+          </div>
+        ) : (
+          selected !== null && (
+            <div className="mt-6 rounded-3xl border border-line bg-surface p-5">
               <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
-                What was shared (one linked presentation)
+                What was disclosed (tier {tier})
               </p>
-              <CompositeSections
-                statements={compositeStatementsResolved}
-                linked={compositeLinked}
-              />
-            </div>
-          ) : (
-            selected !== null && (
-              <div className="mt-4 rounded-2xl border border-line bg-canvas p-4">
-                <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
-                  What was disclosed (tier {tier})
-                </p>
-                <div className="mt-2">
-                  <DisclosureList
-                    entries={disclosurePreview(tier, selected.vc, selected.match, predicate ?? undefined)}
-                  />
-                </div>
+              <div className="mt-2">
+                <DisclosureList
+                  entries={disclosurePreview(tier, selected.vc, selected.match, predicate ?? undefined)}
+                />
               </div>
-            )
-          )}
-        </div>
+            </div>
+          )
+        )}
         <div className="mt-5 flex gap-2">
           {outcome.redirectUri !== undefined && (
             <Button
@@ -608,6 +639,9 @@ export function Present() {
       ) : unanswerable !== null ? (
         <div className="mt-6 rounded-3xl border border-dashed border-line-strong p-5 text-sm leading-relaxed text-ink-dim">
           {unanswerable}
+          <p className="mt-3">
+            <DmvLink label="Open the Utopia DMV" />
+          </p>
         </div>
       ) : matches === null ? (
         <div className="flex justify-center pt-10 text-muted">
@@ -660,7 +694,8 @@ export function Present() {
           <span className="font-mono text-[12px]">
             {single!.query.meta?.type_values?.[0]?.join(", ") ?? "credential"}
           </span>
-          . Visit the Utopia DMV to be issued one, then open this link again.
+          . Visit the <DmvLink label="Utopia DMV" /> to be issued one, then
+          open this link again.
         </div>
       ) : (
         <>
