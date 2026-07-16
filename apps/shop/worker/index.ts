@@ -28,7 +28,9 @@ import {
   type PresentationRequest,
 } from "@vgw/protocols";
 import {
-  verifyPresentation,
+  summarizeCredkitPresentation,
+  verifyCredkitPresentation,
+  type ExpectedRangeClaim,
   type VerifiablePresentation,
 } from "@vgw/vc-kit";
 import {
@@ -37,11 +39,13 @@ import {
   type ShopBindings,
 } from "./env.js";
 import {
-  AGE_DCQL_QUERY,
   AGE_QUERY_ID,
+  buildAgeDcqlQuery,
   evaluateAgePolicy,
-  evaluateZkAgePolicy,
+  evaluateAgePredicatePolicy,
+  type OfferedRangeClaim,
 } from "./policy.js";
+import { CREDKIT_PARAMS_PATH, getRangeParams } from "./params.js";
 import type { SessionOutcome, SessionStatus } from "./sessions.js";
 
 export { VerificationSessions } from "./sessions.js";
@@ -62,11 +66,17 @@ export interface VerificationSessionBody {
   wallet_link?: string;
 }
 
-/** Payload inside the HMAC-signed OID4VP `state` value. */
+/**
+ * Payload inside the HMAC-signed OID4VP `state` value. The token is the
+ * verifier's memory (MIGRATION Appendix D.2): `predicates` restates, at
+ * response time, exactly the range claims THIS session offered — bound
+ * pinned at request time, never re-derived, never read from the wire.
+ */
 interface StateTokenPayload extends Record<string, unknown> {
   use: "vp-session";
   sessionId: string;
   nonce: string;
+  predicates: OfferedRangeClaim[];
 }
 
 /** Loopback origins only — a production verifier must not reflect arbitrary Origins into links. */
@@ -140,8 +150,9 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
     status,
   ];
 
-  // The wallet calls /oid4vp/response cross-origin; /api/* is for the shop
-  // UI but reflecting there too is harmless (no cookies, no ambient auth).
+  // The wallet calls /oid4vp/response cross-origin and fetches the params
+  // document cross-origin from the browser; /api/* is for the shop UI but
+  // reflecting there too is harmless (no cookies, no ambient auth).
   const publicCors = cors({
     origin: (origin) => origin,
     allowMethods: ["GET", "POST", "OPTIONS"],
@@ -149,14 +160,40 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
   });
   app.use("/oid4vp/*", publicCors);
   app.use("/api/*", publicCors);
+  app.use(CREDKIT_PARAMS_PATH, publicCors);
+
+  // The published proof alphabet (MIGRATION §8, D.3): one public artifact,
+  // fetched by every prover — a per-prover alphabet would be a tracking tag.
+  // Deterministically minted from the seed, so caching is purely a bandwidth
+  // courtesy; modest max-age keeps a seed rotation honest within an hour.
+  app.get(CREDKIT_PARAMS_PATH, async (c) => {
+    const { document } = await getRangeParams(c.env);
+    c.header("Cache-Control", "public, max-age=3600");
+    return c.json(document);
+  });
 
   app.post("/api/verification", async (c) => {
     const origin = new URL(c.req.url).origin;
     const sessionId = toBase64Url(globalThis.crypto.getRandomValues(new Uint8Array(12)));
     const nonce = toBase64Url(globalThis.crypto.getRandomValues(new Uint8Array(16)));
+
+    // Per-request query: the predicate bound is "18+ as of NOW", pinned into
+    // the signed state token so the response endpoint restates exactly what
+    // this session offered (Appendix D.2).
+    const { hash } = await getRangeParams(c.env);
+    const { query, offeredRangeClaims } = buildAgeDcqlQuery({
+      origin,
+      now: new Date(),
+      paramsHash: hash,
+    });
     const state = await mintSignedToken({
       secret: resolveTokenSecret(c.env),
-      payload: { use: "vp-session", sessionId, nonce } satisfies StateTokenPayload,
+      payload: {
+        use: "vp-session",
+        sessionId,
+        nonce,
+        predicates: offeredRangeClaims,
+      } satisfies StateTokenPayload,
       ttlSeconds: SESSION_TTL_SECONDS,
     });
 
@@ -168,7 +205,7 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
       response_uri: responseUri,
       nonce,
       state,
-      dcql_query: AGE_DCQL_QUERY,
+      dcql_query: query,
       client_metadata: { client_name: VERIFIER_DISPLAY_NAME },
     };
 
@@ -231,6 +268,7 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
         token: state,
       });
       if (session.use !== "vp-session") throw new Error("not a vp-session token");
+      if (!Array.isArray(session.predicates)) throw new Error("token carries no offer memory");
     } catch {
       return c.json(
         ...oauthError(400, "invalid_request", "state is invalid or expired"),
@@ -279,38 +317,92 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
       );
     }
 
-    // 4. Verify: VP wrapper (challenge = session nonce, domain = this
-    // endpoint's client_id) and every embedded credential against the
-    // trusted issuer. Then judge the disclosed claims.
+    // 4. Route-select, then verify — the whole check runs on this Worker
+    // (MIGRATION §8: credkit's verifier is pure JS, no WASM, no zk_pending).
+    // The DCQL query offered ALTERNATIVES (flag / dob / predicate), so peek
+    // at the envelope's claim COUNTS — counts only, no trust decisions — and
+    // restate the matching verifier-authored expectation set (Appendix D.2):
+    // the predicate route rebuilds bounds from the SIGNED TOKEN plus this
+    // isolate's own params; the disclosure route expects no claims; any
+    // other shape was never offered and fails.
     const origin = new URL(c.req.url).origin;
     const domain = `${REDIRECT_URI_CLIENT_ID_PREFIX}${origin}/oid4vp/response`;
-    const result = await verifyPresentation({
-      presentation: presentation as VerifiablePresentation,
-      challenge: session.nonce,
-      domain,
-      expectedIssuer,
-    });
 
-    // A zkAgeProof on the presentation selects the tier-2 policy path. The
-    // property is signature-covered (a VGW JSON-literal term), so after
-    // verifyPresentation succeeded it is exactly what the wallet signed.
-    const zkAgeProof = (presentation as VerifiablePresentation)["zkAgeProof"];
-    const verifiedCredentials = () => result.credentials.map((r) => r.credential);
-    const outcome: SessionOutcome = result.verified
-      ? {
-          ...(zkAgeProof !== undefined
-            ? evaluateZkAgePolicy(verifiedCredentials(), zkAgeProof)
-            : evaluateAgePolicy(verifiedCredentials())),
-          vpToken,
-          completedAt: Date.now(),
-        }
-      : {
+    const judge = async (): Promise<
+      Pick<SessionOutcome, "status" | "verdict" | "reason" | "disclosed" | "predicate">
+    > => {
+      let summary;
+      try {
+        summary = summarizeCredkitPresentation(presentation as VerifiablePresentation);
+      } catch (error) {
+        return {
+          status: "failed",
+          reason: `The presentation is not a credkit presentation envelope: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          disclosed: {},
+        };
+      }
+
+      const offered = session.predicates;
+      const predicateRoute =
+        offered.length > 0 &&
+        summary.rangeClaims === offered.length &&
+        summary.membershipClaims === 0 &&
+        summary.equalities === 0;
+      const disclosureRoute =
+        summary.rangeClaims === 0 && summary.membershipClaims === 0 && summary.equalities === 0;
+      if (!predicateRoute && !disclosureRoute) {
+        return {
+          status: "failed",
+          reason:
+            `The presentation carries ${summary.rangeClaims} range, ${summary.membershipClaims} ` +
+            `membership, and ${summary.equalities} equality claims — not a shape this session offered.`,
+          disclosed: {},
+        };
+      }
+
+      // Predicate expectations come from the signed token (the bound this
+      // session offered) + this isolate's own params object. If the params
+      // seed rotated since the request, the wire's paramsHash no longer
+      // matches — credkit fails that closed, which is the intended outcome
+      // for in-flight sessions across a rotation.
+      const { params } = await getRangeParams(c.env);
+      const expectedRangeClaims: ExpectedRangeClaim[] = predicateRoute
+        ? offered.map((claim) => ({
+            statement: 0,
+            pointer: claim.pointer,
+            kind: claim.kind,
+            bound: BigInt(claim.bound),
+            digits: claim.digits,
+            params,
+          }))
+        : [];
+
+      const result = await verifyCredkitPresentation({
+        verifiablePresentation: presentation as VerifiablePresentation,
+        expectedIssuerDids: [expectedIssuer],
+        challenge: session.nonce,
+        domain,
+        expectedRangeClaims,
+      });
+      if (!result.verified || result.documents === undefined) {
+        return {
           status: "failed",
           reason: result.error ?? "presentation verification failed",
           disclosed: {},
-          vpToken,
-          completedAt: Date.now(),
         };
+      }
+      return predicateRoute
+        ? evaluateAgePredicatePolicy(result.documents, offered)
+        : evaluateAgePolicy(result.documents);
+    };
+
+    const outcome: SessionOutcome = {
+      ...(await judge()),
+      vpToken,
+      completedAt: Date.now(),
+    };
 
     // 5. Record write-once; a second post for the same session is a replay.
     const stub = c.env.SESSIONS.get(c.env.SESSIONS.idFromName(session.sessionId));

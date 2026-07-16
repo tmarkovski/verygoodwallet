@@ -8,25 +8,23 @@
  * the identity claims, and only the AGE route varies — the demo's privacy
  * ladder applies to the age question alone:
  *
- *   identity + age_over_25 flag   (one bit, frozen at issuance)
- *   identity + birth_date         (fallback — discloses strictly the most)
- *   identity + commitment + ZK    (one bit, proven against TODAY's cutoff)
+ *   identity + age_over_25 flag       (one bit, frozen at issuance)
+ *   identity + birth_date             (fallback — discloses strictly the most)
+ *   identity + range predicate        (one bit, proven against TODAY's cutoff
+ *                                      over the HIDDEN birth_date twin)
  *
- * The teaching point vs the shop: the ZK proof is over the SAME committed
- * birthdate the shop's 18+ proof used — one commitment, any cutoff — while
- * everything else about the two visits (presenter DID, BBS proof bytes)
- * stays uncorrelatable.
+ * The teaching point vs the shop: the predicate proves a DIFFERENT cutoff
+ * (25, not 18) from the SAME hidden twin — any cutoff, live — while nothing
+ * about the two visits is correlatable: no presenter key, no commitment, and
+ * a per-presentation-randomized proof. Since N3 the whole check runs
+ * server-side (credkit needs no WASM): one verdict, no `zk_pending`.
  */
 
 import type { DcqlQuery } from "@vgw/protocols";
-import type { VerifiableCredential } from "@vgw/vc-kit";
-// Subpath imports only: pulling in @vgw/zk's root would drag the bb.js/noir
-// WASM stacks into the WORKER bundle (as lazy chunks, but uploaded and
-// counted all the same). These three modules are WASM-free by contract.
-import { assertAgeProofBundle } from "@vgw/zk/bundle";
-import { ageCutoffDays } from "@vgw/zk/cutoff";
-import { normalizeFieldHex } from "@vgw/zk/encoding";
-import type { SessionOutcome } from "./sessions.js";
+import { CREDKIT_PARAMS_PATH } from "@vgw/protocols";
+import { getEncoder, type VerifiableCredential } from "@vgw/vc-kit";
+import type { PredicateExhibit, SessionOutcome } from "./sessions.js";
+import { RANGE_PARAMS_BASE } from "./params.js";
 
 /** The single credential query id — key of this query's vp_token entry. */
 export const RENTAL_QUERY_ID = "utopia_dl_rental";
@@ -34,77 +32,135 @@ export const RENTAL_QUERY_ID = "utopia_dl_rental";
 /** The age threshold this rental counter gates on. */
 export const AGE_YEARS = 25;
 
-/**
- * Clock-skew tolerance for the proof's cutoff: the wallet computes "today
- * minus 25 years" on its own clock, which near midnight may run one day
- * ahead of the Worker's.
- */
-const CUTOFF_SKEW_DAYS = 1;
+/** Digits of the base-16 decomposition (16^4 days ≈ 179 years of range). */
+export const RANGE_DIGITS = 4;
 
 /** Path segments shared by all claims. */
 const LICENSE_PATH = ["credentialSubject", "driversLicense"] as const;
 
+/** The predicate's twin — must match the DL's issued numeric declaration. */
+export const BIRTH_DATE_POINTER = "/credentialSubject/driversLicense/birth_date";
+
 /** The identity claims every rental agreement needs, whatever the age route. */
 const IDENTITY_CLAIM_IDS = ["given_name", "family_name", "document_number"] as const;
 
-export const RENTAL_DCQL_QUERY: DcqlQuery = {
-  credentials: [
-    {
-      id: RENTAL_QUERY_ID,
-      format: "ldp_vc",
-      meta: {
-        type_values: [["VerifiableCredential", "Iso18013DriversLicenseCredential"]],
+const MS_PER_DAY = 86_400_000;
+const EPOCH_1900 = Date.UTC(1900, 0, 1);
+
+/**
+ * The cutoff DATE for "at least `years` old as of `now`": real calendar
+ * arithmetic (`Date.UTC` rolls Feb 29 over for free), never day-count year
+ * approximations. Anyone born ON or BEFORE this date has had their
+ * `years`th birthday.
+ */
+export function ageCutoffIso(years: number, now: Date): string {
+  const cutoff = new Date(
+    Date.UTC(now.getUTCFullYear() - years, now.getUTCMonth(), now.getUTCDate()),
+  );
+  return cutoff.toISOString().slice(0, 10);
+}
+
+/** Inverse of the `date1900` encoder, for the outcome exhibit. */
+export function date1900DaysToIso(days: bigint): string {
+  return new Date(EPOCH_1900 + Number(days) * MS_PER_DAY).toISOString().slice(0, 10);
+}
+
+/**
+ * One offered range claim in token-storable JSON (MIGRATION Appendix D.2):
+ * the response endpoint rebuilds its `verifyGraph` expectations from THIS —
+ * the verifier's own signed memory — never from the wire.
+ */
+export interface OfferedRangeClaim {
+  pointer: string;
+  kind: "greaterOrEqual" | "lessOrEqual";
+  /** Decimal string (bigint-safe; `JSON.stringify` chokes on bigints). */
+  bound: string;
+  digits: number;
+}
+
+/** What `buildRentalDcqlQuery` returns: the wire query + the signed-token memory. */
+export interface RentalDcqlOffer {
+  query: DcqlQuery;
+  /** The concrete claims offered, in wire order — travels inside the state token. */
+  offeredRangeClaims: OfferedRangeClaim[];
+}
+
+/**
+ * Build the per-request DCQL query. Per-request because the predicate bound
+ * is "25+ as of NOW": the cutoff is pinned at request time, rides inside the
+ * signed state token, and is restated verbatim at the response — no
+ * re-derivation drift, no clock-skew window.
+ */
+export function buildRentalDcqlQuery(options: {
+  origin: string;
+  now: Date;
+  /** base64url SHA-256 of this isolate's published range-params octets. */
+  paramsHash: string;
+}): RentalDcqlOffer {
+  const cutoffIso = ageCutoffIso(AGE_YEARS, options.now);
+  const bound = getEncoder("date1900").encode(cutoffIso).toString();
+  // Older = smaller day number, so "25 or older" is birth_date <= cutoff.
+  const kind = "lessOrEqual" as const;
+
+  const query: DcqlQuery = {
+    credentials: [
+      {
+        id: RENTAL_QUERY_ID,
+        format: "ldp_vc",
+        meta: {
+          type_values: [["VerifiableCredential", "Iso18013DriversLicenseCredential"]],
+        },
+        claims: [
+          { id: "given_name", path: [...LICENSE_PATH, "given_name"] },
+          { id: "family_name", path: [...LICENSE_PATH, "family_name"] },
+          { id: "document_number", path: [...LICENSE_PATH, "document_number"] },
+          // No `values` filter on the flag: the counter wants to LEARN the
+          // value, not steer under-25 wallets into disclosing their birth date.
+          { id: "age_flag", path: [...LICENSE_PATH, "age_over_25"] },
+          { id: "dob", path: [...LICENSE_PATH, "birth_date"] },
+        ],
+        // Identity rides in every alternative; the wallet's DEFAULT is the
+        // first satisfiable set, and the predicate route is the holder's
+        // opt-in via the tier picker.
+        claim_sets: [
+          ["given_name", "family_name", "document_number", "age_flag"],
+          ["given_name", "family_name", "document_number", "dob"],
+        ],
+        vgw_predicates: {
+          params_uri: `${options.origin}${CREDKIT_PARAMS_PATH}`,
+          range: [
+            {
+              path: [...LICENSE_PATH, "birth_date"],
+              kind,
+              bound,
+              digits: RANGE_DIGITS,
+              params_hash: options.paramsHash,
+            },
+          ],
+          // The predicate route still discloses the rental agreement's
+          // identity claims — the privacy ladder applies to the AGE question.
+          claim_set: [...IDENTITY_CLAIM_IDS],
+        },
       },
-      claims: [
-        { id: "given_name", path: [...LICENSE_PATH, "given_name"] },
-        { id: "family_name", path: [...LICENSE_PATH, "family_name"] },
-        { id: "document_number", path: [...LICENSE_PATH, "document_number"] },
-        // No `values` filter on the flag: the counter wants to LEARN the
-        // value, not steer under-25 wallets into disclosing their birth date.
-        { id: "age_flag", path: [...LICENSE_PATH, "age_over_25"] },
-        { id: "dob", path: [...LICENSE_PATH, "birth_date"] },
-        { id: "commitment", path: [...LICENSE_PATH, "birthDateCommitment"] },
-      ],
-      // Identity rides in every alternative; the wallet's DEFAULT is the
-      // first satisfiable set, and the ZK route (last) is the holder's
-      // opt-in via the tier picker — proving costs seconds.
-      claim_sets: [
-        ["given_name", "family_name", "document_number", "age_flag"],
-        ["given_name", "family_name", "document_number", "dob"],
-        ["given_name", "family_name", "document_number", "commitment"],
-      ],
-      vgw_zk: { predicate: "age_over", years: AGE_YEARS, claim_id: "commitment" },
-    },
-  ],
-};
+    ],
+  };
+
+  return {
+    query,
+    offeredRangeClaims: [{ pointer: BIRTH_DATE_POINTER, kind, bound, digits: RANGE_DIGITS }],
+  };
+}
 
 type PolicyOutcome = Pick<
   SessionOutcome,
-  "status" | "verdict" | "reason" | "disclosed" | "zk"
+  "status" | "verdict" | "reason" | "disclosed" | "predicate"
 >;
 
 /**
- * Judge the verified credentials against the rental policy. Only called
- * with credentials whose proofs already verified — this is pure claims
- * logic plus (for tier 2) the zkAgeProof's public-input bindings.
- *
- * For tier-2 responses the Worker checks everything EXCEPT the UltraHonk
- * proof itself: bb.js instantiates WASM from bytes at runtime, which the
- * Workers runtime prohibits, and its WASM alone would exhaust the free
- * plan's script budget — so the final cryptographic check runs in the
- * rentals client (and in Node for the e2e suite), against the same
- * checked-in verification key. Hence `zk_pending`, never `allowed`, from
- * the ZK branch here.
+ * Identity first: whatever the age route, the rental agreement needs the
+ * driver's name and license number. Returns undefined when satisfied.
  */
-export function evaluateRentalPolicy(
-  credentials: VerifiableCredential[],
-  zkAgeProof: unknown,
-  now: Date = new Date(),
-): PolicyOutcome {
-  const disclosed = disclosedLicenseClaims(credentials);
-
-  // 1. Identity first: whatever the age route, the rental agreement needs
-  // the driver's name and license number.
+function identityFailure(disclosed: Record<string, unknown>): PolicyOutcome | undefined {
   for (const field of IDENTITY_CLAIM_IDS) {
     if (typeof disclosed[field] !== "string" || disclosed[field] === "") {
       return {
@@ -114,11 +170,59 @@ export function evaluateRentalPolicy(
       };
     }
   }
+  return undefined;
+}
 
-  // 2. The age gate, by route.
-  if (zkAgeProof !== undefined) {
-    return evaluateZkRoute(disclosed, zkAgeProof, now);
+/**
+ * Judge a predicate-route response: `verifyCredkitPresentation` already
+ * proved — server-side, cryptographically — that the HIDDEN birth_date twin
+ * satisfies the restated bound. The identity disclosures are still enforced
+ * here (all routes need them); the age question itself cost one live bit.
+ */
+export function evaluateRentalPredicatePolicy(
+  credentials: VerifiableCredential[],
+  offered: OfferedRangeClaim[],
+): PolicyOutcome {
+  const disclosed = disclosedLicenseClaims(credentials);
+  const identity = identityFailure(disclosed);
+  if (identity !== undefined) return identity;
+
+  const claim = offered[0];
+  if (claim === undefined) {
+    // Unreachable: the route is only selected when the token offered claims.
+    return {
+      status: "failed",
+      reason: "No offered predicate to judge this presentation against.",
+      disclosed,
+    };
   }
+  const cutoffIso = date1900DaysToIso(BigInt(claim.bound));
+  const predicate: PredicateExhibit = { ...claim, cutoffIso };
+  return {
+    status: "verified",
+    verdict: "allowed",
+    reason:
+      `The presentation proves birth_date on or before ${cutoffIso} — at least ${AGE_YEARS} years old ` +
+      `against THIS request's cutoff, verified entirely on the Worker. The counter learned the driver's ` +
+      `identity plus one live bit: no birthdate, no issuance-frozen flag, and no correlation handle ` +
+      `beyond the identity values the rental agreement itself requires.`,
+    disclosed,
+    predicate,
+  };
+}
+
+/**
+ * Judge the verified credentials against the rental policy (the disclosure
+ * routes). Only called with credentials whose proofs already verified —
+ * this is pure claims logic.
+ */
+export function evaluateRentalPolicy(
+  credentials: VerifiableCredential[],
+  now: Date = new Date(),
+): PolicyOutcome {
+  const disclosed = disclosedLicenseClaims(credentials);
+  const identity = identityFailure(disclosed);
+  if (identity !== undefined) return identity;
 
   const ageFlag = disclosed["age_over_25"];
   if (ageFlag === true) {
@@ -164,101 +268,8 @@ export function evaluateRentalPolicy(
 
   return {
     status: "failed",
-    reason: "The presentation disclosed neither age_over_25, birth_date, nor a ZK age proof.",
+    reason: "The presentation disclosed neither age_over_25 nor birth_date.",
     disclosed,
-  };
-}
-
-/**
- * The tier-2 route: the presentation disclosed the birthdate commitment
- * (alongside the identity claims) and carried a `zkAgeProof` bundle,
- * signature-covered by the VP wrapper, which already verified.
- *
- * What IS checked here, because the client shouldn't have to re-derive it:
- * - the bundle is well-formed (shape, sizes, known scheme/circuit),
- * - its commitment equals the BBS-disclosed `birthDateCommitment` — the
- *   link between "a proof about SOME birthdate" and "THE birthdate the DMV
- *   signed for this credential",
- * - its threshold is this counter's policy threshold (25, not the shop's
- *   18 — same commitment, different cutoff), and
- * - its cutoff is at most today's cutoff (older is stricter, newer would
- *   shrink the required age), with one day of clock-skew tolerance.
- */
-function evaluateZkRoute(
-  disclosed: Record<string, unknown>,
-  zkAgeProof: unknown,
-  now: Date,
-): PolicyOutcome {
-  let bundle;
-  try {
-    ({ bundle } = assertAgeProofBundle(zkAgeProof));
-  } catch (error) {
-    return {
-      status: "failed",
-      reason: error instanceof Error ? error.message : "malformed zkAgeProof",
-      disclosed,
-    };
-  }
-
-  const disclosedCommitment = disclosed["birthDateCommitment"];
-  if (typeof disclosedCommitment !== "string") {
-    return {
-      status: "failed",
-      reason:
-        "The presentation carries a zkAgeProof but does not disclose the birthDateCommitment it must be proven against.",
-      disclosed,
-    };
-  }
-  let signedCommitment: string;
-  try {
-    signedCommitment = normalizeFieldHex(disclosedCommitment);
-  } catch {
-    return {
-      status: "failed",
-      reason: "The disclosed birthDateCommitment is not a hex field element.",
-      disclosed,
-    };
-  }
-  if (bundle.commitment !== signedCommitment) {
-    return {
-      status: "failed",
-      reason:
-        "The zkAgeProof's commitment is not the birthDateCommitment the issuer signed — the proof is about some other birthdate.",
-      disclosed,
-    };
-  }
-
-  if (bundle.years !== AGE_YEARS) {
-    return {
-      status: "failed",
-      reason: `The zkAgeProof proves an age_over_${bundle.years} predicate; this counter requires age_over_${AGE_YEARS}.`,
-      disclosed,
-    };
-  }
-
-  const maxCutoff = ageCutoffDays(AGE_YEARS, now) + CUTOFF_SKEW_DAYS;
-  if (bundle.cutoffDays > maxCutoff) {
-    return {
-      status: "failed",
-      reason: `The zkAgeProof's cutoff (day ${bundle.cutoffDays}) is later than today's age_over_${AGE_YEARS} cutoff (day ${maxCutoff - CUTOFF_SKEW_DAYS}) — it would prove less than ${AGE_YEARS} years.`,
-      disclosed,
-    };
-  }
-
-  return {
-    status: "verified",
-    verdict: "zk_pending",
-    reason:
-      "Signatures, issuer, identity claims, and the proof's public-input bindings verified on the Worker; the UltraHonk proof itself is verified by the rentals client (the free-tier edge runtime cannot run the WASM verifier — see the inspector).",
-    disclosed,
-    zk: {
-      scheme: bundle.scheme,
-      circuit: bundle.circuit,
-      years: bundle.years,
-      cutoffDays: bundle.cutoffDays,
-      commitment: bundle.commitment,
-      proof: bundle.proof,
-    },
   };
 }
 

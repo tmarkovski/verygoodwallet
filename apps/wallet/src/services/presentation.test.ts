@@ -1,129 +1,156 @@
 /**
- * Wallet presentation flow tests — the crypto is real (BBS derive, Ed25519
- * presentation signature); only fetch and the credential store are stubbed.
- * The final assertion closes the loop: what `presentCredential` POSTs must
- * verify under the SAME checks the shop Worker runs (`verifyPresentation`
- * with the session's challenge/domain and a pinned issuer).
+ * Wallet presentation flow tests — the crypto is real (credkit blind-issued
+ * credentials, `presentGraph` selective disclosure + range proofs, holder
+ * binding to the master-derived link secret); only fetch is stubbed. The
+ * final assertion closes the loop: what `presentCredential` POSTs must
+ * verify under the SAME policy facade the shop/rentals Workers run
+ * (`verifyCredkitPresentation` with the session's challenge/domain, the
+ * pinned issuer, and the verifier-restated range claims).
+ *
+ * The predicate cutoffs are FROZEN (18+ / 25+ as of 2026-07-16): a range
+ * proof depends only on the bound, never the wall clock, so Jamie
+ * (1996-03-14) passes and Noa (2009-11-02) fails these bounds forever.
  */
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   buildUtopiaDriversLicense,
-  generateBbsKeyPair,
-  signCredential,
-  verifyPresentation,
-  type BbsKeyPair,
+  createHolderBinding,
+  generateCredkitBbsKeyPair,
+  getEncoder,
+  issueCredkitCredential,
+  mintSeededRangeParams,
+  rangeParamsHashBase64Url,
+  rangeParamsToBase64Url,
+  summarizeCredkitPresentation,
+  verifyCredkitPresentation,
+  UTOPIA_DL_NUMERIC_DECLARATIONS,
+  type CredkitBbsKeyPair,
+  type HolderBinding,
+  type RangeParams,
   type VerifiableCredential,
   type VerifiablePresentation,
 } from "@vgw/vc-kit";
 import {
+  matchDcqlCredentialQuery,
   presentationRequestToParams,
+  type CredkitParamsDocument,
   type DcqlQuery,
   type PresentationRequest,
 } from "@vgw/protocols";
-import { createCommitment, daysSinceEpoch } from "@vgw/keys";
-import { verifyAgeProof } from "@vgw/zk";
+import { deriveLinkSecret, scalarToBase64Url } from "@vgw/keys";
 import {
   disclosurePreview,
+  hasEmbeddedSubjectId,
   matchCredentials,
   parsePresentParams,
+  predicateOption,
   presentCredential,
   presentationSteps,
   previewPresentationRequest,
   tierPointers,
-  zkAgeOption,
+  type DisclosureTier,
 } from "./presentation";
-import type { CommitmentOpening, CredentialRecord } from "./db";
+import type { CredentialPayload, CredentialRecord } from "./db";
 
 const ISSUER_SEED = new Uint8Array(32).fill(21);
 const MASTER_SECRET = new Uint8Array(32).fill(22);
 
 const RESPONSE_URI = "https://shop.example/oid4vp/response";
 const CLIENT_ID = `redirect_uri:${RESPONSE_URI}`;
+const PARAMS_URI = "https://shop.example/.well-known/credkit-params";
+const REDIRECT_BACK = "https://shop.example/?session=abc";
 
-const DCQL: DcqlQuery = {
-  credentials: [
-    {
-      id: "utopia_dl_age",
-      format: "ldp_vc",
-      meta: {
-        type_values: [["VerifiableCredential", "Iso18013DriversLicenseCredential"]],
-      },
-      claims: [
-        { id: "age_flag", path: ["credentialSubject", "driversLicense", "age_over_18"] },
-        { id: "dob", path: ["credentialSubject", "driversLicense", "birth_date"] },
-      ],
-      claim_sets: [["age_flag"], ["dob"]],
-    },
-  ],
-};
+const LICENSE_PATH = ["credentialSubject", "driversLicense"] as const;
+const DOB_POINTER = "/credentialSubject/driversLicense/birth_date";
 
-/** The shop's M4 shape: the ladder of alternatives plus the ZK predicate. */
-const ZK_DCQL: DcqlQuery = {
-  credentials: [
-    {
-      ...DCQL.credentials[0]!,
-      claims: [
-        ...DCQL.credentials[0]!.claims!,
-        {
-          id: "commitment",
-          path: ["credentialSubject", "driversLicense", "birthDateCommitment"],
-        },
-      ],
-      claim_sets: [["age_flag"], ["dob"], ["commitment"]],
-      vgw_zk: { predicate: "age_over", years: 18, claim_id: "commitment" },
-    },
-  ],
-};
+/** Frozen cutoffs (see the module note): 18+ / 25+ as of 2026-07-16. */
+const CUTOFF_18_ISO = "2008-07-16";
+const CUTOFF_25_ISO = "2001-07-16";
+const BOUND_18 = getEncoder("date1900").encode(CUTOFF_18_ISO).toString();
+const BOUND_25 = getEncoder("date1900").encode(CUTOFF_25_ISO).toString();
 
-/**
- * The rentals M5 shape: identity claims required alongside every age route,
- * so the ZK claim_set carries name + license number WITH the commitment.
- */
-const RENTAL_ZK_DCQL: DcqlQuery = {
-  credentials: [
-    {
-      id: "utopia_dl_rental",
-      format: "ldp_vc",
-      meta: {
-        type_values: [["VerifiableCredential", "Iso18013DriversLicenseCredential"]],
-      },
-      claims: [
-        { id: "given_name", path: ["credentialSubject", "driversLicense", "given_name"] },
-        { id: "family_name", path: ["credentialSubject", "driversLicense", "family_name"] },
-        {
-          id: "document_number",
-          path: ["credentialSubject", "driversLicense", "document_number"],
-        },
-        { id: "age_flag", path: ["credentialSubject", "driversLicense", "age_over_25"] },
-        { id: "dob", path: ["credentialSubject", "driversLicense", "birth_date"] },
-        {
-          id: "commitment",
-          path: ["credentialSubject", "driversLicense", "birthDateCommitment"],
-        },
-      ],
-      claim_sets: [
-        ["given_name", "family_name", "document_number", "age_flag"],
-        ["given_name", "family_name", "document_number", "dob"],
-        ["given_name", "family_name", "document_number", "commitment"],
-      ],
-      vgw_zk: { predicate: "age_over", years: 25, claim_id: "commitment" },
-    },
-  ],
-};
+interface IssuedFixture {
+  vc: VerifiableCredential;
+  binding: HolderBinding;
+}
 
-function request(overrides?: Partial<PresentationRequest>): PresentationRequest {
-  return {
-    response_type: "vp_token",
-    response_mode: "direct_post",
-    client_id: CLIENT_ID,
-    response_uri: RESPONSE_URI,
-    nonce: "test-nonce-1",
-    state: "opaque-state-token",
-    dcql_query: DCQL,
-    client_metadata: { client_name: "The Nightcap" },
-    ...overrides,
+let issuer: CredkitBbsKeyPair;
+/** The wallet's ONE link secret — re-derived by presentCredential from MASTER_SECRET. */
+let linkSecret: Uint8Array;
+/** Jamie (1996-03-14; passes 18+ and 25+), unlinkable shape (no subject id). */
+let adult: IssuedFixture;
+/** Noa (2009-11-02; fails 18+) — the fail-closed prover beat. */
+let minor: IssuedFixture;
+/** Jamie again, with an embedded subject id — kept to pin its consequences. */
+let identified: IssuedFixture;
+/** The verifier's published proof alphabet + its wire encodings. */
+let params: RangeParams;
+let paramsHash: string;
+let paramsDocument: CredkitParamsDocument;
+
+beforeAll(async () => {
+  issuer = generateCredkitBbsKeyPair(ISSUER_SEED);
+  linkSecret = await deriveLinkSecret(MASTER_SECRET);
+
+  const issue = async (input?: {
+    birthDate?: string;
+    subjectId?: string;
+  }): Promise<IssuedFixture> => {
+    const binding = createHolderBinding({ linkSecret });
+    const vc = await issueCredkitCredential({
+      credential: buildUtopiaDriversLicense({
+        givenName: "JAMIE",
+        familyName: "VOSS",
+        birthDate: input?.birthDate ?? "1996-03-14",
+        documentNumber: "F111222333",
+        issuer: { id: issuer.controller, name: "Utopia DMV" },
+        validFrom: "2026-01-01T00:00:00Z",
+        validUntil: "2032-01-01T00:00:00Z",
+        ...(input?.subjectId !== undefined ? { subjectId: input.subjectId } : {}),
+      }),
+      keyPair: issuer,
+      numericDeclarations: UTOPIA_DL_NUMERIC_DECLARATIONS,
+      holderCommitment: binding.commitmentWithProof,
+    });
+    return { vc, binding };
   };
+
+  [adult, minor, identified] = await Promise.all([
+    issue(),
+    issue({ birthDate: "2009-11-02" }),
+    issue({ subjectId: "did:key:z6MkHolderExample" }),
+  ]);
+
+  params = mintSeededRangeParams({
+    seed: "shop-params-seed",
+    dst: "VGW-TEST-RANGE-PARAMS-V1",
+    base: 16,
+  });
+  paramsHash = await rangeParamsHashBase64Url(params);
+  paramsDocument = {
+    version: 1,
+    suite: "credkit-bbs-sha-2026",
+    range: { base: 16, params: rangeParamsToBase64Url(params), hash: paramsHash },
+  };
+}, 120_000);
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+/** The v3 vault envelope, encoded exactly as the issuance path persists it. */
+function v3Payload(fixture: IssuedFixture): CredentialPayload {
+  return {
+    version: 3,
+    vc: fixture.vc,
+    secretProverBlind: scalarToBase64Url(fixture.binding.secretProverBlind),
+  };
+}
+
+/** The pre-N2 envelope shape — no version, no blind (re-issuance is the only fix). */
+function legacyPayload(vc: VerifiableCredential): CredentialPayload {
+  return { vc } as unknown as CredentialPayload;
 }
 
 function record(id: number): CredentialRecord {
@@ -135,67 +162,155 @@ function record(id: number): CredentialRecord {
   };
 }
 
-let issuer: BbsKeyPair;
-/** The current DMV shape: no subject id (unlinkable by default). */
-let signedVc: VerifiableCredential;
-/** The pre-M3 shape: subject id embedded — kept to pin its consequences. */
-let legacyVc: VerifiableCredential;
-/** The M4 shape: committed birthdate signed in, opening kept in the vault. */
-let zkVc: VerifiableCredential;
-let opening: CommitmentOpening;
-
-beforeAll(async () => {
-  issuer = await generateBbsKeyPair(ISSUER_SEED);
-  const birthDate = "1988-04-19";
-  const commitment = createCommitment(daysSinceEpoch(birthDate));
-  opening = {
-    value: daysSinceEpoch(birthDate),
-    blinding: commitment.blinding,
-    commitment: commitment.commitment,
+/** The shop's N3 query: age alternatives + the range predicate, claim_set []. */
+function shopDcql(overrides?: { paramsUri?: string; paramsHash?: string }): DcqlQuery {
+  return {
+    credentials: [
+      {
+        id: "utopia_dl_age",
+        format: "ldp_vc",
+        meta: {
+          type_values: [["VerifiableCredential", "Iso18013DriversLicenseCredential"]],
+        },
+        claims: [
+          { id: "age_flag", path: [...LICENSE_PATH, "age_over_18"] },
+          { id: "dob", path: [...LICENSE_PATH, "birth_date"] },
+        ],
+        claim_sets: [["age_flag"], ["dob"]],
+        vgw_predicates: {
+          params_uri: overrides?.paramsUri ?? PARAMS_URI,
+          range: [
+            {
+              path: [...LICENSE_PATH, "birth_date"],
+              kind: "lessOrEqual",
+              bound: BOUND_18,
+              digits: 4,
+              params_hash: overrides?.paramsHash ?? paramsHash,
+            },
+          ],
+          // The shop needs one bit, not a name.
+          claim_set: [],
+        },
+      },
+    ],
   };
-  const input = {
-    givenName: "JAMIE",
-    familyName: "VOSS",
-    birthDate,
-    documentNumber: "F111222333",
-    issuer: { id: issuer.controller, name: "Utopia DMV" },
-    validFrom: "2026-01-01T00:00:00Z",
-    validUntil: "2032-01-01T00:00:00Z",
-  } as const;
-  [signedVc, legacyVc, zkVc] = await Promise.all([
-    signCredential({ credential: buildUtopiaDriversLicense(input), keyPair: issuer }),
-    signCredential({
-      credential: buildUtopiaDriversLicense({
-        ...input,
-        subjectId: "did:key:z6MkHolderExample",
-      }),
-      keyPair: issuer,
-    }),
-    signCredential({
-      credential: buildUtopiaDriversLicense({
-        ...input,
-        birthDateCommitment: commitment.commitment,
-      }),
-      keyPair: issuer,
-    }),
-  ]);
-}, 60_000);
+}
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
+/**
+ * The rentals N3 shape: identity claims required alongside every age route,
+ * so the predicate claim_set carries name + license number WITH the proof.
+ */
+function rentalDcql(): DcqlQuery {
+  return {
+    credentials: [
+      {
+        id: "utopia_dl_rental",
+        format: "ldp_vc",
+        meta: {
+          type_values: [["VerifiableCredential", "Iso18013DriversLicenseCredential"]],
+        },
+        claims: [
+          { id: "given_name", path: [...LICENSE_PATH, "given_name"] },
+          { id: "family_name", path: [...LICENSE_PATH, "family_name"] },
+          { id: "document_number", path: [...LICENSE_PATH, "document_number"] },
+          { id: "age_flag", path: [...LICENSE_PATH, "age_over_25"] },
+          { id: "dob", path: [...LICENSE_PATH, "birth_date"] },
+        ],
+        claim_sets: [
+          ["given_name", "family_name", "document_number", "age_flag"],
+          ["given_name", "family_name", "document_number", "dob"],
+        ],
+        vgw_predicates: {
+          params_uri: PARAMS_URI,
+          range: [
+            {
+              path: [...LICENSE_PATH, "birth_date"],
+              kind: "lessOrEqual",
+              bound: BOUND_25,
+              digits: 4,
+              params_hash: paramsHash,
+            },
+          ],
+          claim_set: ["given_name", "family_name", "document_number"],
+        },
+      },
+    ],
+  };
+}
+
+function request(overrides?: Partial<PresentationRequest>): PresentationRequest {
+  return {
+    response_type: "vp_token",
+    response_mode: "direct_post",
+    client_id: CLIENT_ID,
+    response_uri: RESPONSE_URI,
+    nonce: "test-nonce-1",
+    state: "opaque-state-token",
+    dcql_query: shopDcql(),
+    client_metadata: { client_name: "The Nightcap" },
+    ...overrides,
+  };
+}
+
+interface FetchLog {
+  /** GET requests (the params document fetches), by URL. */
+  gets: string[];
+  /** direct_post captures. */
+  posts: { url: string; body: URLSearchParams }[];
+}
+
+/**
+ * Stub fetch as the two endpoints this flow touches: GET params document,
+ * POST direct_post. Overridable per test for the failure paths.
+ */
+function stubFetch(options?: {
+  paramsResponse?: () => Response;
+  postResponse?: () => Response;
+}): FetchLog {
+  const log: FetchLog = { gets: [], posts: [] };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const method = (
+        init?.method ?? (input instanceof Request ? input.method : "GET")
+      ).toUpperCase();
+      if (method === "GET") {
+        log.gets.push(url);
+        return options?.paramsResponse?.() ?? Response.json(paramsDocument);
+      }
+      log.posts.push({ url, body: new URLSearchParams(String(init?.body ?? "")) });
+      return options?.postResponse?.() ?? Response.json({ redirect_uri: REDIRECT_BACK });
+    }),
+  );
+  return log;
+}
+
+/** Parse the posted vp_token and return the (single) presentation for a query. */
+function postedPresentation(log: FetchLog, queryId: string): VerifiablePresentation {
+  expect(log.posts).toHaveLength(1);
+  const vpToken = JSON.parse(log.posts[0]!.body.get("vp_token")!) as Record<
+    string,
+    VerifiablePresentation[]
+  >;
+  const vp = vpToken[queryId]?.[0];
+  expect(vp).toBeDefined();
+  return vp!;
+}
 
 describe("parsePresentParams", () => {
   it("returns missing for an empty query string", () => {
     expect(parsePresentParams(new URLSearchParams())).toEqual({ kind: "missing" });
   });
 
-  it("parses a valid request round-tripped through params", () => {
-    const params = presentationRequestToParams(request());
-    const parsed = parsePresentParams(params);
+  it("parses a valid request (with vgw_predicates) round-tripped through params", () => {
+    const parsed = parsePresentParams(presentationRequestToParams(request()));
     expect(parsed.kind).toBe("request");
     if (parsed.kind !== "request") return;
     expect(parsed.request.nonce).toBe("test-nonce-1");
+    const predicates = parsed.request.dcql_query.credentials[0]?.vgw_predicates;
+    expect(predicates?.params_uri).toBe(PARAMS_URI);
+    expect(predicates?.range?.[0]?.bound).toBe(BOUND_18);
   });
 
   it("reports why a malformed request is invalid", () => {
@@ -222,8 +337,11 @@ describe("previewPresentationRequest", () => {
 });
 
 describe("matchCredentials", () => {
-  it("finds the stored license as a candidate via the age flag", () => {
-    const result = matchCredentials([{ record: record(1), payload: { vc: signedVc } }], request());
+  it("finds the stored v3 license as a candidate via the age flag", () => {
+    const result = matchCredentials(
+      [{ record: record(1), payload: v3Payload(adult) }],
+      request(),
+    );
     expect(result.queryId).toBe("utopia_dl_age");
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]?.match.claims[0]?.pointer).toBe(
@@ -231,172 +349,247 @@ describe("matchCredentials", () => {
     );
   });
 
+  it("skips pre-credkit envelopes: no blind, not a candidate (re-issuance is the fix)", () => {
+    const result = matchCredentials(
+      [
+        { record: record(1), payload: legacyPayload(adult.vc) },
+        { record: record(2), payload: v3Payload(adult) },
+      ],
+      request(),
+    );
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.record.id).toBe(2);
+  });
+
   it("rejects multi-credential queries loudly", () => {
+    const base = shopDcql();
     const twoQueries: DcqlQuery = {
-      credentials: [DCQL.credentials[0]!, { ...DCQL.credentials[0]!, id: "second" }],
+      credentials: [base.credentials[0]!, { ...base.credentials[0]!, id: "second" }],
     };
     expect(() =>
-      matchCredentials([{ record: record(1), payload: { vc: signedVc } }], request({ dcql_query: twoQueries })),
+      matchCredentials(
+        [{ record: record(1), payload: v3Payload(adult) }],
+        request({ dcql_query: twoQueries }),
+      ),
     ).toThrow(/exactly one credential query/);
+  });
+
+  it("rejects requests demanding cross-credential equalities (reserved N5) loudly", () => {
+    const withEqualities: DcqlQuery = {
+      ...shopDcql(),
+      vgw_equalities: [
+        [
+          { query: "utopia_dl_age", link_secret: true },
+          { query: "utopia_dl_age", link_secret: true },
+        ],
+      ],
+    };
+    expect(() =>
+      matchCredentials(
+        [{ record: record(1), payload: v3Payload(adult) }],
+        request({ dcql_query: withEqualities }),
+      ),
+    ).toThrow(/vgw_equalities/);
   });
 });
 
 describe("tiers", () => {
   it("tier 1 discloses only the matched claim; tier 0 the whole subject", () => {
-    const { candidates } = matchCredentials([{ record: record(1), payload: { vc: signedVc } }], request());
+    const { candidates } = matchCredentials(
+      [{ record: record(1), payload: v3Payload(adult) }],
+      request(),
+    );
     const match = candidates[0]!.match;
     expect(tierPointers(1, match)).toEqual([
       "/credentialSubject/driversLicense/age_over_18",
     ]);
     expect(tierPointers(0, match)).toEqual(["/credentialSubject"]);
 
-    const tier1 = disclosurePreview(1, signedVc, match);
+    const tier1 = disclosurePreview(1, adult.vc, match);
     expect(tier1).toEqual({ age_over_18: true });
 
-    const tier0 = disclosurePreview(0, signedVc, match);
-    expect(tier0["birth_date"]).toBe("1988-04-19");
+    const tier0 = disclosurePreview(0, adult.vc, match);
+    expect(tier0["birth_date"]).toBe("1996-03-14");
     expect(tier0["given_name"]).toBe("JAMIE");
     expect(tier0["subject id"]).toBeUndefined();
   });
 
-  it("previews the embedded subject id at EVERY tier for legacy credentials", () => {
-    // bbs-2023 reveals node ids structurally: selecting any subject claim
-    // drags credentialSubject.id along. The consent screen must say so.
-    const { candidates } = matchCredentials([{ record: record(1), payload: { vc: legacyVc } }], request());
+  it("previews the embedded subject id at EVERY tier for identified credentials", () => {
+    // Node ids are revealed structurally: selecting any subject claim drags
+    // credentialSubject.id along. The consent screen must say so.
+    const { candidates } = matchCredentials(
+      [{ record: record(1), payload: v3Payload(identified) }],
+      request(),
+    );
     const match = candidates[0]!.match;
-    expect(disclosurePreview(1, legacyVc, match)["subject id"]).toBe(
+    expect(hasEmbeddedSubjectId(identified.vc)).toBe(true);
+    expect(hasEmbeddedSubjectId(adult.vc)).toBe(false);
+    expect(disclosurePreview(1, identified.vc, match)["subject id"]).toBe(
       "did:key:z6MkHolderExample",
     );
-    expect(disclosurePreview(0, legacyVc, match)["subject id"]).toBe(
+    expect(disclosurePreview(0, identified.vc, match)["subject id"]).toBe(
       "did:key:z6MkHolderExample",
     );
+  });
+
+  it("presentationSteps adds the params fetch only for tier 2", () => {
+    expect(presentationSteps(1).map((s) => s.id)).toEqual([
+      "deriving-presentation",
+      "posting",
+    ]);
+    expect(presentationSteps(2).map((s) => s.id)).toEqual([
+      "fetching-params",
+      "deriving-presentation",
+      "posting",
+    ]);
   });
 });
 
-describe("zkAgeOption", () => {
-  const zkQuery = () => ZK_DCQL.credentials[0]!;
+describe("predicateOption", () => {
+  const shopQuery = () => shopDcql().credentials[0]!;
+  const adultCandidate = () => ({ vc: adult.vc, payload: v3Payload(adult) });
 
-  it("is available when the request, credential, and vault opening line up", () => {
-    const option = zkAgeOption(zkQuery(), { vc: zkVc, payload: { vc: zkVc, commitmentOpening: opening } });
+  it("is available when the requested twin is declared by the credential's own base proof", () => {
+    const option = predicateOption(shopQuery(), adultCandidate());
     expect(option.available).toBe(true);
     if (!option.available) return;
-    expect(option.years).toBe(18);
-    expect(option.pointer).toBe("/credentialSubject/driversLicense/birthDateCommitment");
-    expect(option.commitment).toBe(opening.commitment);
-    // The shop's ZK claim_set is the commitment alone.
-    expect(option.pointers).toEqual([option.pointer]);
-    expect(option.disclosed).toEqual({ birthDateCommitment: opening.commitment });
+    expect(option.paramsUri).toBe(PARAMS_URI);
+    expect(option.range).toHaveLength(1);
+    const claim = option.range[0]!;
+    expect(claim.pointer).toBe(DOB_POINTER);
+    expect(claim.encoder).toBe("date1900");
+    expect(claim.kind).toBe("lessOrEqual");
+    expect(claim.bound).toBe(BOUND_18);
+    expect(claim.digits).toBe(4);
+    // The consent line comes from the DECLARED encoder, not verifier prose.
+    expect(claim.description).toMatch(/birth_date on or before 2008-07-16/);
+    expect(claim.description).toMatch(/at least \d+ years old/);
+    // The shop's claim_set is empty: the proofs disclose nothing.
+    expect(option.pointers).toEqual([]);
+    expect(option.disclosed).toEqual({});
   });
 
-  it("rentals shape: the ZK claim_set carries identity claims alongside the commitment", () => {
-    const option = zkAgeOption(RENTAL_ZK_DCQL.credentials[0]!, {
-      vc: zkVc,
-      payload: { vc: zkVc, commitmentOpening: opening },
-    });
+  it("rentals shape: the predicate claim_set carries identity claims alongside the proof", () => {
+    const option = predicateOption(rentalDcql().credentials[0]!, adultCandidate());
     expect(option.available).toBe(true);
     if (!option.available) return;
-    expect(option.years).toBe(25);
+    expect(option.range[0]?.description).toMatch(/on or before 2001-07-16/);
     expect(option.pointers).toEqual([
       "/credentialSubject/driversLicense/given_name",
       "/credentialSubject/driversLicense/family_name",
       "/credentialSubject/driversLicense/document_number",
-      "/credentialSubject/driversLicense/birthDateCommitment",
     ]);
     expect(option.disclosed).toEqual({
       given_name: "JAMIE",
       family_name: "VOSS",
       document_number: "F111222333",
-      birthDateCommitment: opening.commitment,
     });
+
     // Tier 2 discloses exactly that set; the preview names the proven bit.
     const { candidates } = matchCredentials(
-      [{ record: record(1), payload: { vc: zkVc, commitmentOpening: opening } }],
-      request({ dcql_query: RENTAL_ZK_DCQL }),
+      [{ record: record(1), payload: v3Payload(adult) }],
+      request({ dcql_query: rentalDcql() }),
     );
     expect(tierPointers(2, candidates[0]!.match, option)).toEqual(option.pointers);
-    const preview = disclosurePreview(2, zkVc, candidates[0]!.match, option);
+    const preview = disclosurePreview(2, adult.vc, candidates[0]!.match, option);
     expect(preview["given_name"]).toBe("JAMIE");
-    expect(preview["age_over_25"]).toMatch(/zero knowledge/);
-    expect(preview["birth_date"]).toBeUndefined();
+    expect(preview["birth_date"]).toMatch(/proven, not shown/);
+    expect(preview["age_over_25"]).toBeUndefined();
   });
 
-  it("is unavailable when the credential lacks a claim the ZK set requires", () => {
-    const query = structuredClone(RENTAL_ZK_DCQL.credentials[0]!);
+  it("is unavailable when the verifier didn't ask for predicates", () => {
+    const query = { ...shopQuery() };
+    delete query.vgw_predicates;
+    const option = predicateOption(query, adultCandidate());
+    expect(option).toMatchObject({
+      available: false,
+      reason: expect.stringMatching(/doesn't request predicate proofs/),
+    });
+  });
+
+  it("is unavailable for set-membership requests (reserved N5)", () => {
+    const query = structuredClone(shopQuery());
+    query.vgw_predicates = {
+      params_uri: PARAMS_URI,
+      membership: [
+        { path: [...LICENSE_PATH, "issuing_authority"], set_id: "coastal", params_hash: "x" },
+      ],
+    };
+    const option = predicateOption(query, adultCandidate());
+    expect(option).toMatchObject({
+      available: false,
+      reason: expect.stringMatching(/membership/),
+    });
+  });
+
+  it("is unavailable when the claimed pointer is not a declared twin", () => {
+    const query = structuredClone(shopQuery());
+    query.vgw_predicates!.range = [
+      {
+        path: [...LICENSE_PATH, "document_number"],
+        kind: "lessOrEqual",
+        bound: "1",
+        digits: 4,
+        params_hash: paramsHash,
+      },
+    ];
+    const option = predicateOption(query, adultCandidate());
+    expect(option).toMatchObject({
+      available: false,
+      reason: expect.stringMatching(/no hidden numeric twin for "document_number".*re-issue/i),
+    });
+  });
+
+  it("is unavailable for credentials without a credkit base proof", () => {
+    const unsigned = buildUtopiaDriversLicense({
+      givenName: "JAMIE",
+      familyName: "VOSS",
+      birthDate: "1996-03-14",
+      documentNumber: "F111222333",
+      issuer: { id: issuer.controller, name: "Utopia DMV" },
+    });
+    const option = predicateOption(shopQuery(), {
+      vc: unsigned,
+      payload: legacyPayload(unsigned),
+    });
+    expect(option).toMatchObject({
+      available: false,
+      reason: expect.stringMatching(/predates the credkit upgrade.*re-issue/i),
+    });
+  });
+
+  it("is unavailable when the credential lacks a claim_set claim", () => {
+    const query = structuredClone(rentalDcql().credentials[0]!);
     query.claims!.push({
       id: "middle_name",
-      path: ["credentialSubject", "driversLicense", "middle_name"],
+      path: [...LICENSE_PATH, "middle_name"],
     });
-    query.claim_sets = [["middle_name", "commitment"]];
-    const option = zkAgeOption(query, {
-      vc: zkVc,
-      payload: { vc: zkVc, commitmentOpening: opening },
-    });
+    query.vgw_predicates!.claim_set = ["middle_name"];
+    const option = predicateOption(query, adultCandidate());
     expect(option).toMatchObject({
       available: false,
       reason: expect.stringMatching(/middle_name/),
     });
   });
-
-  it("is unavailable when the verifier didn't ask for a predicate", () => {
-    const option = zkAgeOption(DCQL.credentials[0]!, {
-      vc: zkVc,
-      payload: { vc: zkVc, commitmentOpening: opening },
-    });
-    expect(option).toMatchObject({ available: false, reason: expect.stringMatching(/verifier/) });
-  });
-
-  it("is unavailable for credentials without a commitment", () => {
-    const option = zkAgeOption(zkQuery(), { vc: signedVc, payload: { vc: signedVc } });
-    expect(option).toMatchObject({ available: false, reason: expect.stringMatching(/re-issue/i) });
-  });
-
-  it("is unavailable when the stored opening mismatches the signed commitment", () => {
-    const foreign = createCommitment(daysSinceEpoch("1990-01-01"));
-    const option = zkAgeOption(zkQuery(), {
-      vc: zkVc,
-      payload: {
-        vc: zkVc,
-        commitmentOpening: {
-          value: daysSinceEpoch("1990-01-01"),
-          blinding: foreign.blinding,
-          commitment: foreign.commitment,
-        },
-      },
-    });
-    expect(option).toMatchObject({ available: false, reason: expect.stringMatching(/different commitment/) });
-  });
-
-  it("presentationSteps adds the proving phase only for tier 2", () => {
-    expect(presentationSteps(1).map((s) => s.id)).not.toContain("proving");
-    expect(presentationSteps(2).map((s) => s.id)).toContain("proving");
-  });
 });
 
 describe("presentCredential", () => {
-  function capturePost() {
-    const calls: { url: string; body: URLSearchParams }[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        calls.push({
-          url: String(input),
-          body: new URLSearchParams(String(init?.body ?? "")),
-        });
-        return Response.json({ redirect_uri: "https://shop.example/?session=abc" });
-      }),
-    );
-    return calls;
-  }
-
-  async function run(tier: 0 | 1) {
-    const req = request();
+  async function run(
+    tier: DisclosureTier,
+    options?: {
+      dcql?: DcqlQuery;
+      fixture?: IssuedFixture;
+      fetch?: Parameters<typeof stubFetch>[0];
+    },
+  ) {
+    const req = request(options?.dcql !== undefined ? { dcql_query: options.dcql } : {});
     const { queryId, candidates } = matchCredentials(
-      [{ record: record(1), payload: { vc: signedVc } }],
+      [{ record: record(1), payload: v3Payload(options?.fixture ?? adult) }],
       req,
     );
-    const calls = capturePost();
+    const log = stubFetch(options?.fetch);
     const steps: string[] = [];
-    const result = await presentCredential({
+    const result = presentCredential({
       request: req,
       queryId,
       candidate: candidates[0]!,
@@ -404,302 +597,366 @@ describe("presentCredential", () => {
       masterSecret: MASTER_SECRET.slice(),
       onStep: (step) => steps.push(step),
     });
-    return { req, calls, steps, result };
+    return { req, queryId, log, steps, result };
   }
 
   it(
-    "produces a direct_post the verifier's own checks accept (tier 1)",
+    "tier 1 produces a direct_post the verifier's own facade accepts — and carries NO holder identifier",
     async () => {
-      const { req, calls, steps, result } = await run(1);
+      const { req, log, steps, result } = await run(1);
+      const outcome = await result;
 
-      expect(steps).toEqual([
-        "deriving-presenter",
-        "deriving-disclosure",
-        "signing-presentation",
-        "posting",
-      ]);
-      expect(result.redirectUri).toBe("https://shop.example/?session=abc");
+      expect(steps).toEqual(["deriving-presentation", "posting"]);
+      expect(outcome.redirectUri).toBe(REDIRECT_BACK);
+      expect(log.gets).toHaveLength(0); // no params fetch below tier 2
+      expect(log.posts[0]?.url).toBe(RESPONSE_URI);
+      expect(log.posts[0]?.body.get("state")).toBe(req.state);
 
-      expect(calls).toHaveLength(1);
-      expect(calls[0]?.url).toBe(RESPONSE_URI);
-      expect(calls[0]?.body.get("state")).toBe(req.state);
-
-      const vpToken = JSON.parse(calls[0]!.body.get("vp_token")!) as Record<
-        string,
-        VerifiablePresentation[]
-      >;
-      const vp = vpToken["utopia_dl_age"]?.[0];
-      expect(vp).toBeDefined();
+      const vp = postedPresentation(log, "utopia_dl_age");
+      // The retired pairwise presenter DID did not rotate — it VANISHED: the
+      // credkit VP carries no holder key, DID, or identifier of any kind.
+      expect((vp as Record<string, unknown>)["holder"]).toBeUndefined();
+      expect(summarizeCredkitPresentation(vp)).toEqual({
+        rangeClaims: 0,
+        membershipClaims: 0,
+        equalities: 0,
+      });
 
       // The verifier-side checks, exactly as the shop Worker runs them.
-      const verification = await verifyPresentation({
-        presentation: vp!,
+      const verification = await verifyCredkitPresentation({
+        verifiablePresentation: vp,
+        expectedIssuerDids: [issuer.controller],
         challenge: req.nonce,
         domain: req.client_id,
-        expectedIssuer: issuer.controller,
       });
       expect(verification.error).toBeUndefined();
       expect(verification.verified).toBe(true);
 
       // Tier 1 must not have leaked anything beyond the flag + mandatories.
-      const disclosed = verification.credentials[0]?.credential
-        .credentialSubject as Record<string, unknown>;
-      const license = disclosed["driversLicense"] as Record<string, unknown>;
+      const subject = verification.documents?.[0]?.credentialSubject as Record<
+        string,
+        unknown
+      >;
+      const license = subject["driversLicense"] as Record<string, unknown>;
       expect(license["age_over_18"]).toBe(true);
       expect(license["birth_date"]).toBeUndefined();
       expect(license["given_name"]).toBeUndefined();
-      expect(disclosed["id"]).toBeUndefined();
+      expect(subject["id"]).toBeUndefined();
+      expect(verification.documents?.[0]?.validFrom).toBe("2026-01-01T00:00:00Z");
     },
-    60_000,
+    120_000,
   );
 
   it(
     "tier 0 really is full disclosure of the subject",
     async () => {
-      const { req, calls } = await run(0);
-      const vpToken = JSON.parse(calls[0]!.body.get("vp_token")!) as Record<
-        string,
-        VerifiablePresentation[]
-      >;
-      const vp = vpToken["utopia_dl_age"]![0]!;
-      const verification = await verifyPresentation({
-        presentation: vp,
+      const { req, log, result } = await run(0);
+      await result;
+      const vp = postedPresentation(log, "utopia_dl_age");
+      const verification = await verifyCredkitPresentation({
+        verifiablePresentation: vp,
+        expectedIssuerDids: [issuer.controller],
         challenge: req.nonce,
         domain: req.client_id,
-        expectedIssuer: issuer.controller,
       });
       expect(verification.verified).toBe(true);
-      const disclosed = verification.credentials[0]?.credential
-        .credentialSubject as Record<string, unknown>;
-      const license = disclosed["driversLicense"] as Record<string, unknown>;
-      expect(license["birth_date"]).toBe("1988-04-19");
-      expect(license["given_name"]).toBe("JAMIE");
-    },
-    60_000,
-  );
-
-  it(
-    "a legacy credential's embedded subject id leaks even at tier 1 — pinned",
-    async () => {
-      // This is WHY the DMV stopped embedding subject ids: selecting one
-      // claim still reveals the node's id, a cross-verifier correlation
-      // handle. Pinning the behavior keeps the consent-screen warning honest.
-      const req = request();
-      const { queryId, candidates } = matchCredentials(
-        [{ record: record(1), payload: { vc: legacyVc } }],
-        req,
-      );
-      const calls = capturePost();
-      await presentCredential({
-        request: req,
-        queryId,
-        candidate: candidates[0]!,
-        tier: 1,
-        masterSecret: MASTER_SECRET.slice(),
-      });
-      const vpToken = JSON.parse(calls[0]!.body.get("vp_token")!) as Record<
+      const subject = verification.documents?.[0]?.credentialSubject as Record<
         string,
-        VerifiablePresentation[]
+        unknown
       >;
-      const disclosed = vpToken["utopia_dl_age"]![0]!.verifiableCredential as
-        VerifiableCredential[];
-      const subject = disclosed[0]?.credentialSubject as Record<string, unknown>;
-      expect(subject["id"]).toBe("did:key:z6MkHolderExample");
-    },
-    60_000,
-  );
-
-  it(
-    "derives a different presenter DID per verifier origin (pairwise)",
-    async () => {
-      const holders: string[] = [];
-      for (const origin of ["https://shop.example", "https://rentals.example"]) {
-        const req = request({
-          response_uri: `${origin}/oid4vp/response`,
-          client_id: `redirect_uri:${origin}/oid4vp/response`,
-        });
-        const { queryId, candidates } = matchCredentials(
-          [{ record: record(1), payload: { vc: signedVc } }],
-          req,
-        );
-        const calls = capturePost();
-        await presentCredential({
-          request: req,
-          queryId,
-          candidate: candidates[0]!,
-          tier: 1,
-          masterSecret: MASTER_SECRET.slice(),
-        });
-        const vpToken = JSON.parse(calls[0]!.body.get("vp_token")!) as Record<
-          string,
-          VerifiablePresentation[]
-        >;
-        holders.push(String(vpToken["utopia_dl_age"]![0]!.holder));
-        vi.unstubAllGlobals();
-      }
-      expect(holders[0]).toMatch(/^did:key:z6Mk/);
-      expect(holders[0]).not.toBe(holders[1]);
-    },
-    60_000,
-  );
-
-  it(
-    "tier 2 presents the commitment + a real ZK proof the shop's checks accept",
-    async () => {
-      const req = request({ dcql_query: ZK_DCQL });
-      const { queryId, candidates } = matchCredentials(
-        [{ record: record(1), payload: { vc: zkVc, commitmentOpening: opening } }],
-        req,
-      );
-      const calls = capturePost();
-      const steps: string[] = [];
-      await presentCredential({
-        request: req,
-        queryId,
-        candidate: candidates[0]!,
-        tier: 2,
-        masterSecret: MASTER_SECRET.slice(),
-        onStep: (step) => steps.push(step),
-      });
-      expect(steps).toEqual([
-        "deriving-presenter",
-        "deriving-disclosure",
-        "proving",
-        "signing-presentation",
-        "posting",
-      ]);
-
-      const vpToken = JSON.parse(calls[0]!.body.get("vp_token")!) as Record<
-        string,
-        VerifiablePresentation[]
-      >;
-      const vp = vpToken["utopia_dl_age"]![0]!;
-
-      // 1. The wrapper + BBS layer, exactly as the shop Worker checks them.
-      const verification = await verifyPresentation({
-        presentation: vp,
-        challenge: req.nonce,
-        domain: req.client_id,
-        expectedIssuer: issuer.controller,
-      });
-      expect(verification.error).toBeUndefined();
-      expect(verification.verified).toBe(true);
-
-      // 2. Disclosure is the commitment and NOTHING else.
-      const subject = verification.credentials[0]?.credential
-        .credentialSubject as Record<string, unknown>;
       const license = subject["driversLicense"] as Record<string, unknown>;
-      expect(license["birthDateCommitment"]).toBe(opening.commitment);
-      expect(license["age_over_18"]).toBeUndefined();
-      expect(license["birth_date"]).toBeUndefined();
-      expect(subject["id"]).toBeUndefined();
-
-      // 3. The proof bundle rides inside the signed VP and verifies against
-      // the disclosed commitment — the shop client's final check.
-      const bundle = vp["zkAgeProof"] as {
-        proof: string;
-        cutoffDays: number;
-        years: number;
-        commitment: string;
-      };
-      expect(bundle.years).toBe(18);
-      expect(bundle.commitment).toBe(opening.commitment);
-      const zkResult = await verifyAgeProof({
-        proof: bundle.proof,
-        commitment: license["birthDateCommitment"] as string,
-        cutoffDays: bundle.cutoffDays,
-      });
-      expect(zkResult.verified).toBe(true);
+      expect(license["birth_date"]).toBe("1996-03-14");
+      expect(license["given_name"]).toBe("JAMIE");
     },
     120_000,
   );
 
   it(
-    "tier 2 at the rentals desk: identity claims ride alongside the commitment + proof",
+    "an identified credential's embedded subject id leaks even at tier 1 — pinned",
     async () => {
-      const req = request({ dcql_query: RENTAL_ZK_DCQL });
-      const { queryId, candidates } = matchCredentials(
-        [{ record: record(1), payload: { vc: zkVc, commitmentOpening: opening } }],
-        req,
-      );
-      const calls = capturePost();
-      await presentCredential({
-        request: req,
-        queryId,
-        candidate: candidates[0]!,
-        tier: 2,
-        masterSecret: MASTER_SECRET.slice(),
-      });
-
-      const vpToken = JSON.parse(calls[0]!.body.get("vp_token")!) as Record<
-        string,
-        VerifiablePresentation[]
-      >;
-      const vp = vpToken["utopia_dl_rental"]![0]!;
-      const verification = await verifyPresentation({
-        presentation: vp,
+      // This is WHY the DMV issues without subject ids: node identifiers are
+      // revealed structurally by selective disclosure, a cross-verifier
+      // correlation handle. Pinning it keeps the consent warning honest.
+      const { req, log, result } = await run(1, { fixture: identified });
+      await result;
+      const vp = postedPresentation(log, "utopia_dl_age");
+      const verification = await verifyCredkitPresentation({
+        verifiablePresentation: vp,
+        expectedIssuerDids: [issuer.controller],
         challenge: req.nonce,
         domain: req.client_id,
-        expectedIssuer: issuer.controller,
+      });
+      expect(verification.verified).toBe(true);
+      const subject = verification.documents?.[0]?.credentialSubject as Record<
+        string,
+        unknown
+      >;
+      expect(subject["id"]).toBe("did:key:z6MkHolderExample");
+    },
+    120_000,
+  );
+
+  it(
+    "tier 2 at the shop: fetches + pins the published alphabet, proves the hidden twin, discloses nothing",
+    async () => {
+      const { req, log, steps, result } = await run(2);
+      const outcome = await result;
+
+      expect(steps).toEqual(["fetching-params", "deriving-presentation", "posting"]);
+      expect(log.gets).toEqual([PARAMS_URI]);
+      expect(outcome.redirectUri).toBe(REDIRECT_BACK);
+
+      const vp = postedPresentation(log, "utopia_dl_age");
+      expect((vp as Record<string, unknown>)["holder"]).toBeUndefined();
+      expect(summarizeCredkitPresentation(vp)).toEqual({
+        rangeClaims: 1,
+        membershipClaims: 0,
+        equalities: 0,
+      });
+
+      // The verifier restates ITS OWN claim list (Appendix D.2) — the same
+      // params object it published, the bound its session offered.
+      const verification = await verifyCredkitPresentation({
+        verifiablePresentation: vp,
+        expectedIssuerDids: [issuer.controller],
+        challenge: req.nonce,
+        domain: req.client_id,
+        expectedRangeClaims: [
+          {
+            statement: 0,
+            pointer: DOB_POINTER,
+            kind: "lessOrEqual",
+            bound: BigInt(BOUND_18),
+            digits: 4,
+            params,
+          },
+        ],
       });
       expect(verification.error).toBeUndefined();
       expect(verification.verified).toBe(true);
 
-      // The whole ZK claim_set is disclosed — and nothing outside it.
-      const subject = verification.credentials[0]?.credential
-        .credentialSubject as Record<string, unknown>;
+      // Hidden means hidden: no birth_date, no flags, no name — only the
+      // issuer's mandatory disclosures rode along.
+      const subject = (verification.documents?.[0]?.credentialSubject ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const license = (subject["driversLicense"] ?? {}) as Record<string, unknown>;
+      expect(license["birth_date"]).toBeUndefined();
+      expect(license["age_over_18"]).toBeUndefined();
+      expect(license["given_name"]).toBeUndefined();
+      expect(verification.documents?.[0]?.validFrom).toBe("2026-01-01T00:00:00Z");
+
+      // A verifier restating a bound the wallet never proved fails closed.
+      const wrongBound = await verifyCredkitPresentation({
+        verifiablePresentation: vp,
+        expectedIssuerDids: [issuer.controller],
+        challenge: req.nonce,
+        domain: req.client_id,
+        expectedRangeClaims: [
+          {
+            statement: 0,
+            pointer: DOB_POINTER,
+            kind: "lessOrEqual",
+            bound: BigInt(BOUND_18) - 1n,
+            digits: 4,
+            params,
+          },
+        ],
+      });
+      expect(wrongBound.verified).toBe(false);
+    },
+    120_000,
+  );
+
+  it(
+    "tier 2 at the rentals desk: identity claims ride alongside the range proof",
+    async () => {
+      const { req, log, result } = await run(2, { dcql: rentalDcql() });
+      await result;
+
+      const vp = postedPresentation(log, "utopia_dl_rental");
+      const verification = await verifyCredkitPresentation({
+        verifiablePresentation: vp,
+        expectedIssuerDids: [issuer.controller],
+        challenge: req.nonce,
+        domain: req.client_id,
+        expectedRangeClaims: [
+          {
+            statement: 0,
+            pointer: DOB_POINTER,
+            kind: "lessOrEqual",
+            bound: BigInt(BOUND_25),
+            digits: 4,
+            params,
+          },
+        ],
+      });
+      expect(verification.error).toBeUndefined();
+      expect(verification.verified).toBe(true);
+
+      // The whole predicate claim_set is disclosed — and nothing outside it.
+      const subject = verification.documents?.[0]?.credentialSubject as Record<
+        string,
+        unknown
+      >;
       const license = subject["driversLicense"] as Record<string, unknown>;
       expect(license["given_name"]).toBe("JAMIE");
       expect(license["family_name"]).toBe("VOSS");
       expect(license["document_number"]).toBe("F111222333");
-      expect(license["birthDateCommitment"]).toBe(opening.commitment);
       expect(license["birth_date"]).toBeUndefined();
       expect(license["age_over_25"]).toBeUndefined();
-
-      // The proof is for the rentals threshold and verifies against the
-      // disclosed commitment.
-      const bundle = vp["zkAgeProof"] as {
-        proof: string;
-        cutoffDays: number;
-        years: number;
-        commitment: string;
-      };
-      expect(bundle.years).toBe(25);
-      const zkResult = await verifyAgeProof({
-        proof: bundle.proof,
-        commitment: license["birthDateCommitment"] as string,
-        cutoffDays: bundle.cutoffDays,
-      });
-      expect(zkResult.verified).toBe(true);
     },
     120_000,
   );
 
-  it("tier 2 fails loudly when the vault kept no opening", async () => {
-    const req = request({ dcql_query: ZK_DCQL });
+  it(
+    "an underage holder cannot present: the prover THROWS, fail closed, nothing posted",
+    async () => {
+      // Noa's hidden birth_date (2009-11-02) does not satisfy the 18+ bound.
+      // Tier 2 availability was STRUCTURAL — the refusal happens at proving,
+      // as a loud error, never as a bad proof (MIGRATION §9).
+      const { log, result } = await run(2, { fixture: minor });
+      await expect(result).rejects.toThrow(
+        /does not satisfy the verifier's bound.*fails closed.*Nothing was sent/s,
+      );
+      expect(log.posts).toHaveLength(0);
+    },
+    120_000,
+  );
+
+  it("refuses a params_uri on a different origin than the verifier — before any fetch", async () => {
+    const { log, result } = await run(2, {
+      dcql: shopDcql({ paramsUri: "https://params.example/.well-known/credkit-params" }),
+    });
+    await expect(result).rejects.toThrow(/not on its own origin/);
+    expect(log.gets).toHaveLength(0);
+    expect(log.posts).toHaveLength(0);
+  });
+
+  it("refuses to prove when the request pins a different alphabet than the verifier publishes", async () => {
+    const { log, result } = await run(2, {
+      dcql: shopDcql({ paramsHash: "B".repeat(43) }),
+    });
+    await expect(result).rejects.toThrow(/pins a different proof alphabet/);
+    expect(log.posts).toHaveLength(0);
+  });
+
+  it("refuses a published alphabet that does not match its own declared hash", async () => {
+    const { log, result } = await run(2, {
+      fetch: {
+        paramsResponse: () =>
+          Response.json({
+            ...paramsDocument,
+            range: { ...paramsDocument.range!, hash: "B".repeat(43) },
+          }),
+      },
+    });
+    await expect(result).rejects.toThrow(/does not match its own declared hash/);
+    expect(log.posts).toHaveLength(0);
+  });
+
+  it("rejects a set-membership request loudly at the ceremony (reserved N5)", async () => {
+    const dcql = shopDcql();
+    dcql.credentials[0]!.vgw_predicates = {
+      params_uri: PARAMS_URI,
+      membership: [
+        { path: [...LICENSE_PATH, "issuing_authority"], set_id: "coastal", params_hash: "x" },
+      ],
+    };
+    const { log, result } = await run(2, { dcql });
+    await expect(result).rejects.toThrow(/membership/);
+    expect(log.gets).toHaveLength(0);
+    expect(log.posts).toHaveLength(0);
+  });
+
+  it("fails a pre-credkit vault envelope with a clear re-issue error", async () => {
+    const req = request();
+    const match = matchDcqlCredentialQuery(adult.vc, req.dcql_query.credentials[0]!);
+    const log = stubFetch();
+    await expect(
+      presentCredential({
+        request: req,
+        queryId: "utopia_dl_age",
+        candidate: {
+          record: record(1),
+          vc: adult.vc,
+          payload: legacyPayload(adult.vc),
+          match: match!,
+        },
+        tier: 1,
+        masterSecret: MASTER_SECRET.slice(),
+      }),
+    ).rejects.toThrow(/predates the credkit upgrade.*re-issue it at the Utopia DMV/);
+    expect(log.posts).toHaveLength(0);
+  });
+
+  it("fails a v3 envelope whose credential carries no credkit proof with a re-issue error", async () => {
+    const req = request();
+    const unsigned = buildUtopiaDriversLicense({
+      givenName: "JAMIE",
+      familyName: "VOSS",
+      birthDate: "1996-03-14",
+      documentNumber: "F111222333",
+      issuer: { id: issuer.controller, name: "Utopia DMV" },
+    });
     const { queryId, candidates } = matchCredentials(
-      [{ record: record(1), payload: { vc: zkVc } }],
+      [
+        {
+          record: record(1),
+          payload: {
+            version: 3,
+            vc: unsigned,
+            secretProverBlind: scalarToBase64Url(adult.binding.secretProverBlind),
+          },
+        },
+      ],
       req,
     );
-    capturePost();
+    const log = stubFetch();
     await expect(
       presentCredential({
         request: req,
         queryId,
         candidate: candidates[0]!,
-        tier: 2,
+        tier: 1,
         masterSecret: MASTER_SECRET.slice(),
       }),
-    ).rejects.toThrow(/opening isn't in this wallet's vault/);
+    ).rejects.toThrow(/does not carry a credkit proof.*re-issue/);
+    expect(log.posts).toHaveLength(0);
+  });
+
+  it("fails a malformed stored blind with a re-issue error", async () => {
+    const req = request();
+    const { queryId, candidates } = matchCredentials(
+      [
+        {
+          record: record(1),
+          payload: { version: 3, vc: adult.vc, secretProverBlind: "not-a-scalar" },
+        },
+      ],
+      req,
+    );
+    const log = stubFetch();
+    await expect(
+      presentCredential({
+        request: req,
+        queryId,
+        candidate: candidates[0]!,
+        tier: 1,
+        masterSecret: MASTER_SECRET.slice(),
+      }),
+    ).rejects.toThrow(/stored blind is malformed.*re-issue/);
+    expect(log.posts).toHaveLength(0);
   });
 
   it("aborts at a phase boundary when the session locks", async () => {
     const req = request();
     const { queryId, candidates } = matchCredentials(
-      [{ record: record(1), payload: { vc: signedVc } }],
+      [{ record: record(1), payload: v3Payload(adult) }],
       req,
     );
-    capturePost();
+    const log = stubFetch();
     const controller = new AbortController();
     controller.abort();
     await expect(
@@ -712,31 +969,22 @@ describe("presentCredential", () => {
         signal: controller.signal,
       }),
     ).rejects.toThrow();
+    expect(log.posts).toHaveLength(0);
   });
 
   it("surfaces the verifier's OAuth error body on rejection", async () => {
-    const req = request();
-    const { queryId, candidates } = matchCredentials(
-      [{ record: record(1), payload: { vc: signedVc } }],
-      req,
-    );
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        Response.json(
-          { error: "invalid_request", error_description: "this session already received a response" },
-          { status: 400 },
-        ),
-      ),
-    );
-    await expect(
-      presentCredential({
-        request: req,
-        queryId,
-        candidate: candidates[0]!,
-        tier: 1,
-        masterSecret: MASTER_SECRET.slice(),
-      }),
-    ).rejects.toThrow(/already received a response/);
+    const { result } = await run(1, {
+      fetch: {
+        postResponse: () =>
+          Response.json(
+            {
+              error: "invalid_request",
+              error_description: "this session already received a response",
+            },
+            { status: 400 },
+          ),
+      },
+    });
+    await expect(result).rejects.toThrow(/already received a response/);
   });
 });

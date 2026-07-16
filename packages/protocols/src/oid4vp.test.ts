@@ -145,45 +145,180 @@ describe("assertDcqlQuery", () => {
     ).toThrow(/valid path/);
   });
 
-  describe("vgw_zk extension", () => {
-    const withZk = (vgw_zk: unknown) => ({
+  describe("vgw_predicates extension", () => {
+    const BIRTH_DATE_PATH = ["credentialSubject", "driversLicense", "birth_date"];
+    const rangeClaim = (overrides?: Record<string, unknown>) => ({
+      path: BIRTH_DATE_PATH,
+      kind: "lessOrEqual",
+      bound: "46216",
+      digits: 4,
+      params_hash: "c2hhLTI1Ng",
+      ...overrides,
+    });
+    const withPredicates = (vgw_predicates: unknown) => ({
       credentials: [
         {
           id: "x",
           format: "ldp_vc",
           claims: [
-            { id: "commitment", path: ["credentialSubject", "driversLicense", "birthDateCommitment"] },
+            { id: "given_name", path: ["credentialSubject", "driversLicense", "given_name"] },
+            { id: "dob", path: BIRTH_DATE_PATH },
           ],
-          claim_sets: [["commitment"]],
-          vgw_zk,
+          claim_sets: [["dob"]],
+          vgw_predicates,
         },
       ],
     });
+    const predicates = (overrides?: Record<string, unknown>) => ({
+      params_uri: "https://shop.example/.well-known/credkit-params",
+      range: [rangeClaim()],
+      ...overrides,
+    });
 
-    it("accepts a well-formed age predicate", () => {
-      const query = withZk({ predicate: "age_over", years: 18, claim_id: "commitment" });
+    it("accepts a well-formed range predicate (with and without a claim_set)", () => {
+      const bare = withPredicates(predicates());
+      expect(assertDcqlQuery(bare)).toEqual(bare);
+      const withSet = withPredicates(predicates({ claim_set: ["given_name"] }));
+      expect(assertDcqlQuery(withSet)).toEqual(withSet);
+    });
+
+    it("accepts the reserved membership shape (typed now, wallet-rejected until N5)", () => {
+      const query = withPredicates(
+        predicates({
+          range: undefined,
+          membership: [{ path: BIRTH_DATE_PATH, set_id: "coastal", params_hash: "aGFzaA" }],
+        }),
+      );
       expect(assertDcqlQuery(query)).toEqual(query);
     });
 
-    it("rejects unknown predicates", () => {
-      expect(() =>
-        assertDcqlQuery(withZk({ predicate: "income_over", years: 18, claim_id: "commitment" })),
-      ).toThrow(/only age_over/);
+    it("rejects a non-object vgw_predicates", () => {
+      expect(() => assertDcqlQuery(withPredicates("zk please"))).toThrow(/non-object/);
     });
 
-    it("rejects non-integer or out-of-range years", () => {
+    it("rejects a missing or non-http(s) params_uri", () => {
+      expect(() => assertDcqlQuery(withPredicates(predicates({ params_uri: undefined })))).toThrow(
+        /params_uri/,
+      );
       expect(() =>
-        assertDcqlQuery(withZk({ predicate: "age_over", years: 0, claim_id: "commitment" })),
-      ).toThrow(/positive integer/);
+        assertDcqlQuery(withPredicates(predicates({ params_uri: "/.well-known/credkit-params" }))),
+      ).toThrow(/params_uri/);
       expect(() =>
-        assertDcqlQuery(withZk({ predicate: "age_over", years: "18", claim_id: "commitment" })),
-      ).toThrow(/positive integer/);
+        assertDcqlQuery(withPredicates(predicates({ params_uri: "ftp://shop.example/params" }))),
+      ).toThrow(/params_uri/);
     });
 
-    it("rejects claim_id references to undefined claims", () => {
+    it("rejects a vgw_predicates that demands no proof", () => {
+      expect(() => assertDcqlQuery(withPredicates(predicates({ range: [] })))).toThrow(
+        /neither range nor membership/,
+      );
+      expect(() => assertDcqlQuery(withPredicates(predicates({ range: undefined })))).toThrow(
+        /neither range nor membership/,
+      );
+    });
+
+    it("rejects malformed range entries field by field", () => {
+      const bad = (claim: Record<string, unknown>, pattern: RegExp) => {
+        expect(() =>
+          assertDcqlQuery(withPredicates(predicates({ range: [rangeClaim(claim)] }))),
+        ).toThrow(pattern);
+      };
+      bad({ path: [] }, /valid path/);
+      bad({ path: "birth_date" }, /valid path/);
+      bad({ kind: "between" }, /unsupported vgw_predicates.range kind/);
+      bad({ bound: 46216 }, /decimal integer string/);
+      bad({ bound: "046216" }, /decimal integer string/);
+      bad({ bound: "-1" }, /decimal integer string/);
+      bad({ digits: 0 }, /digits outside 1\.\.16/);
+      bad({ digits: 17 }, /digits outside 1\.\.16/);
+      bad({ digits: 4.5 }, /digits outside 1\.\.16/);
+      bad({ params_hash: "" }, /params_hash/);
+      bad({ params_hash: undefined }, /params_hash/);
+    });
+
+    it("rejects malformed membership entries", () => {
+      const bad = (claim: Record<string, unknown>, pattern: RegExp) => {
+        expect(() =>
+          assertDcqlQuery(
+            withPredicates(predicates({ range: undefined, membership: [claim] })),
+          ),
+        ).toThrow(pattern);
+      };
+      bad({ path: BIRTH_DATE_PATH, set_id: "", params_hash: "aGFzaA" }, /set_id/);
+      bad({ path: BIRTH_DATE_PATH, set_id: "coastal", params_hash: "" }, /params_hash/);
+      bad({ path: [], set_id: "coastal", params_hash: "aGFzaA" }, /valid path/);
+    });
+
+    it("rejects claim_set references to undefined claims", () => {
       expect(() =>
-        assertDcqlQuery(withZk({ predicate: "age_over", years: 18, claim_id: "nope" })),
+        assertDcqlQuery(withPredicates(predicates({ claim_set: ["given_name", "nope"] }))),
       ).toThrow(/unknown claim id "nope"/);
+      expect(() =>
+        assertDcqlQuery(withPredicates(predicates({ claim_set: [42] }))),
+      ).toThrow(/claim_set/);
+    });
+  });
+
+  describe("vgw_equalities extension", () => {
+    const twoQueries = (vgw_equalities: unknown) => ({
+      credentials: [
+        { id: "dl", format: "ldp_vc" },
+        { id: "resident", format: "ldp_vc" },
+      ],
+      vgw_equalities,
+    });
+
+    it("accepts the reserved link-secret and pointer shapes", () => {
+      const linkage = twoQueries([
+        [{ query: "dl", link_secret: true }, { query: "resident", link_secret: true }],
+      ]);
+      expect(assertDcqlQuery(linkage)).toEqual(linkage);
+      const pointers = twoQueries([
+        [
+          { query: "dl", path: ["credentialSubject", "driversLicense", "birth_date"] },
+          { query: "resident", link_secret: true },
+        ],
+      ]);
+      expect(assertDcqlQuery(pointers)).toEqual(pointers);
+    });
+
+    it("rejects groups with fewer than two references", () => {
+      expect(() => assertDcqlQuery(twoQueries([[{ query: "dl", link_secret: true }]]))).toThrow(
+        /at least two references/,
+      );
+      expect(() => assertDcqlQuery(twoQueries(["not-an-array"]))).toThrow(
+        /at least two references/,
+      );
+    });
+
+    it("rejects references to unknown query ids", () => {
+      expect(() =>
+        assertDcqlQuery(
+          twoQueries([
+            [{ query: "dl", link_secret: true }, { query: "loyalty", link_secret: true }],
+          ]),
+        ),
+      ).toThrow(/unknown credential query "loyalty"/);
+    });
+
+    it("rejects references without exactly one of link_secret or path", () => {
+      const both = [
+        [
+          { query: "dl", link_secret: true, path: ["credentialSubject"] },
+          { query: "resident", link_secret: true },
+        ],
+      ];
+      expect(() => assertDcqlQuery(twoQueries(both))).toThrow(/exactly one of/);
+      const neither = [[{ query: "dl" }, { query: "resident", link_secret: true }]];
+      expect(() => assertDcqlQuery(twoQueries(neither))).toThrow(/exactly one of/);
+      const falseSecret = [
+        [{ query: "dl", link_secret: false }, { query: "resident", link_secret: true }],
+      ];
+      expect(() => assertDcqlQuery(twoQueries(falseSecret))).toThrow(/exactly true/);
+      const badPath = [
+        [{ query: "dl", path: [] }, { query: "resident", link_secret: true }],
+      ];
+      expect(() => assertDcqlQuery(twoQueries(badPath))).toThrow(/valid path/);
     });
   });
 });

@@ -8,10 +8,14 @@
 // that polls for the outcome.
 //
 // Secrets/vars (see DEPLOY.md):
-//   TOKEN_SECRET        wrangler secret put TOKEN_SECRET   (HMAC for state tokens)
-//   WALLET_ORIGIN       var — wallet origin for wallet_link fallbacks
-//   DMV_ORIGIN          var — issuer origin to discover the trusted issuer DID from
-//   TRUSTED_ISSUER_DID  var (optional) — pin the issuer DID directly, skips discovery
+//   TOKEN_SECRET          wrangler secret put TOKEN_SECRET   (HMAC for state tokens)
+//   CREDKIT_PARAMS_SEED   wrangler secret put CREDKIT_PARAMS_SEED — seed behind the
+//                         deterministic /.well-known/credkit-params alphabet (falls
+//                         back to TOKEN_SECRET in dev; rotating it rotates the
+//                         alphabet and fails in-flight sessions closed)
+//   WALLET_ORIGIN         var — wallet origin for wallet_link fallbacks
+//   DMV_ORIGIN            var — issuer origin to discover the trusted issuer DID from
+//   TRUSTED_ISSUER_DID    var (optional) — pin the issuer DID directly, skips discovery
 {
   "name": "vgw-shop",
   "compatibility_date": "2026-07-01",
@@ -24,7 +28,7 @@
   "workers_dev": true,
   "assets": {
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/oid4vp/*", "/api/*"]
+    "run_worker_first": ["/oid4vp/*", "/api/*", "/.well-known/credkit-params"]
   },
   "durable_objects": {
     "bindings": [{ "name": "SESSIONS", "class_name": "VerificationSessions" }]

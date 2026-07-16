@@ -371,6 +371,9 @@ importers:
       '@credkit/cryptosuite':
         specifier: github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/cryptosuite
         version: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/cryptosuite
+      '@credkit/range':
+        specifier: github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/range
+        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/range
       '@digitalbazaar/bbs-2023-cryptosuite':
         specifier: ^2.0.1
         version: 2.0.1

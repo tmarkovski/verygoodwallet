@@ -1,65 +1,105 @@
-// TODO(N3): this pins the RETIRED pre-credkit pipeline (bbs-2023 sign/derive
-// + Poseidon commitment + legacy envelope) — rewrite it to the credkit
-// issue → deriveProof → verify pipeline when the wallet presents credkit
-// credentials at N3. Only the removed imports were swapped at N2 to keep
-// typecheck green (deriveHolderSeed → the demo-issuer hkdf branch,
-// CredentialPayload → LegacyCredentialPayload).
+/**
+ * The wallet's whole data path in one breath, against the LIVE (credkit)
+ * stack: derive keys from a master secret → blind-issue a holder-bound DL →
+ * encrypt the v3 vault envelope → decrypt it → present with a re-derived
+ * link secret → verify under the relying-party facade. Pins that the vault
+ * codec (encryptJson/decryptJson + the scalar-encoded blind) composes with
+ * the credkit crypto — the same seams `issuance.ts` and `presentation.ts`
+ * cross in production.
+ */
 import { expect, it } from "vitest";
 import {
-  createCommitment,
-  daysSinceEpoch,
   decryptJson,
+  deriveLinkSecret,
   deriveVaultKey,
   encryptJson,
   hkdfDerive,
-  verifyCommitment,
+  scalarFromBase64Url,
+  scalarToBase64Url,
 } from "@vgw/keys";
 import {
+  UTOPIA_DL_NUMERIC_DECLARATIONS,
   buildUtopiaDriversLicense,
-  deriveCredential,
-  generateBbsKeyPair,
-  signCredential,
-  verifyCredential,
+  createCredkitPresentation,
+  createHolderBinding,
+  generateCredkitBbsKeyPair,
+  issueCredkitCredential,
+  verifyCredkitPresentation,
+  verifyIssuedCredkitCredential,
 } from "@vgw/vc-kit";
-import type { LegacyCredentialPayload } from "./db";
+import type { CredentialPayload } from "./db";
 
-it("demo pipeline: derive -> sign -> encrypt -> decrypt -> disclose -> verify", async () => {
+it("demo pipeline: derive -> blind-issue -> encrypt -> decrypt -> present -> verify", async () => {
   const master = crypto.getRandomValues(new Uint8Array(32));
   const vaultKey = await deriveVaultKey(master);
   const seed = await hkdfDerive(master, "vgw/v1/demo-issuer");
-  const keyPair = await generateBbsKeyPair(seed);
+  const keyPair = generateCredkitBbsKeyPair(seed);
 
-  const birthDate = "1996-03-14";
-  const days = daysSinceEpoch(birthDate);
-  const opening = createCommitment(days);
-  expect(verifyCommitment(days, opening.blinding, opening.commitment)).toBe(true);
+  // Holder side: the ONE master-derived link secret, blind-committed.
+  const binding = createHolderBinding({ linkSecret: await deriveLinkSecret(master) });
 
   const unsigned = buildUtopiaDriversLicense({
     givenName: "Jamie",
     familyName: "Voss",
-    birthDate,
+    birthDate: "1996-03-14",
     documentNumber: "UDL-TEST-0001",
-    birthDateCommitment: opening.commitment,
     issuer: { id: keyPair.controller, name: "Utopia DMV" },
   });
-  const signed = await signCredential({ credential: unsigned, keyPair });
-
-  const payload = await encryptJson(vaultKey, {
-    vc: signed,
-    commitmentOpening: { value: days, blinding: opening.blinding, commitment: opening.commitment },
-  } satisfies LegacyCredentialPayload);
-  const envelope = await decryptJson<LegacyCredentialPayload>(vaultKey, payload);
-
-  const derived = await deriveCredential({
-    verifiableCredential: envelope.vc,
-    selectivePointers: ["/credentialSubject/driversLicense/birthDateCommitment"],
+  const signed = await issueCredkitCredential({
+    credential: unsigned,
+    keyPair,
+    numericDeclarations: UTOPIA_DL_NUMERIC_DECLARATIONS,
+    holderCommitment: binding.commitmentWithProof,
   });
-  const result = await verifyCredential({ credential: derived, expectedIssuer: keyPair.controller });
-  expect(result).toEqual({ verified: true });
+  // The holder receipt check the wallet runs before persisting anything.
+  expect(
+    await verifyIssuedCredkitCredential({
+      verifiableCredential: signed,
+      holderBinding: binding,
+    }),
+  ).toBe(true);
 
-  const subject = derived.credentialSubject as Record<string, Record<string, unknown>>;
-  const dl = subject["driversLicense"] ?? {};
-  expect(dl["birthDateCommitment"]).toBe(opening.commitment);
-  expect(dl["birth_date"]).toBeUndefined();
-  expect(dl["document_number"]).toBeUndefined();
-}, 30_000);
+  // The v3 vault envelope: the bigint blind is scalar-encoded at the
+  // persistence boundary (encryptJson is JSON-only — bigints would throw).
+  const payload = await encryptJson(vaultKey, {
+    version: 3,
+    vc: signed,
+    secretProverBlind: scalarToBase64Url(binding.secretProverBlind),
+  } satisfies CredentialPayload);
+  const envelope = await decryptJson<CredentialPayload>(vaultKey, payload);
+  expect(envelope.version).toBe(3);
+
+  // Present from the DECRYPTED envelope: link secret re-derived (never
+  // stored), blind decoded from its base64url scalar encoding.
+  const vp = await createCredkitPresentation({
+    credentials: [
+      {
+        verifiableCredential: envelope.vc,
+        selectivePointers: ["/credentialSubject/driversLicense/age_over_18"],
+        holderBinding: {
+          linkSecret: await deriveLinkSecret(master),
+          secretProverBlind: scalarFromBase64Url(envelope.secretProverBlind),
+        },
+      },
+    ],
+    challenge: "pipeline-nonce",
+    domain: "redirect_uri:https://verifier.example/oid4vp/response",
+  });
+
+  const result = await verifyCredkitPresentation({
+    verifiablePresentation: vp,
+    expectedIssuerDids: [keyPair.controller],
+    challenge: "pipeline-nonce",
+    domain: "redirect_uri:https://verifier.example/oid4vp/response",
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.verified).toBe(true);
+
+  const subject = result.documents?.[0]?.credentialSubject as Record<
+    string,
+    Record<string, unknown>
+  >;
+  expect(subject["driversLicense"]?.["age_over_18"]).toBe(true);
+  expect(subject["driversLicense"]?.["birth_date"]).toBeUndefined();
+  expect(subject["driversLicense"]?.["given_name"]).toBeUndefined();
+}, 120_000);

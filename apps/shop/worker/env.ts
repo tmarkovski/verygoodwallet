@@ -26,6 +26,11 @@ export interface DurableObjectNamespaceLike {
 export interface ShopBindings {
   /** HMAC-SHA-256 secret for signed state tokens — `wrangler secret put TOKEN_SECRET`. */
   TOKEN_SECRET?: string;
+  /**
+   * Seed for the deterministic range-params mint served at
+   * `/.well-known/credkit-params` — `wrangler secret put CREDKIT_PARAMS_SEED`.
+   */
+  CREDKIT_PARAMS_SEED?: string;
   /** Wallet origin for `wallet_link` in verification sessions. */
   WALLET_ORIGIN?: string;
   /** Issuer origin whose metadata names the trusted issuer DID. */
@@ -56,6 +61,24 @@ export function resolveTokenSecret(env: ShopBindings): string {
     );
   }
   return DEV_TOKEN_SECRET;
+}
+
+/**
+ * The secret seed behind the published range-params alphabet (MIGRATION
+ * Appendix D.3). Falls back to the resolved token secret — a DEV convenience
+ * so a bare `vite dev` serves working params; production sets a dedicated
+ * `CREDKIT_PARAMS_SEED` secret so the two trust domains don't share key
+ * material. The seed derives the alphabet's one-time signing scalar: whoever
+ * knows it can forge range proofs THIS verifier alone would accept.
+ * Rotating it rotates the alphabet, which fails in-flight sessions closed
+ * (their state tokens restate a params hash the new alphabet won't match).
+ */
+export function resolveParamsSeed(env: ShopBindings): string {
+  const configured = env.CREDKIT_PARAMS_SEED;
+  if (configured !== undefined && configured !== "") {
+    return configured;
+  }
+  return resolveTokenSecret(env);
 }
 
 /**

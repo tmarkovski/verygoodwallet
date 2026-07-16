@@ -7,6 +7,10 @@
  * outcome is explained rather than hidden) → fall back to the OID4VP wallet
  * link + QR → poll the session until the wallet's direct_post lands →
  * render the verdict and, honestly, exactly what this shop learned.
+ *
+ * Since N3 the Worker verifies the WHOLE presentation server-side — credkit
+ * range proofs need no WASM — so the verdict arrives final: no `zk_pending`,
+ * no in-browser proof check, no split-runtime exhibit.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -28,14 +32,13 @@ export interface VerificationSession {
   wallet_link?: string;
 }
 
-/** Mirrors the Worker's ZkOutcomePayload (wire contract, not import). */
-export interface ZkPayload {
-  scheme: string;
-  circuit: string;
-  years: number;
-  cutoffDays: number;
-  commitment: string;
-  proof: string;
+/** Mirrors the Worker's PredicateExhibit (wire contract, not import). */
+export interface PredicatePayload {
+  pointer: string;
+  kind: "greaterOrEqual" | "lessOrEqual";
+  bound: string;
+  digits: number;
+  cutoffIso: string;
 }
 
 /** Mirrors the Worker's SessionStatus. */
@@ -43,75 +46,15 @@ export type SessionStatus =
   | { status: "pending" }
   | {
       status: "verified" | "failed";
-      verdict?: "allowed" | "denied" | "zk_pending";
+      verdict?: "allowed" | "denied";
       reason: string;
       disclosed: Record<string, unknown>;
-      zk?: ZkPayload;
+      predicate?: PredicatePayload;
       vpToken?: unknown;
       completedAt: number;
     };
 
 export type GateOutcome = Exclude<SessionStatus, { status: "pending" }>;
-
-/** What THIS BROWSER established about a tier-2 proof (the final word). */
-export interface ZkVerification {
-  verified: boolean;
-  verifyMs: number;
-  vkHash: string;
-  publicInputs: string[];
-  /** Set when bb.js itself failed to load/run (distinct from "proof invalid"). */
-  error?: string;
-}
-
-/**
- * The tier-2 handover: the Worker verified signatures, issuer, and the
- * proof's public-input bindings, then recorded the proof for the shop's own
- * client to check — bb.js can't run on the free-tier edge runtime (no
- * runtime WASM compilation, 3 MiB script cap), and pretending otherwise
- * would defeat the exhibit. A self-hosted verifier would make this exact
- * call server-side; the e2e suite does, in Node.
- */
-async function verifyZkPayload(zk: ZkPayload): Promise<ZkVerification> {
-  try {
-    // The /verify subpath keeps the shop's build free of the PROVING stack
-    // (noir_js + ACVM WASM) — verifiers verify, wallets prove.
-    const { verifyAgeProof } = await import("@vgw/zk/verify");
-    const result = await verifyAgeProof({
-      proof: zk.proof,
-      commitment: zk.commitment,
-      cutoffDays: zk.cutoffDays,
-    });
-    return {
-      verified: result.verified,
-      verifyMs: result.verifyMs,
-      vkHash: result.vkHash,
-      publicInputs: result.publicInputs,
-    };
-  } catch (error) {
-    return {
-      verified: false,
-      verifyMs: 0,
-      vkHash: "",
-      publicInputs: [],
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-/** The pairwise presenter DID the wallet used for THIS verifier only. */
-function presenterDidFromVpToken(vpToken: unknown): string | null {
-  if (typeof vpToken !== "object" || vpToken === null || Array.isArray(vpToken)) {
-    return null;
-  }
-  for (const presentations of Object.values(vpToken as Record<string, unknown>)) {
-    if (!Array.isArray(presentations)) continue;
-    const vp = presentations[0];
-    if (typeof vp !== "object" || vp === null) continue;
-    const holder = (vp as Record<string, unknown>)["holder"];
-    if (typeof holder === "string" && holder !== "") return holder;
-  }
-  return null;
-}
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
@@ -121,14 +64,7 @@ type Phase =
   | { kind: "start-failed"; error: string }
   | { kind: "awaiting"; session: VerificationSession; dcApi: DcApiOutcome | null }
   | { kind: "resumed"; sessionId: string }
-  | { kind: "zk-verifying"; outcome: GateOutcome; session: VerificationSession | null }
-  | {
-      kind: "done";
-      outcome: GateOutcome;
-      session: VerificationSession | null;
-      /** Present iff the outcome carried a tier-2 proof this browser checked. */
-      zk?: ZkVerification;
-    }
+  | { kind: "done"; outcome: GateOutcome; session: VerificationSession | null }
   | { kind: "timed-out" };
 
 function describeDcApi(outcome: DcApiOutcome): string {
@@ -233,15 +169,17 @@ function Inspector({ title, data }: { title: string; data: unknown }) {
 /** The "what did the verifier actually learn" table — the point of the demo. */
 function LearnedPanel({ outcome }: { outcome: GateOutcome }) {
   const entries = Object.entries(outcome.disclosed);
-  const presenterDid =
-    outcome.status === "verified" ? presenterDidFromVpToken(outcome.vpToken) : null;
   return (
     <div className="mt-4 rounded-2xl border border-line bg-canvas p-4 text-left">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
         What The Nightcap learned
       </p>
       {entries.length === 0 ? (
-        <p className="mt-2 text-[13px] text-ink-dim">Nothing — the presentation failed before disclosure.</p>
+        <p className="mt-2 text-[13px] text-ink-dim">
+          {outcome.status === "verified" && outcome.predicate !== undefined
+            ? "One proven bit — see below. No claims were disclosed."
+            : "Nothing — the presentation failed before disclosure."}
+        </p>
       ) : (
         <dl className="mt-2 space-y-1.5">
           {entries.map(([claim, value]) => (
@@ -254,20 +192,6 @@ function LearnedPanel({ outcome }: { outcome: GateOutcome }) {
           ))}
         </dl>
       )}
-      {presenterDid !== null && (
-        <div className="mt-3 border-t border-line pt-3">
-          <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
-            The key that signed it
-          </p>
-          <p className="mt-1 break-all font-mono text-[11px] text-ink-dim">{presenterDid}</p>
-          <p className="mt-1 text-[12px] leading-relaxed text-muted">
-            A pairwise DID that exists for this shop only — other verifiers
-            (say, the rental counter across town) see a different one derived
-            from the same wallet, so their records and ours can't be joined by
-            key. Only the disclosed values above could ever correlate.
-          </p>
-        </div>
-      )}
       <p className="mt-3 border-t border-line pt-3 text-[12px] leading-relaxed text-muted">
         {outcome.reason}
       </p>
@@ -276,58 +200,39 @@ function LearnedPanel({ outcome }: { outcome: GateOutcome }) {
 }
 
 /**
- * Tier 2's "where did verification run" exhibit — the demo's teaching point
- * split honestly across the two runtimes that did the work.
+ * The predicate-route exhibit: what the range proof established, and where
+ * it was verified (entirely on the Worker — the N3 story).
  */
-function ZkExhibit({ outcome, zk }: { outcome: GateOutcome; zk?: ZkVerification }) {
-  const payload = outcome.status === "verified" ? outcome.zk : undefined;
+function PredicateExhibit({ predicate }: { predicate: PredicatePayload }) {
   return (
     <div className="mt-4 rounded-2xl border border-line bg-canvas p-4 text-left">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
-        Zero-knowledge check · who verified what
+        Range proof · verified on the server
       </p>
       <dl className="mt-2 space-y-1.5 text-[12px] leading-relaxed">
         <div>
-          <dt className="font-semibold text-ink">The Nightcap's Worker verified</dt>
+          <dt className="font-semibold text-ink">What was proven</dt>
           <dd className="text-ink-dim">
-            the DMV's BBS signature over the disclosed commitment, the wallet's
-            presentation signature (nonce + audience → no replay), that the proof's
-            commitment IS the one the DMV signed, and that its cutoff matches today's
-            18+ policy.
+            The license's hidden birth date is on or before{" "}
+            <span className="font-mono">{predicate.cutoffIso}</span> — 18+ against{" "}
+            <em>this request's</em> cutoff. Unlike the age_over_18 flag (frozen at
+            issuance), the statement is live; unlike a disclosed birthdate, the date
+            itself never left the wallet.
           </dd>
         </div>
         <div>
-          <dt className="font-semibold text-ink">This browser verified</dt>
+          <dt className="font-semibold text-ink">Where it was checked</dt>
           <dd className="text-ink-dim">
-            {zk === undefined ? (
-              "…still running."
-            ) : zk.verified ? (
-              <>
-                the UltraHonk proof itself ({payload?.scheme}, circuit{" "}
-                <span className="font-mono">{payload?.circuit}</span>) in {zk.verifyMs} ms,
-                against the shop's built-in verification key{" "}
-                <span className="font-mono break-all">sha256:{zk.vkHash.slice(0, 16)}…</span>
-              </>
-            ) : (
-              "the UltraHonk proof — and it did NOT verify."
-            )}
+            Entirely on The Nightcap's Worker: the DMV's signature, the presentation
+            proof (nonce + audience → no replay), and the range proof over the hidden
+            value — one server-side verdict, no browser hand-off.
           </dd>
         </div>
       </dl>
-      <p className="mt-3 border-t border-line pt-3 text-[12px] leading-relaxed text-muted">
-        Why split? The proof verifier is ~10 MB of WASM that Cloudflare's free-tier
-        Worker can neither ship nor instantiate at runtime — so the shop's own client
-        runs it (a self-hosted verifier would make the same call server-side, as this
-        demo's e2e suite does in Node). Unlike the age_over_18 flag — frozen at
-        issuance for cutoffs the DMV guessed in advance — this proof was generated
-        against <em>today's</em> cutoff, from a birthdate that never left the wallet.
-      </p>
-      {zk !== undefined && zk.publicInputs.length > 0 && (
-        <Inspector
-          title="ZK public inputs [commitment, cutoff_days]"
-          data={{ publicInputs: zk.publicInputs, vkHash: zk.vkHash, verifyMs: zk.verifyMs }}
-        />
-      )}
+      <Inspector
+        title="Predicate (as restated by the verifier)"
+        data={predicate}
+      />
     </div>
   );
 }
@@ -382,34 +287,11 @@ export function AgeGate({
   usePolledOutcome(
     statusUrl,
     (outcome) => {
-      const zkPayload =
-        outcome.status === "verified" && outcome.verdict === "zk_pending"
-          ? outcome.zk
-          : undefined;
       setPhase((current) => {
         const session = current?.kind === "awaiting" ? current.session : null;
-        return zkPayload !== undefined
-          ? { kind: "zk-verifying", outcome, session }
-          : { kind: "done", outcome, session };
+        return { kind: "done", outcome, session };
       });
-      if (zkPayload !== undefined) {
-        // The Worker's checks passed; the UltraHonk proof is this browser's
-        // to verify (see verifyZkPayload) — the verdict waits for it.
-        void verifyZkPayload(zkPayload).then((zk) => {
-          setPhase((current) =>
-            current?.kind === "zk-verifying" && current.outcome === outcome
-              ? { kind: "done", outcome, session: current.session, zk }
-              : current,
-          );
-          onVerdict(zk.verified ? "allowed" : null);
-        });
-        return;
-      }
-      onVerdict(
-        outcome.status === "verified" && outcome.verdict !== "zk_pending"
-          ? (outcome.verdict ?? null)
-          : null,
-      );
+      onVerdict(outcome.status === "verified" ? (outcome.verdict ?? null) : null);
     },
     () => setPhase({ kind: "timed-out" }),
   );
@@ -492,23 +374,6 @@ export function AgeGate({
     );
   }
 
-  if (phase.kind === "zk-verifying") {
-    return (
-      <div className="rounded-3xl border border-line bg-surface p-6 text-center" aria-live="polite">
-        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
-          Age check · zero-knowledge proof
-        </p>
-        <p className="mt-3 text-[13px] text-ink-dim">
-          Verifying the UltraHonk proof in this browser…
-        </p>
-        <p className="mx-auto mt-2 max-w-md text-[12px] leading-relaxed text-muted">
-          The Worker already checked the signatures and that the proof is about the
-          commitment the DMV signed — the proof itself is checked right here.
-        </p>
-      </div>
-    );
-  }
-
   if (phase.kind === "timed-out") {
     return (
       <div className="rounded-3xl border border-line bg-surface p-6 text-center">
@@ -578,13 +443,10 @@ export function AgeGate({
   }
 
   // phase.kind === "done"
-  const { outcome, zk } = phase;
-  const isZkOutcome = outcome.status === "verified" && outcome.verdict === "zk_pending";
-  const allowed =
-    outcome.status === "verified" &&
-    (outcome.verdict === "allowed" || (isZkOutcome && zk?.verified === true));
+  const { outcome } = phase;
+  const isPredicateOutcome = outcome.status === "verified" && outcome.predicate !== undefined;
+  const allowed = outcome.status === "verified" && outcome.verdict === "allowed";
   const denied = outcome.status === "verified" && outcome.verdict === "denied";
-  const zkFailed = isZkOutcome && zk?.verified !== true;
   return (
     <div className="rounded-3xl border border-line bg-surface p-6 text-center" aria-live="polite">
       {allowed && (
@@ -593,7 +455,7 @@ export function AgeGate({
             ● Open for you
           </p>
           <h2 className="mt-2 font-display text-2xl text-ink">
-            {isZkOutcome ? "Proven — 18 or over. Nothing else." : "Verified — 18 or over."}
+            {isPredicateOutcome ? "Proven — 18 or over. Nothing else." : "Verified — 18 or over."}
           </h2>
         </>
       )}
@@ -607,24 +469,22 @@ export function AgeGate({
           </h2>
         </>
       )}
-      {(outcome.status === "failed" || zkFailed) && (
+      {outcome.status === "failed" && (
         <>
           <p className="font-mono text-lg font-semibold uppercase tracking-[0.3em] text-danger">
             ● Couldn't verify
           </p>
           <p className="mx-auto mt-2 max-w-lg break-words text-[13px] leading-relaxed text-ink-dim">
-            {outcome.status === "failed"
-              ? outcome.reason
-              : zk?.error !== undefined
-                ? `The proof verifier could not run in this browser: ${zk.error}`
-                : "The zero-knowledge proof did not verify — the presentation is not accepted."}
+            {outcome.reason}
           </p>
         </>
       )}
 
       <LearnedPanel outcome={outcome} />
 
-      {isZkOutcome && <ZkExhibit outcome={outcome} zk={zk} />}
+      {outcome.status === "verified" && outcome.predicate !== undefined && (
+        <PredicateExhibit predicate={outcome.predicate} />
+      )}
 
       {phase.session !== null && (
         <Inspector title="OID4VP authorization request" data={phase.session.request} />

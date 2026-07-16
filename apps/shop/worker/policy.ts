@@ -3,22 +3,23 @@
  * judges what comes back.
  *
  * The query's alternatives are the demo's privacy ladder, in the shop's
- * order of preference: the ZK age predicate over the birthdate commitment
- * (learns one bit, valid for ANY cutoff), the mdoc-style `age_over_18` flag
- * (one bit, but only cutoffs the issuer anticipated — and stale since
- * issuance), and the raw `birth_date` fallback for credentials issued
- * before the flags existed (discloses strictly the most).
+ * order of preference: the credkit range predicate over the HIDDEN
+ * `birth_date` twin (learns one bit, valid for ANY cutoff, proven against
+ * THIS request's date, no correlation handle), the mdoc-style `age_over_18`
+ * flag (one bit, but only cutoffs the issuer anticipated — and stale since
+ * issuance), and the raw `birth_date` fallback (discloses strictly the
+ * most).
+ *
+ * Since N3 the whole check runs server-side: credkit's verifier is pure JS
+ * (no WASM), so the Worker returns ONE verdict — no `zk_pending`, no
+ * client-side proof check, no split runtime.
  */
 
 import type { DcqlQuery } from "@vgw/protocols";
-import type { VerifiableCredential } from "@vgw/vc-kit";
-// Subpath imports only: pulling in @vgw/zk's root would drag the bb.js/noir
-// WASM stacks into the WORKER bundle (as lazy chunks, but uploaded and
-// counted all the same). These three modules are WASM-free by contract.
-import { assertAgeProofBundle } from "@vgw/zk/bundle";
-import { ageCutoffDays } from "@vgw/zk/cutoff";
-import { normalizeFieldHex } from "@vgw/zk/encoding";
-import type { SessionOutcome } from "./sessions.js";
+import { CREDKIT_PARAMS_PATH } from "@vgw/protocols";
+import { getEncoder, type VerifiableCredential } from "@vgw/vc-kit";
+import type { PredicateExhibit, SessionOutcome } from "./sessions.js";
+import { RANGE_PARAMS_BASE } from "./params.js";
 
 /** The single credential query id — key of this query's vp_token entry. */
 export const AGE_QUERY_ID = "utopia_dl_age";
@@ -26,144 +27,154 @@ export const AGE_QUERY_ID = "utopia_dl_age";
 /** The age threshold this shop gates on. */
 export const AGE_YEARS = 18;
 
-/**
- * Clock-skew tolerance for the proof's cutoff: the wallet computes "today
- * minus 18 years" on its own clock, which near midnight may run one day
- * ahead of the Worker's.
- */
-const CUTOFF_SKEW_DAYS = 1;
+/** Digits of the base-16 decomposition (16^4 days ≈ 179 years of range). */
+export const RANGE_DIGITS = 4;
 
-/** Path segments shared by all three claims. */
+/** Path segments shared by all claims. */
 const LICENSE_PATH = ["credentialSubject", "driversLicense"] as const;
 
-export const AGE_DCQL_QUERY: DcqlQuery = {
-  credentials: [
-    {
-      id: AGE_QUERY_ID,
-      format: "ldp_vc",
-      meta: {
-        type_values: [["VerifiableCredential", "Iso18013DriversLicenseCredential"]],
-      },
-      claims: [
-        // No `values` filter on the flag: the shop wants to LEARN the value,
-        // not steer under-18 wallets into disclosing their birth date.
-        { id: "age_flag", path: [...LICENSE_PATH, "age_over_18"] },
-        { id: "dob", path: [...LICENSE_PATH, "birth_date"] },
-        { id: "commitment", path: [...LICENSE_PATH, "birthDateCommitment"] },
-      ],
-      // The wallet's DEFAULT is the first satisfiable set; the ZK path needs
-      // the holder's opt-in (proving costs seconds), so the flag leads and
-      // the tier picker is how a wallet chooses the commitment route.
-      claim_sets: [["age_flag"], ["dob"], ["commitment"]],
-      vgw_zk: { predicate: "age_over", years: AGE_YEARS, claim_id: "commitment" },
-    },
-  ],
-};
+/** The predicate's twin — must match the DL's issued numeric declaration. */
+export const BIRTH_DATE_POINTER = "/credentialSubject/driversLicense/birth_date";
+
+const MS_PER_DAY = 86_400_000;
+const EPOCH_1900 = Date.UTC(1900, 0, 1);
 
 /**
- * Judge a tier-2 response: the presentation disclosed the birthdate
- * commitment and carried a `zkAgeProof` bundle (signature-covered by the VP
- * wrapper, which already verified).
- *
- * The Worker checks everything EXCEPT the UltraHonk proof itself:
- * bb.js instantiates WASM from bytes at runtime, which the Workers runtime
- * prohibits, and its WASM alone would exhaust the free plan's script budget
- * — so the final cryptographic check runs in the shop's own client (and in
- * Node for the e2e suite), against the same checked-in verification key.
- * Hence `zk_pending`, never `allowed`, from this function.
- *
- * What IS checked here, because the client shouldn't have to re-derive it:
- * - the bundle is well-formed (shape, sizes, known scheme/circuit),
- * - its commitment equals the BBS-disclosed `birthDateCommitment` — the
- *   link between "a proof about SOME birthdate" and "THE birthdate the DMV
- *   signed for this credential",
- * - its threshold is this shop's policy threshold, and
- * - its cutoff is at most today's cutoff (older is stricter, newer would
- *   shrink the required age), with one day of clock-skew tolerance.
+ * The cutoff DATE for "at least `years` old as of `now`": real calendar
+ * arithmetic (`Date.UTC` rolls Feb 29 over for free), never day-count year
+ * approximations. Anyone born ON or BEFORE this date has had their
+ * `years`th birthday.
  */
-export function evaluateZkAgePolicy(
-  credentials: VerifiableCredential[],
-  zkAgeProof: unknown,
-  now: Date = new Date(),
-): Pick<SessionOutcome, "status" | "verdict" | "reason" | "disclosed" | "zk"> {
-  const disclosed = disclosedLicenseClaims(credentials);
+export function ageCutoffIso(years: number, now: Date): string {
+  const cutoff = new Date(
+    Date.UTC(now.getUTCFullYear() - years, now.getUTCMonth(), now.getUTCDate()),
+  );
+  return cutoff.toISOString().slice(0, 10);
+}
 
-  let bundle;
-  try {
-    ({ bundle } = assertAgeProofBundle(zkAgeProof));
-  } catch (error) {
-    return {
-      status: "failed",
-      reason: error instanceof Error ? error.message : "malformed zkAgeProof",
-      disclosed,
-    };
-  }
+/** Inverse of the `date1900` encoder, for the outcome exhibit. */
+export function date1900DaysToIso(days: bigint): string {
+  return new Date(EPOCH_1900 + Number(days) * MS_PER_DAY).toISOString().slice(0, 10);
+}
 
-  const disclosedCommitment = disclosed["birthDateCommitment"];
-  if (typeof disclosedCommitment !== "string") {
-    return {
-      status: "failed",
-      reason:
-        "The presentation carries a zkAgeProof but does not disclose the birthDateCommitment it must be proven against.",
-      disclosed,
-    };
-  }
-  let signedCommitment: string;
-  try {
-    signedCommitment = normalizeFieldHex(disclosedCommitment);
-  } catch {
-    return {
-      status: "failed",
-      reason: "The disclosed birthDateCommitment is not a hex field element.",
-      disclosed,
-    };
-  }
-  if (bundle.commitment !== signedCommitment) {
-    return {
-      status: "failed",
-      reason:
-        "The zkAgeProof's commitment is not the birthDateCommitment the issuer signed — the proof is about some other birthdate.",
-      disclosed,
-    };
-  }
+/**
+ * One offered range claim in token-storable JSON (MIGRATION Appendix D.2):
+ * the response endpoint rebuilds its `verifyGraph` expectations from THIS —
+ * the verifier's own signed memory — never from the wire.
+ */
+export interface OfferedRangeClaim {
+  pointer: string;
+  kind: "greaterOrEqual" | "lessOrEqual";
+  /** Decimal string (bigint-safe; `JSON.stringify` chokes on bigints). */
+  bound: string;
+  digits: number;
+}
 
-  if (bundle.years !== AGE_YEARS) {
-    return {
-      status: "failed",
-      reason: `The zkAgeProof proves an age_over_${bundle.years} predicate; this shop requires age_over_${AGE_YEARS}.`,
-      disclosed,
-    };
-  }
+/** What `buildAgeDcqlQuery` returns: the wire query + the signed-token memory. */
+export interface AgeDcqlOffer {
+  query: DcqlQuery;
+  /** The concrete claims offered, in wire order — travels inside the state token. */
+  offeredRangeClaims: OfferedRangeClaim[];
+}
 
-  const maxCutoff = ageCutoffDays(AGE_YEARS, now) + CUTOFF_SKEW_DAYS;
-  if (bundle.cutoffDays > maxCutoff) {
-    return {
-      status: "failed",
-      reason: `The zkAgeProof's cutoff (day ${bundle.cutoffDays}) is later than today's age_over_${AGE_YEARS} cutoff (day ${maxCutoff - CUTOFF_SKEW_DAYS}) — it would prove less than ${AGE_YEARS} years.`,
-      disclosed,
-    };
-  }
+/**
+ * Build the per-request DCQL query. Per-request because the predicate bound
+ * is "18+ as of NOW": the cutoff is pinned at request time, rides inside the
+ * signed state token, and is restated verbatim at the response — no
+ * re-derivation drift, no clock-skew window.
+ */
+export function buildAgeDcqlQuery(options: {
+  origin: string;
+  now: Date;
+  /** base64url SHA-256 of this isolate's published range-params octets. */
+  paramsHash: string;
+}): AgeDcqlOffer {
+  const cutoffIso = ageCutoffIso(AGE_YEARS, options.now);
+  const bound = getEncoder("date1900").encode(cutoffIso).toString();
+  // Older = smaller day number, so "18 or older" is birth_date <= cutoff.
+  const kind = "lessOrEqual" as const;
+
+  const query: DcqlQuery = {
+    credentials: [
+      {
+        id: AGE_QUERY_ID,
+        format: "ldp_vc",
+        meta: {
+          type_values: [["VerifiableCredential", "Iso18013DriversLicenseCredential"]],
+        },
+        claims: [
+          // No `values` filter on the flag: the shop wants to LEARN the value,
+          // not steer under-18 wallets into disclosing their birth date.
+          { id: "age_flag", path: [...LICENSE_PATH, "age_over_18"] },
+          { id: "dob", path: [...LICENSE_PATH, "birth_date"] },
+        ],
+        // The wallet's DEFAULT is the first satisfiable set; the predicate
+        // route is the holder's opt-in via the tier picker.
+        claim_sets: [["age_flag"], ["dob"]],
+        vgw_predicates: {
+          params_uri: `${options.origin}${CREDKIT_PARAMS_PATH}`,
+          range: [
+            {
+              path: [...LICENSE_PATH, "birth_date"],
+              kind,
+              bound,
+              digits: RANGE_DIGITS,
+              params_hash: options.paramsHash,
+            },
+          ],
+          // The predicate route discloses NOTHING beyond the issuer's
+          // mandatory pointers — the shop needs one bit, not a name.
+          claim_set: [],
+        },
+      },
+    ],
+  };
 
   return {
-    status: "verified",
-    verdict: "zk_pending",
-    reason:
-      "Signatures, issuer, and the proof's public-input bindings verified on the Worker; the UltraHonk proof itself is verified by the shop's client (the free-tier edge runtime cannot run the WASM verifier — see the inspector).",
-    disclosed,
-    zk: {
-      scheme: bundle.scheme,
-      circuit: bundle.circuit,
-      years: bundle.years,
-      cutoffDays: bundle.cutoffDays,
-      commitment: bundle.commitment,
-      proof: bundle.proof,
-    },
+    query,
+    offeredRangeClaims: [{ pointer: BIRTH_DATE_POINTER, kind, bound, digits: RANGE_DIGITS }],
   };
 }
 
 /**
- * Judge the verified credentials against the 18+ policy. Only called with
- * credentials whose proofs already verified — this is pure claims logic.
+ * Judge a predicate-route response: `verifyCredkitPresentation` already
+ * proved — server-side, cryptographically — that the HIDDEN birth_date twin
+ * satisfies the restated bound. What remains is narration: the shop learned
+ * one live bit, no birthdate, no flag, no correlation handle.
+ */
+export function evaluateAgePredicatePolicy(
+  credentials: VerifiableCredential[],
+  offered: OfferedRangeClaim[],
+): Pick<SessionOutcome, "status" | "verdict" | "reason" | "disclosed" | "predicate"> {
+  const disclosed = disclosedLicenseClaims(credentials);
+  const claim = offered[0];
+  if (claim === undefined) {
+    // Unreachable: the route is only selected when the token offered claims.
+    return {
+      status: "failed",
+      reason: "No offered predicate to judge this presentation against.",
+      disclosed,
+    };
+  }
+  const cutoffIso = date1900DaysToIso(BigInt(claim.bound));
+  const predicate: PredicateExhibit = { ...claim, cutoffIso };
+  return {
+    status: "verified",
+    verdict: "allowed",
+    reason:
+      `The presentation proves birth_date on or before ${cutoffIso} — at least ${AGE_YEARS} years old ` +
+      `against THIS request's cutoff, verified entirely on the Worker. The shop learned one live bit: ` +
+      `no birthdate, no issuance-frozen flag, and no correlation handle (the proof hides the date behind ` +
+      `a per-presentation-randomized twin).`,
+    disclosed,
+    predicate,
+  };
+}
+
+/**
+ * Judge the verified credentials against the 18+ policy (the disclosure
+ * routes). Only called with credentials whose proofs already verified —
+ * this is pure claims logic.
  */
 export function evaluateAgePolicy(
   credentials: VerifiableCredential[],

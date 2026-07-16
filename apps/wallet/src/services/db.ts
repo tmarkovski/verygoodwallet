@@ -11,9 +11,8 @@
  *                    while the wallet is locked.
  * - `presentations`— the presentation log (added at DB_VERSION 2, for the
  *                    cross-verifier exhibit): who was shown what, at which
- *                    tier, under which pairwise presenter DID. Fully
- *                    encrypted — the log names verifiers and disclosed
- *                    values, so it is exactly as sensitive as the
+ *                    tier. Fully encrypted — the log names verifiers and
+ *                    disclosed values, so it is exactly as sensitive as the
  *                    credentials themselves.
  *
  * Version disambiguation (they share a number by coincidence, MIGRATION
@@ -41,19 +40,6 @@ export interface AccountRecord {
 export type NewAccountRecord = Omit<AccountRecord, "id">;
 
 /**
- * @deprecated Transitional (dies at N3/N4 with the old presentation flow):
- * private opening of the retired Poseidon birthdate commitment.
- */
-export interface CommitmentOpening {
-  /** Committed value: birth date as days since the Unix epoch. */
-  value: number;
-  /** 0x-hex blinding factor. */
-  blinding: string;
-  /** 0x-hex Poseidon commitment (also present, signed, inside the VC). */
-  commitment: string;
-}
-
-/**
  * The JSON envelope encrypted into `CredentialRecord.payload` — the
  * versioned v3 shape written since N2 (credkit blind issuance).
  *
@@ -73,18 +59,6 @@ export interface CredentialPayload {
   secretProverBlind: string;
 }
 
-/**
- * @deprecated Transitional (dies at N3): the unversioned pre-N2 envelope
- * shape. Nothing writes it anymore — DB_VERSION 3 cleared all legacy
- * records — but the not-yet-reworked presentation path (`presentation.ts`
- * and its frozen tests, rewritten at N3) still types its decrypted inputs
- * with it.
- */
-export interface LegacyCredentialPayload {
-  vc: VerifiableCredential;
-  commitmentOpening?: CommitmentOpening;
-}
-
 export interface CredentialRecord {
   id: number;
   accountId: number;
@@ -99,12 +73,16 @@ export type NewCredentialRecord = Omit<CredentialRecord, "id">;
 export interface PresentationLogPayload {
   verifierOrigin: string;
   verifierName: string;
-  /** The pairwise presenter DID this (and only this) verifier saw. */
+  /**
+   * The presenter DID this verifier saw. Entries since N3 record "" — the
+   * credkit presentation carries NO holder identifier of any kind; pre-N3
+   * entries keep the pairwise DID they actually disclosed.
+   */
   presenterDid: string;
   tier: 0 | 1 | 2;
   /** Claim → value exactly as consented (the disclosure preview). */
   disclosed: Record<string, unknown>;
-  /** Present for tier 2: the predicate proven in zero knowledge. */
+  /** Present for tier 2: the age threshold proven (value never disclosed). */
   zkYears?: number;
   at: number;
 }

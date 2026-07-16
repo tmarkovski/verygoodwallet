@@ -20,35 +20,33 @@
  * storage stub, which an RPC DO's platform base class would preclude.
  */
 
-/** The tier-2 payload the rentals CLIENT verifies (see policy.ts on why not here). */
-export interface ZkOutcomePayload {
-  scheme: string;
-  circuit: string;
-  years: number;
-  /** Cutoff the Worker validated against its own policy clock. */
-  cutoffDays: number;
-  /** The BBS-disclosed commitment (canonical hex) — the proof's other public input. */
-  commitment: string;
-  /** UltraHonk proof bytes, base64url. */
-  proof: string;
+/**
+ * The predicate-route exhibit: what the range proof established, verified
+ * entirely on the Worker (no `zk_pending`, no client hand-off since N3).
+ */
+export interface PredicateExhibit {
+  /** The declared twin the proof is about (never its value). */
+  pointer: string;
+  kind: "greaterOrEqual" | "lessOrEqual";
+  /** Inclusive bound in the twin's encoder units, decimal string. */
+  bound: string;
+  digits: number;
+  /** The bound as a calendar date — the cutoff pinned at request time. */
+  cutoffIso: string;
 }
 
 /** Everything the rentals UI learns about a completed session. */
 export interface SessionOutcome {
   /** `verified` = the presentation checked out; `failed` = it did not. */
   status: "verified" | "failed";
-  /**
-   * Only for `verified`: what the rental policy decided. `zk_pending` means
-   * every Worker-side check passed and the final UltraHonk verification is
-   * the client's (see the `zk` payload).
-   */
-  verdict?: "allowed" | "denied" | "zk_pending";
+  /** Only for `verified`: what the rental policy decided. */
+  verdict?: "allowed" | "denied";
   /** Human-readable basis for the outcome (shown in the rentals UI). */
   reason: string;
   /** Claim name → disclosed value — exactly what this verifier learned. */
   disclosed: Record<string, unknown>;
-  /** Present iff `verdict` is `zk_pending`. */
-  zk?: ZkOutcomePayload;
+  /** Present iff the wallet took the predicate route. */
+  predicate?: PredicateExhibit;
   /** The vp_token as received, for the protocol inspector. */
   vpToken?: unknown;
   completedAt: number;

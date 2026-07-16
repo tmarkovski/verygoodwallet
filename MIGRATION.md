@@ -332,19 +332,25 @@ stays; `claimPathToPointer` (RFC-6901) stays. Concrete edits:
   The commitment's builder/verifier (holder `commit` / issuer `blindSign`-verify) rides through the
   vc-kit facade (`createHolderBinding` re-export / `issueCredkitCredential`): it is the binding,
   orthogonal to the PoP.
-- **`oid4vp.ts`** — the predicate extension generalizes. `DcqlZkAgePredicate { predicate:"age_over",
-  years, claim_id }` → a credkit predicate descriptor carrying range claims (`pointer, kind, bound,
-  digits`), membership claims (`pointer`), equalities, and a **params reference** (hash + fetch URL).
-  The `age_over` runtime enforcement (`oid4vp.ts:364`) widens accordingly. `challenge=nonce` /
-  `domain=client_id` map onto credkit's presentation header — folded *natively* by
-  `presentGraph`/`verifyGraph`, or via `encodePresentationHeader` on the N=1 path (§4).
+- **`oid4vp.ts`** — the predicate extension generalizes; wire shape **settled at the N3 design
+  pass (Appendix D.1)**. `DcqlZkAgePredicate`/`vgw_zk` is deleted and replaced by a per-query
+  `vgw_predicates` object: range claims over hidden twins (`path, kind, bound, digits,
+  params_hash`), a `params_uri` pointing at the verifier's published alphabets (D.3), an explicit
+  predicate-route `claim_set` (the claims disclosed alongside), and reserved-but-rejected slots for
+  `membership` and top-level `vgw_equalities` (N5). `challenge=nonce` / `domain=client_id` map onto
+  credkit's presentation header — folded *natively* by `presentGraph`/`verifyGraph`, or via
+  `encodePresentationHeader` on the N=1 path (§4).
 - **`dcql.ts`, `dcApi.ts`** — unchanged in shape (`claimPathToPointer` already emits the JSON pointers
   credkit consumes; the DC API carries the same DCQL).
 - **vc-kit** — remains VGW's facade. `bbs.ts` delegates crypto to credkit's `issueCredential` /
   `deriveProof`+`presentGraph` / `verifyProof`+`verifyGraph`, while `presentation.ts` drops the
   eddsa-rdfc-2022 presenter signature but retains the verifier-facing policy wrapper described in §4.
   Do not replace `verifyCredential`/`verifyPresentation` with bare re-exports: the facade still owns
-  expected-issuer, proof-verification-method, and validity-window enforcement.
+  expected-issuer, proof-verification-method, and validity-window enforcement. *As executed
+  (N2/N3):* the credkit bodies live in **parallel facade modules** (`credkit.ts`,
+  `credkitPresentation.ts`, `credkitParams.ts` — Appendix D.4) with those policy semantics ported
+  verbatim; `bbs.ts`/`presentation.ts` stay byte-identical with no live callers and die at N4
+  (Appendix B Replace note).
 - **Issuer key bridge** — `keys.ts` swaps key generation to `@credkit/bbs` `keyGen` and adds inverse,
   tested `bbsDidKeyFromPublicKey(G2Point)` / `bbsPublicKeyFromDidKey(did:key:zUC7…)` helpers. The first
   preserves the issuer DID published as `vgw_issuer_did` — and more than the encoding survives:
@@ -371,7 +377,10 @@ Three obligations on the verifier Workers:
    (`octetsToRangeParams`/`octetsToSetParams`, validated with `verifyRangeParams`/`verifySetParams`),
    never regenerate locally, or the `paramsHash` the verifier checks will not match and every proof
    fails closed. One artifact, minted once, fetched by holder and verifier alike. `createRangeParams`
-   (age digits) and `createSetParams` (residency) come from `@credkit/range`.
+   (age digits) and `createSetParams` (residency) come from `@credkit/range`. **Settled at N3
+   (Appendix D.3): deterministic seed-derived mint** — the alphabet derives from a verifier secret
+   via the IETF `seeded_random_scalars` generator, so every isolate serves byte-identical params
+   with zero storage, published as JSON at `/.well-known/credkit-params`.
 2. **Verify entirely in the Worker.** `verifyProof`/`verifyGraph` run server-side (pure JS, no WASM).
    Delete the client-side `verifyAgeProof` in `AgeGate.tsx`/`RentalGate.tsx`, the `zk_pending` verdict,
    and the two-runtime split exhibit. The Worker returns one verdict. This is safe by precedent: the
@@ -473,7 +482,7 @@ encoder registry can be referenced/published openly rather than embedded per dep
 | **N0** | ✅ Complete. Worker-viability proven under workerd (spike below); consumption decided **and validated** — Git deps pinned by sha via pnpm overrides (§11, Appendix C addendum); credkit `8fdb3cf` is consumable and VGW is wired (resolver plugin, vitest inlining, optimizeDeps excludes) with the full typecheck/test/build/smoke pipeline green. Full `issueCredential`/`verifyProof` under workerd deferred to N2/N3 (needs a document loader + the pinned VP envelope) |
 | **N1** | ✅ Complete (additive — live callers flip at N2). `deriveLinkSecret(master)` under the non-origin-scoped `vgw/v1/link-secret` info + a link-secret branch in the inspector tree; vc-kit gains `generateCredkitBbsKeyPair` (era pinned in `credkitCiphersuite()`), `bbsDidKeyFromPublicKey`, `bbsPublicKeyFromDidKey`, with round-trip and rejection vectors (wrong codec, bad length, off-curve, identity). Bonus finding: credkit `keyGen` ≡ digitalbazaar KeyGen from the same seed (pinned cross-library test) — the N2 swap keeps the issuer DID stable |
 | **N2** | ✅ Complete — the DMV blind-issues the DL via credkit (`credkit-bbs-sha-2026`, `date1900` twin, offline loader; issuer DID unchanged per the N1 finding), the wallet threads the master-derived link secret, runs the holder receipt check, and persists the v3 envelope `{ version: 3, vc, secretProverBlind }` (IndexedDB DB_VERSION 3 clears pre-credkit credential records — reissuance, per Appendix B). Wire names (§7): request extension `vgw_holder_commitment`, PoP claim `vgw_commitment_digest`; no `vgw_commitment_opening` travels. `deriveHolderSeed` → `deriveIssuancePopSeed` (`vgw/v1/issuance-pop:<origin>`). Full blind issuance also validated under workerd against the built Worker artifact (closing N0's deferred issuance item). **Branch note:** N2 and N3 land on branch `credkit-flip`; between them the wallet stores credkit credentials it cannot yet present — the presentation path (and the DMV-facing e2e suites) still speak the old stack and are rewritten at N3. The wallet presentation/pipeline unit suites stay GREEN meanwhile: they mint their own bbs-2023 fixtures against the deliberately-retained legacy stack (an earlier draft predicted them red; the retained-until-N4 compatibility keeps them alive). **Transitional, die at N4:** the `vgw-v1.json` `birthDateCommitment`/`zkAgeProof` terms, `buildUtopiaDriversLicense`'s deprecated optional `birthDateCommitment` input, and `commitment.ts` (shop/rentals old-flow suites still exercise them). The demo-issuer seed is now `hkdfDerive(master, "vgw/v1/demo-issuer")` (it used to borrow the removed holder branch) |
-| **N3** | Wallet `deriveProof`; shop/rentals **server-side** verification through the vc-kit policy facade; add the `did:key:zUC7…` ↔ raw G2 trust-anchor bridge; preserve expected issuer, verification-method ownership, and validity checks; pass the offline loader; generalize the DCQL predicate extension; publish range params; delete client bb.js |
+| **N3** | ✅ Complete — the wallet presents and the verifiers verify via credkit, end to end. **Wire (D.1):** `vgw_zk`/`DcqlZkAgePredicate` deleted; per-query `vgw_predicates` (`params_uri`, `range` claims over hidden twins, explicit `claim_set`) validated in `assertDcqlQuery`, with `membership` and top-level `vgw_equalities` reserved-and-rejected-loudly until N5. **Wallet:** `presentation.ts` rewritten onto the vc-kit facade — `presentGraph` via `createCredkitPresentation` (not the N=1 `deriveProof` this row once named; §4 already preferred the graph path, and challenge/domain fold natively), holder binding re-derived from the master + the v3 envelope's scalar-decoded blind, structural-only tier-2 availability (`credkitNumericDeclarations`), the D.3 pinning ritual before any proof, and the §9 fail-closed prover throw surfaced as a friendly error. The VP carries **no holder identifier** — the presenter-key step (and its pairwise DID) is retired, not rotated. **Verifiers:** shop + rentals verify the WHOLE presentation in the Worker through `verifyCredkitPresentation` (configured DID → `bbsPublicKeyFromDidKey` → validated G2 anchor → `verifyGraph` → issuer equality, verification-method control, validity windows); per-request DCQL offers pinned into the HMAC-signed state token and restated from it (D.2), route-picked by the `summarizeCredkitPresentation` claim-count peek; `/.well-known/credkit-params` served from the deterministic `CREDKIT_PARAMS_SEED` mint (D.3; `run_worker_first` + CORS-open in both wranglers). **Deleted at N3:** client `verifyAgeProof` + the bb.js warm-ups (`AgeGate`/`RentalGate`, both verifier `App.tsx`s), the wallet's `@vgw/zk/prove` call + `warmAgeProver`, the `zk_pending` verdict, `ZkExhibit`, the split-runtime exhibit, and the wallet db's dead `LegacyCredentialPayload`/`CommitmentOpening` types; the DMV↔verifier e2e suites flipped off the old stack (the `LegacyCredentialResponse` shim is gone — they now blind-issue and range-prove under workerd). Package deletions (`packages/zk`, `commitment.ts`, the bbs-2023/eddsa wrappers and their `vgw-v1`/builder residue) remain N4 (Appendix B timing note) |
 | **N4** | Rip out `packages/zk` + `commitment.ts`; retire the bbs-2023 / eddsa wrappers; reframe the exhibits |
 | **N5** | Add and bundle the typed Utopia Resident context; Resident Registration credential → residency set-membership (B) and cross-credential link secret (C) via `presentGraph`/`verifyGraph` |
 | **N6** | Stretch: cross-issuer loyalty (D) and/or agent delegation (E) |
@@ -516,10 +525,15 @@ risk. Spike harness kept under the session scratchpad (`credkit-spike/`), not co
 
 ## 13. Not settled here
 
-- The exact wire shape of the generalized DCQL predicate extension (a `vgw_predicates` object vs.
-  reusing OID4VP's evolving predicate proposals) — an N3 design pass.
-- Whether the `/.well-known/credkit-params` alphabet is served static or minted-then-cached, and how
-  the holder pins it against the tracking-tag risk in practice.
+- ~~The exact wire shape of the generalized DCQL predicate extension~~ — **decided 2026-07-16 (N3
+  design pass): a vendor `vgw_predicates` object per credential query**, with a reserved top-level
+  `vgw_equalities` slot for N5; OID4VP's upstream predicate proposals remain unsettled and are not
+  adopted. Full shape: Appendix D.1; restatement discipline: D.2.
+- ~~Whether the `/.well-known/credkit-params` alphabet is served static or minted-then-cached~~ —
+  **decided 2026-07-16 (N3): deterministic seed-derived mint, cached per isolate, zero storage**
+  (Appendix D.3). Holder pinning in practice: same-origin `params_uri`, the double hash check
+  (document `hash` + DCQL `params_hash`), one-time `verifyRangeParams`, and caching by hash — the
+  residual honest-but-curious per-session-alphabet risk stays documented rather than solved (D.3).
 - ~~Whether `credkit-bbs-sha-2026` or `-shake-2026` is the pinned era~~ — **decided 2026-07-16:
   `credkit-bbs-sha-2026`**, forever (cross-credential equality never crosses eras; §11).
 - ~~Whether credkit source-publishes or ships a built `dist`~~ — **resolved by the Git-dependency
@@ -605,7 +619,32 @@ also vendors the vDL, AAMVA, VGW, security, and resident contexts.
 - Issuance commitment — `apps/dmv/worker/index.ts` `createCommitment` (~435), `vgw_commitment_opening` (~457); wallet `services/issuance.ts` opening store/validate (~307, ~519), `services/demo.ts` (~80).
 - **Unlisted consumer (N0 survey):** `apps/dmv/worker/offers.ts:10,74` imports `daysSinceEpoch` to validate offered birth dates. When `commitment.ts` dies (N4), keep a local calendar-date validator (or credkit's `date1900` round-trip) — offer validation must not silently vanish.
 
+**Timing shift, N3 vs N4 (recorded as executed).** The consumer rip-outs above landed at **N3**,
+ahead of the package deletions: the wallet's `@vgw/zk/prove` call and `warmAgeProver` warm-up, the
+client `verifyAgeProof` in `AgeGate.tsx`/`RentalGate.tsx` **and** the `@vgw/zk/verify` warm-ups in
+both verifier `App.tsx`s, `assertAgeProofBundle`/`evaluateZkAgePolicy`/`evaluateZkRoute`, the
+`zk_pending` verdict, and `ZkExhibit` are all gone — no live or test code imports `@vgw/zk`
+anymore. What remains for **N4** is deletion of the now-orphaned artifacts: `packages/zk/**` itself
+(its own suite still runs green), `commitment.ts` + the `@vgw/keys` Poseidon re-exports, the
+bbs-2023/eddsa wrapper bodies and their vc-kit suites, the `vgw-v1.json`
+`birthDateCommitment`/`zkAgeProof` terms, the deprecated `birthDateCommitment` builder input, and
+the `"@vgw/zk"` entries in the three app manifests (kept at N3 so the lockfile only moves for the
+`@credkit/range` addition). Wallet vault types: `LegacyCredentialPayload` and `CommitmentOpening`
+were **deleted from `apps/wallet/src/services/db.ts` at N3** — their last consumers were the frozen
+pre-N3 presentation/pipeline tests, both rewritten against credkit in the same pass (the pipeline
+test now pins derive → blind-issue → encrypt → decrypt → present → verify on the live stack). The
+presentation log keeps its `presenterDid` field for pre-N3 entries; N3 entries record `""` and the
+exhibit renders that honestly as "no identifier" (full exhibit reframe stays N4, §10).
+
 **Replace (crypto bodies → credkit)**
+
+*As executed (N2/N3), the "replacement" is parallel-facade-plus-retirement, not an in-place body
+swap:* `credkit.ts` (N2 issuance) and `credkitPresentation.ts`/`credkitParams.ts` (N3
+presentation, verification, params — Appendix D.4) carry the credkit bodies with the policy
+semantics below ported verbatim, while `bbs.ts`/`presentation.ts` survive untouched — zero live
+callers since N3, suites still green — until their N4 deletion. Same end state, reviewable
+diffs per milestone.
+
 - `packages/vc-kit/src/bbs.ts` — delegate `signCredential`(~66)/`deriveCredential`(~102) to `issueCredential` / `deriveProof`+`presentGraph`; keep `DEFAULT_MANDATORY_POINTERS=['/issuer','/validFrom','/validUntil']`(~40). `verifyCredential`(~148) becomes a policy adapter over `verifyProof`/`verifyGraph`, retaining exact expected-issuer, verification-method-controller, and `checkValidityPeriod` behavior instead of returning Credkit's cryptographic boolean directly.
 - `packages/vc-kit/src/presentation.ts` — remove the eddsa-rdfc-2022 presenter signature from `signPresentation`(~55; `properties` hook carries `zkAgeProof` ~83), but keep `verifyPresentation`(~117) as the verifier-facing facade: accept `expectedIssuerDids` in statement order, obtain raw keys only from those pins, call Credkit, then run the per-document vc-kit policy checks before producing one fail-closed result.
 - `packages/vc-kit/src/keys.ts` — replace `generateBbsKeyPair` with `keyGen` and add `bbsDidKeyFromPublicKey` + `bbsPublicKeyFromDidKey`. Decode/encode the BLS12-381-G2 multicodec explicitly, require 96 key bytes, validate with Credkit's `g2FromBytes`, and pin round-trip/rejection vectors for wrong codec, length, and malformed points. The existing `did:key:zUC7…` identity remains the issuer metadata/config contract.
@@ -690,3 +729,126 @@ vitest configs); vitest additionally needs `server.deps.inline: [/@credkit\//]` 
 rides the vite pipeline instead of a raw Node import, and dev mode needs `optimizeDeps.exclude` for
 all four packages (prebundling bypasses resolveId plugins). Harness: session scratchpad
 (`gitdep-test/`), not committed.
+
+---
+
+# Appendix D — N3 design pass: predicate wire shapes + published params (settled 2026-07-16)
+
+Resolves the first two §13 open points, written before the N3 code per the house convention.
+Implemented at N3; N5 consumes the reserved membership/equality slots.
+
+## D.1 DCQL predicate extension: `vgw_predicates`
+
+`DcqlZkAgePredicate`/`vgw_zk` is deleted at N3 (its only consumers — the two verifier policies and
+the wallet — rewrite in the same milestone). Each DCQL credential query may instead carry one
+`vgw_predicates` object: claims proven about HIDDEN numeric twins, vendor-prefixed so OID4VP-
+compliant consumers ignore it (standard DCQL `values` filters match only disclosed values, and
+upstream predicate proposals remain unsettled — §13):
+
+```jsonc
+"vgw_predicates": {
+  // Where THIS verifier publishes its proof alphabets (D.3). The wallet enforces
+  // same-origin with response_uri and fetches the same public artifact every
+  // other holder fetches (the §8 / FINDINGS §12 anti-tag discipline).
+  "params_uri": "https://shop.example/.well-known/credkit-params",
+  // Range claims over declared numeric twins, in presentation order.
+  "range": [{
+    "path": ["credentialSubject", "driversLicense", "birth_date"], // DCQL path → RFC-6901 via claimPathToPointer
+    "kind": "lessOrEqual",                                         // or "greaterOrEqual"
+    "bound": "46216",  // inclusive, decimal STRING (bigint-safe for uint64), in the twin's encoder units
+    "digits": 4,       // base^digits must cover the honest range (age: base 16, digits 4 ⇒ dates into 2079)
+    "params_hash": "<base64url sha256 of the published range-params octets>"
+  }],
+  // N5 — typed and validated now, rejected by the wallet until implemented:
+  "membership": [{ "path": ["..."], "set_id": "coastal", "params_hash": "..." }],
+  // Claim ids from `claims` that MUST be disclosed alongside the predicate route —
+  // the old tier-2 claim_set made explicit (absent/empty = the predicate route
+  // discloses nothing beyond the issuer's mandatory pointers).
+  "claim_set": ["given_name", "family_name", "document_number"]
+}
+```
+
+Cross-credential equalities (N5) ride at the `dcql_query` top level, referencing query ids —
+reserved shape, validated now, rejected by the wallet until N5:
+
+```jsonc
+"vgw_equalities": [[ { "query": "dl", "link_secret": true }, { "query": "resident", "link_secret": true } ]]
+```
+
+Semantics: `bound` is in the target twin's declared encoder units (`date1900` days, `uint64`).
+Verifiers compute date bounds with real calendar arithmetic and encode via credkit's own
+`getEncoder("date1900")` — never day-count year approximations (Appendix A). The wallet checks each
+`path` against the credential's OWN numeric declarations (parsed from the base proof via
+`parseBaseProofValue`), renders the consent description from (encoder, kind, bound) — e.g. "born on
+or before 2008-07-16 ⇒ at least 18" — and answers with `presentGraph` range claims in the SAME
+order. An out-of-range value makes the prover THROW (the §9 fail-closed beat, surfaced in the
+wallet UI); nothing is posted.
+
+## D.2 Verifier restatement: the signed state token is the memory
+
+`verifyGraph` demands the verifier restate claims + equalities exactly, from its own policy — never
+the wire. The verifier Workers are stateless on the request side, so the concrete offered claims
+(pointer, kind, bound, digits) travel INSIDE the HMAC-signed OID4VP `state` token, next to the
+nonce; the response endpoint rebuilds `expectedRangeClaims` from that signed memory plus its own
+in-memory params object. No re-derivation drift, no clock-skew window: the bound is pinned at
+request time, and "18+ as of the request" is the intended semantic. (A seed rotation between
+request and response makes the wire `paramsHash` mismatch the verifier's params — fails closed
+inside credkit.)
+
+Because the DCQL query offers ALTERNATIVES (flag / dob / predicate), the verifier picks which
+expectation set to restate before calling `verifyGraph`: it peeks at the VP envelope's claim
+COUNTS (`summarizeCredkitPresentation`, a thin wrapper over credkit's exported
+`parsePresentationEnvelope` — counts only, no trust decisions) and selects the predicate-route
+expectations (the token's claims) when the count matches the offer, the disclosure-route
+expectations (`[]`) when zero, and fails anything else. The choice is always between
+verifier-authored sets; the wire never supplies a bound, a param, or an equality.
+
+## D.3 Published params: `/.well-known/credkit-params`
+
+One JSON document per verifier (GET, CORS-open — the wallet fetches cross-origin from the browser;
+`run_worker_first` gains the path in both verifier wranglers):
+
+```jsonc
+{
+  "version": 1,
+  "suite": "credkit-bbs-sha-2026",
+  "range": { "base": 16, "params": "<base64url rangeParamsToOctets>", "hash": "<base64url sha256(octets)>" }
+  // N5: "sets": { "<set_id>": { "params": "…", "hash": "…" } }
+}
+```
+
+**Deterministic mint, zero storage** (settles §13 static-vs-minted): `createRangeParams` is
+randomized, but its `randomScalars` hook accepts the IETF `seeded_random_scalars` generator credkit
+exports as `mockRandomScalars` — off-label naming, exactly the right KDF (expand a seed under a
+DST, reduce mod r). Each verifier derives its alphabet from a SECRET seed — `CREDKIT_PARAMS_SEED`,
+falling back to the resolved token secret — under an app-specific DST, so every isolate and cold
+start serves byte-identical params with no KV/DO. The seed must stay secret: the alphabet's signing
+scalar x is derivable from it, and x lets anyone BB-sign out-of-alphabet digits (i.e. forge range
+proofs against that verifier alone — it only fools itself, but still). Rotating the seed rotates
+the alphabet and fails in-flight sessions closed.
+
+**Holder pinning against the per-prover-alphabet tag (FINDINGS §12):** the wallet (a) enforces
+`params_uri` same-origin with `response_uri`, (b) fetches the same public artifact every holder
+fetches, (c) checks `sha256(octets)` equals BOTH the document's `hash` and the DCQL claim's
+`params_hash`, (d) validates the alphabet once via `verifyRangeParams` and caches by hash. An
+honest-but-curious verifier could still mint per-session alphabets consistent across (a)–(d) —
+the residual risk stays documented rather than solved; in practice the params are cache-stable
+public artifacts anyone can compare out of band.
+
+## D.4 New facade surface (N3)
+
+- `packages/vc-kit/src/credkitPresentation.ts` — `createCredkitPresentation` (wraps
+  `presentGraph`, loader pinned), `verifyCredkitPresentation` (the §4 policy facade: configured
+  DIDs → `bbsPublicKeyFromDidKey` → `g2FromBytes`, `verifyGraph`, then per-statement issuer
+  equality, proof-verification-method control, and validity windows, porting `bbs.ts`'s exact
+  check semantics; one fail-closed result), `summarizeCredkitPresentation` (envelope claim
+  counts), `credkitNumericDeclarations` (a credential's declared twins, from its base proof),
+  and — added in the implementation pass — `credkitProofMode` (holder-bound vs baseline, so the
+  wallet refuses to present an unbound credential) plus a re-exported `getEncoder` and the
+  expectation/claim types, so verifiers and wallet never import `@credkit/*` directly.
+- `packages/vc-kit/src/credkitParams.ts` — `mintSeededRangeParams` (suite-pinned
+  `createRangeParams` over `mockRandomScalars(seed, dst)`), `rangeParamsToBase64Url` /
+  `rangeParamsFromBase64Url` (validated decode), `rangeParamsHashBase64Url`.
+- `packages/protocols/src/credkitParams.ts` — the D.3 document type,
+  `assertCredkitParamsDocument`, and `CREDKIT_PARAMS_PATH` (crypto-free wire contract, per the §7
+  protocols charter).

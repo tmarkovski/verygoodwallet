@@ -41,14 +41,22 @@ function VerifierCard({ entry }: { entry: PresentationLogEntry }) {
         {entry.verifierOrigin}
       </p>
       <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
-        Saw this presenter DID
+        Saw this presenter identifier
       </p>
-      <p
-        className="mt-1 inline-block rounded bg-gold-soft px-1.5 py-0.5 font-mono text-[11px] text-gold"
-        title={entry.presenterDid}
-      >
-        {shortDid(entry.presenterDid)}
-      </p>
+      {entry.presenterDid === "" ? (
+        // Entries since N3: the credkit presentation carries no holder key
+        // or DID at all — there is no identifier to show, which IS the point.
+        <p className="mt-1 text-[12px] text-ink-dim">
+          None — the presentation carried no holder key or DID.
+        </p>
+      ) : (
+        <p
+          className="mt-1 inline-block rounded bg-gold-soft px-1.5 py-0.5 font-mono text-[11px] text-gold"
+          title={entry.presenterDid}
+        >
+          {shortDid(entry.presenterDid)}
+        </p>
+      )}
       <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
         And learned
       </p>

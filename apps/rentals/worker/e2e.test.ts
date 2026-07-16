@@ -1,63 +1,172 @@
 /**
- * Live end-to-end: real DMV Worker → wallet-side crypto → real rentals
- * Worker (plus the real shop Worker for the cross-verifier exhibit).
+ * Live end-to-end under workerd: the BUILT DMV Worker blind-issues a credkit
+ * DL, the wallet-side crypto (holder binding, receipt check, params pinning,
+ * presentGraph) runs in this process, and the BUILT rentals Worker verifies
+ * the WHOLE presentation server-side — all over real HTTP.
  *
- * Gated behind VGW_E2E=1 because it needs the dev servers running:
+ * Gated behind VGW_E2E=1 because it boots `wrangler dev` from the deploy
+ * artifacts (the exact bundles `wrangler deploy` uploads):
  *
- *   pnpm --filter @vgw/dmv dev       # :5174
- *   pnpm --filter @vgw/shop dev     # :5175 (cross-verifier test only)
- *   pnpm --filter @vgw/rentals dev  # :5176
+ *   pnpm --filter @vgw/dmv build && pnpm --filter @vgw/rentals build
  *   VGW_E2E=1 pnpm --filter @vgw/rentals test
  *
- * What it proves that the unit suites cannot: the Workers agree on the wire
- * contracts over real HTTP, the rentals Worker discovers the DMV's issuer
- * DID from live metadata, a credential issued by the real issuance flow
- * verifies through the real direct_post — and, for M5, that the SAME
- * credential presented to the two live verifiers leaves them nothing to
- * correlate: different pairwise presenter DIDs, disjoint disclosures. The
- * one honest exception (found by the M6 guided tour): the ZK tier at BOTH
- * verifiers shows both the same issuer-signed commitment — the seal never
- * opens, but the seal itself is a joinable value, and the test pins that.
+ * Point VGW_E2E_DMV / VGW_E2E_RENTALS at already-running servers to skip the
+ * self-boot. Ports are distinct from the shop e2e's so the two suites can
+ * run back to back.
+ *
+ * What it proves that the unit suite cannot: the Workers agree on the wire
+ * contracts over real HTTP under the real Cloudflare runtime, the rentals
+ * Worker discovers the DMV's issuer DID from live metadata, identity
+ * enforcement holds on the predicate route, and the cross-verifier exhibit
+ * FLIPS: the presentation carries no holder identifier at all — nothing for
+ * two verifiers to compare notes on (the pre-credkit suite pinned the
+ * commitment as a joinable value; that value no longer exists).
  */
-// TODO(N3): rewrite this whole flow to the credkit stack — the live DMV now
-// requires a vgw_holder_commitment + digest-carrying PoP and blind-signs a
-// credkit credential with NO vgw_commitment_opening, so the legacy issuance
-// spoken below cannot succeed against it. Only the removed imports were
-// swapped at N2 to keep typecheck green (this file is VGW_E2E-gated).
-import { describe, expect, it } from "vitest";
-import { daysSinceEpoch, deriveIssuancePopSeed, derivePresenterSeed, verifyCommitment } from "@vgw/keys";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { deriveIssuancePopSeed, deriveLinkSecret, scalarToBase64Url, scalarFromBase64Url, toBase64Url } from "@vgw/keys";
 import {
+  CREDKIT_PARAMS_PATH,
   PRE_AUTHORIZED_CODE_GRANT_TYPE,
+  assertCredkitParamsDocument,
+  commitmentDigest,
   createProofJwt,
   type CredentialOffer,
   type CredentialResponse,
   type IssuerMetadata,
+  type PresentationRequest,
   type TokenResponse,
 } from "@vgw/protocols";
 import {
-  deriveCredential,
-  generateEd25519KeyPair,
-  signPresentation,
+  createCredkitPresentation,
+  createHolderBinding,
+  rangeParamsFromBase64Url,
+  rangeParamsHashBase64Url,
+  verifyIssuedCredkitCredential,
+  type RangeClaimRequest,
+  type RangeParams,
   type VerifiableCredential,
-  type VerifiablePresentation,
 } from "@vgw/vc-kit";
-import { VGW_CONTEXT_URL } from "@vgw/vc-kit/contexts";
-import { ageCutoffDays, proveAgePredicate, verifyAgeProof } from "@vgw/zk";
 import type { VerificationSessionBody } from "./index.js";
 import type { SessionOutcome, SessionStatus } from "./sessions.js";
 
-const DMV = process.env.VGW_E2E_DMV ?? "http://localhost:5174";
-const SHOP = process.env.VGW_E2E_SHOP ?? "http://localhost:5175";
-const RENTALS = process.env.VGW_E2E_RENTALS ?? "http://localhost:5176";
+const E2E = process.env.VGW_E2E === "1";
 
-const MASTER_SECRET = new Uint8Array(32).fill(42);
+const DMV_PORT = 8793;
+const RENTALS_PORT = 8794;
+const DMV = process.env.VGW_E2E_DMV ?? `http://127.0.0.1:${DMV_PORT}`;
+const RENTALS = process.env.VGW_E2E_RENTALS ?? `http://127.0.0.1:${RENTALS_PORT}`;
+
+const MASTER_SECRET = new Uint8Array(32).fill(43);
 
 const LICENSE = "/credentialSubject/driversLicense";
+const BIRTH_DATE_POINTER = `${LICENSE}/birth_date`;
 const IDENTITY_POINTERS = [
   `${LICENSE}/given_name`,
   `${LICENSE}/family_name`,
   `${LICENSE}/document_number`,
 ];
+const FLAG_POINTER = `${LICENSE}/age_over_25`;
+
+// ---------------------------------------------------------------------------
+// workerd harness: boot the BUILT Worker artifacts via `wrangler dev`
+// ---------------------------------------------------------------------------
+
+interface BootedWorker {
+  child: ChildProcess;
+  output: () => string;
+}
+
+function repoRelative(...segments: string[]): string {
+  const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+  return path.join(appDir, "..", "..", ...segments);
+}
+
+/** Strip deploy routes so workerd serves localhost, not the prod hostname. */
+function routelessConfig(appDir: string, distName: string): string {
+  const deployConfig = path.join(appDir, `dist/${distName}/wrangler.json`);
+  if (!existsSync(deployConfig)) {
+    throw new Error(`${deployConfig} missing — run \`pnpm build\` for the app first`);
+  }
+  const { routes: _routes, ...config } = JSON.parse(readFileSync(deployConfig, "utf8")) as {
+    routes?: unknown;
+  };
+  const e2eConfig = path.join(appDir, `dist/${distName}/wrangler.e2e.json`);
+  writeFileSync(e2eConfig, JSON.stringify(config, null, 2));
+  return e2eConfig;
+}
+
+function bootWorker(options: {
+  appDir: string;
+  distName: string;
+  port: number;
+  vars?: Record<string, string>;
+}): BootedWorker {
+  const config = routelessConfig(options.appDir, options.distName);
+  const args = [
+    "exec",
+    "wrangler",
+    "dev",
+    "--config",
+    config,
+    "--port",
+    String(options.port),
+    "--inspector-port",
+    "0",
+  ];
+  for (const [key, value] of Object.entries(options.vars ?? {})) {
+    args.push("--var", `${key}:${value}`);
+  }
+  const child = spawn("pnpm", args, {
+    cwd: options.appDir,
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+  child.stderr?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+  return { child, output: () => output };
+}
+
+function killWorker(worker: BootedWorker | undefined): void {
+  const pid = worker?.child.pid;
+  if (pid !== undefined) {
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+async function waitForHttp(url: string, worker: BootedWorker | undefined): Promise<void> {
+  const deadline = Date.now() + 90_000;
+  for (;;) {
+    if (worker?.output().includes("The Workers runtime failed to start")) {
+      throw new Error(`workerd rejected the built bundle:\n${worker.output()}`);
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`no response from ${url} within 90s\n${worker?.output() ?? ""}`);
+    }
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+    } catch {
+      /* not listening yet */
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+let dmvWorker: BootedWorker | undefined;
+let rentalsWorker: BootedWorker | undefined;
+
+// ---------------------------------------------------------------------------
+// The wallet side, spoken over real HTTP
+// ---------------------------------------------------------------------------
 
 async function json<T>(response: Response): Promise<T> {
   expect(response.ok, `${response.url} -> HTTP ${response.status}`).toBe(true);
@@ -66,18 +175,11 @@ async function json<T>(response: Response): Promise<T> {
 
 interface IssuedCredential {
   vc: VerifiableCredential;
-  opening: { value: number; blinding: string; commitment: string };
+  /** scalar-encoded blind, exactly as the vault stores it. */
+  secretProverBlind: string;
 }
 
-/**
- * Pre-N2 credential response with the retired vgw_commitment_opening
- * extension — kept locally for typecheck only until the TODO(N3) rewrite.
- */
-type LegacyCredentialResponse = CredentialResponse & {
-  vgw_commitment_opening?: { value: number; blinding: string; commitment: string };
-};
-
-/** The wallet's issuance flow, spoken over real HTTP against the dev DMV. */
+/** The wallet's N2 issuance flow (binding + digest-PoP + receipt check). */
 async function issueCredential(persona: {
   givenName: string;
   familyName: string;
@@ -87,7 +189,7 @@ async function issueCredential(persona: {
     await fetch(`${DMV}/api/offers`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...persona, documentNumber: "UDL-E2EB-RENT" }),
+      body: JSON.stringify({ ...persona, documentNumber: "UDL-E2EB-TEST" }),
     }),
   );
   const offer = await json<CredentialOffer>(await fetch(offerBody.credential_offer_uri));
@@ -107,13 +209,16 @@ async function issueCredential(persona: {
     }),
   );
 
-  const holderSeed = await deriveIssuancePopSeed(MASTER_SECRET, new URL(DMV).origin);
+  const linkSecret = await deriveLinkSecret(MASTER_SECRET);
+  const binding = createHolderBinding({ linkSecret });
+  const popSeed = await deriveIssuancePopSeed(MASTER_SECRET, new URL(DMV).origin);
   const jwt = createProofJwt({
-    seed: holderSeed,
+    seed: popSeed,
     audience: offer.credential_issuer,
     nonce: token.c_nonce,
+    commitmentDigest: await commitmentDigest(binding.commitmentWithProof),
   });
-  const credentialResponse = await json<LegacyCredentialResponse>(
+  const credentialResponse = await json<CredentialResponse>(
     await fetch(metadata.credential_endpoint, {
       method: "POST",
       headers: {
@@ -123,334 +228,248 @@ async function issueCredential(persona: {
       body: JSON.stringify({
         credential_configuration_id: offer.credential_configuration_ids[0],
         proof: { proof_type: "jwt", jwt },
+        vgw_holder_commitment: toBase64Url(binding.commitmentWithProof),
       }),
     }),
   );
 
-  const opening = credentialResponse.vgw_commitment_opening;
-  expect(opening).toBeDefined();
-  expect(opening!.value).toBe(daysSinceEpoch(persona.birthDate));
-  expect(verifyCommitment(opening!.value, opening!.blinding, opening!.commitment)).toBe(true);
+  const vc = credentialResponse.credentials[0]!.credential as unknown as VerifiableCredential;
+  expect(
+    await verifyIssuedCredkitCredential({
+      verifiableCredential: vc,
+      holderBinding: { linkSecret, secretProverBlind: binding.secretProverBlind },
+    }),
+  ).toBe(true);
 
-  return {
-    vc: credentialResponse.credentials[0]!.credential as unknown as VerifiableCredential,
-    opening: opening!,
-  };
+  return { vc, secretProverBlind: scalarToBase64Url(binding.secretProverBlind) };
 }
 
-/**
- * The wallet's presentation flow against a live verifier: pairwise presenter
- * key for THAT verifier's origin, multi-pointer BBS derivation, signed VP,
- * direct_post. Returns the response and the presenter DID used.
- */
-async function present(options: {
-  vc: VerifiableCredential;
-  session: VerificationSessionBody;
-  verifierOrigin: string;
-  pointers: string[];
-  zkAgeProof?: unknown;
-}): Promise<{ response: Response; presenterDid: string }> {
-  const derived = await deriveCredential({
-    verifiableCredential: options.vc,
-    selectivePointers: options.pointers,
+/** The wallet's params pinning: fetch, validate, hash-check, decode. */
+async function fetchRentalsParams(
+  request: PresentationRequest,
+): Promise<{ params: RangeParams; hash: string }> {
+  const predicates = request.dcql_query.credentials[0]?.vgw_predicates;
+  expect(predicates).toBeDefined();
+  const paramsUri = new URL(predicates!.params_uri);
+  expect(paramsUri.origin).toBe(new URL(request.response_uri).origin);
+  expect(paramsUri.pathname).toBe(CREDKIT_PARAMS_PATH);
+
+  const document = assertCredkitParamsDocument(await json(await fetch(paramsUri)));
+  const params = rangeParamsFromBase64Url(document.range!.params);
+  const hash = await rangeParamsHashBase64Url(params);
+  expect(hash).toBe(document.range!.hash);
+  for (const claim of predicates!.range ?? []) {
+    expect(claim.params_hash).toBe(hash);
+  }
+  return { params, hash };
+}
+
+/** Answer the query's range predicate with the published params. */
+function rangeClaimsFor(
+  request: PresentationRequest,
+  params: RangeParams,
+): RangeClaimRequest[] {
+  const range = request.dcql_query.credentials[0]?.vgw_predicates?.range ?? [];
+  return range.map((entry) => ({
+    pointer: BIRTH_DATE_POINTER,
+    kind: entry.kind,
+    bound: BigInt(entry.bound),
+    digits: entry.digits,
+    params,
+  }));
+}
+
+/** The wallet's presentation flow (disclosure or predicate route). */
+async function present(
+  issued: IssuedCredential,
+  session: VerificationSessionBody,
+  options: { pointers?: string[]; rangeClaims?: RangeClaimRequest[] },
+): Promise<Response> {
+  const vp = await createCredkitPresentation({
+    credentials: [
+      {
+        verifiableCredential: issued.vc,
+        selectivePointers: options.pointers ?? [],
+        ...(options.rangeClaims !== undefined ? { rangeClaims: options.rangeClaims } : {}),
+        holderBinding: {
+          linkSecret: await deriveLinkSecret(MASTER_SECRET),
+          secretProverBlind: scalarFromBase64Url(issued.secretProverBlind),
+        },
+      },
+    ],
+    challenge: session.request.nonce,
+    domain: session.request.client_id,
   });
-  const presenterSeed = await derivePresenterSeed(MASTER_SECRET, options.verifierOrigin);
-  const presenter = await generateEd25519KeyPair(presenterSeed);
-  const vp = await signPresentation({
-    credentials: [derived],
-    keyPair: presenter,
-    challenge: options.session.request.nonce,
-    domain: options.session.request.client_id,
-    ...(options.zkAgeProof !== undefined
-      ? { contexts: [VGW_CONTEXT_URL], properties: { zkAgeProof: options.zkAgeProof } }
-      : {}),
-  });
-  const response = await fetch(options.session.request.response_uri, {
+  return fetch(session.request.response_uri, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      vp_token: JSON.stringify({
-        [options.session.request.dcql_query.credentials[0]!.id]: [vp],
-      }),
-      state: options.session.request.state,
+      vp_token: JSON.stringify({ [session.request.dcql_query.credentials[0]!.id]: [vp] }),
+      state: session.request.state,
     }).toString(),
   });
-  return { response, presenterDid: presenter.controller };
 }
 
-async function createSession(verifier: string): Promise<VerificationSessionBody> {
-  return json<VerificationSessionBody>(
-    await fetch(`${verifier}/api/verification`, { method: "POST" }),
-  );
-}
+describe.skipIf(!E2E)("live end-to-end (built DMV + rentals Workers under workerd)", () => {
+  beforeAll(async () => {
+    if (process.env.VGW_E2E_DMV === undefined) {
+      dmvWorker = bootWorker({
+        appDir: repoRelative("apps", "dmv"),
+        distName: "vgw_dmv",
+        port: DMV_PORT,
+      });
+    }
+    if (process.env.VGW_E2E_RENTALS === undefined) {
+      rentalsWorker = bootWorker({
+        appDir: repoRelative("apps", "rentals"),
+        distName: "vgw_rentals",
+        port: RENTALS_PORT,
+        // Discovery, not a pin: the counter must find the DMV's DID live.
+        vars: { DMV_ORIGIN: DMV },
+      });
+    }
+    await waitForHttp(`${DMV}/.well-known/openid-credential-issuer`, dmvWorker);
+    await waitForHttp(`${RENTALS}${CREDKIT_PARAMS_PATH}`, rentalsWorker);
+  }, 180_000);
 
-describe.skipIf(process.env.VGW_E2E !== "1")("live end-to-end (DMV + rentals dev servers)", () => {
-  it("issues at the DMV and clears an over-25 driver at the counter, identity disclosed", async () => {
-    const { vc } = await issueCredential({
-      givenName: "Jamie",
-      familyName: "Voss",
-      birthDate: "1988-04-19",
-    });
+  afterAll(() => {
+    killWorker(rentalsWorker);
+    killWorker(dmvWorker);
+  });
 
-    const session = await createSession(RENTALS);
-    const { response } = await present({
-      vc,
-      session,
-      verifierOrigin: new URL(RENTALS).origin,
-      pointers: [...IDENTITY_POINTERS, `${LICENSE}/age_over_25`],
+  it("issues at the DMV and rents at 25+ via identity + flag, via discovered trust", async () => {
+    const issued = await issueCredential({
+      givenName: "Marisol",
+      familyName: "Deng",
+      birthDate: "1958-06-21",
     });
-    const ack = await json<{ redirect_uri?: string }>(response);
+    const session = await json<VerificationSessionBody>(
+      await fetch(`${RENTALS}/api/verification`, { method: "POST" }),
+    );
+    const posted = await present(issued, session, {
+      pointers: [...IDENTITY_POINTERS, FLAG_POINTER],
+    });
+    const ack = await json<{ redirect_uri?: string }>(posted);
     expect(ack.redirect_uri).toContain(`session=${session.session_id}`);
 
     const status = await json<SessionStatus>(await fetch(session.status_url));
     expect(status).toMatchObject({
       status: "verified",
       verdict: "allowed",
-      disclosed: {
-        given_name: "Jamie",
-        family_name: "Voss",
-        document_number: "UDL-E2EB-RENT",
-        age_over_25: true,
-      },
+      disclosed: { given_name: "Marisol", age_over_25: true },
     });
-    // The counter needs identity, but the birthdate stays undisclosed.
-    const disclosed = (status as { disclosed: Record<string, unknown> }).disclosed;
-    expect(disclosed["birth_date"]).toBeUndefined();
-    expect(disclosed["subject_id"]).toBeUndefined();
+    expect((status as SessionOutcome).disclosed["birth_date"]).toBeUndefined();
   }, 120_000);
 
-  it("denies a 22-year-old — over 18 is not over 25", async () => {
-    const { vc } = await issueCredential({
-      givenName: "Riley",
-      familyName: "Mercer",
-      birthDate: "2004-05-01",
+  it("denies an under-25 driver on the same rails", async () => {
+    const issued = await issueCredential({
+      givenName: "Jamie",
+      familyName: "Voss",
+      birthDate: "2003-05-05",
     });
-    const session = await createSession(RENTALS);
-    const { response } = await present({
-      vc,
-      session,
-      verifierOrigin: new URL(RENTALS).origin,
-      pointers: [...IDENTITY_POINTERS, `${LICENSE}/age_over_25`],
-    });
-    expect(response.status).toBe(200);
+    const session = await json<VerificationSessionBody>(
+      await fetch(`${RENTALS}/api/verification`, { method: "POST" }),
+    );
+    const ack = await json<{ redirect_uri?: string }>(
+      await present(issued, session, { pointers: [...IDENTITY_POINTERS, FLAG_POINTER] }),
+    );
+    expect(ack.redirect_uri).toBeDefined();
     const status = await json<SessionStatus>(await fetch(session.status_url));
     expect(status).toMatchObject({ status: "verified", verdict: "denied" });
-    expect((status as SessionOutcome).disclosed["age_over_25"]).toBe(false);
   }, 120_000);
 
   it("rejects a replayed direct_post against the live Durable Object", async () => {
-    const { vc } = await issueCredential({
-      givenName: "Jamie",
-      familyName: "Voss",
-      birthDate: "1988-04-19",
+    const issued = await issueCredential({
+      givenName: "Marisol",
+      familyName: "Deng",
+      birthDate: "1958-06-21",
     });
-    const session = await createSession(RENTALS);
-    const pointers = [...IDENTITY_POINTERS, `${LICENSE}/age_over_25`];
-    const origin = new URL(RENTALS).origin;
-    const first = await present({ vc, session, verifierOrigin: origin, pointers });
-    expect(first.response.status).toBe(200);
-    const replay = await present({ vc, session, verifierOrigin: origin, pointers });
-    expect(replay.response.status).toBe(400);
+    const session = await json<VerificationSessionBody>(
+      await fetch(`${RENTALS}/api/verification`, { method: "POST" }),
+    );
+    const first = await present(issued, session, {
+      pointers: [...IDENTITY_POINTERS, FLAG_POINTER],
+    });
+    expect(first.status).toBe(200);
+    const replay = await present(issued, session, {
+      pointers: [...IDENTITY_POINTERS, FLAG_POINTER],
+    });
+    expect(replay.status).toBe(400);
   }, 120_000);
 
-  it("tier 2: a real over-25 UltraHonk proof round-trips — same commitment as the shop's 18+ tier", async () => {
-    const { vc, opening } = await issueCredential({
-      givenName: "Jamie",
-      familyName: "Voss",
-      birthDate: "1988-04-19",
+  it("predicate route: identity + the 25+ range proof verify ON the Worker, and the VP carries no holder", async () => {
+    const issued = await issueCredential({
+      givenName: "Marisol",
+      familyName: "Deng",
+      birthDate: "1958-06-21",
     });
-
-    const session = await createSession(RENTALS);
-    const query = session.request.dcql_query.credentials[0]!;
-    expect(query.vgw_zk).toMatchObject({ predicate: "age_over", years: 25 });
-
-    const { bundle } = await proveAgePredicate({
-      dobDays: opening.value,
-      blinding: opening.blinding,
-      commitment: opening.commitment,
-      cutoffDays: ageCutoffDays(query.vgw_zk!.years),
-      years: query.vgw_zk!.years,
+    const session = await json<VerificationSessionBody>(
+      await fetch(`${RENTALS}/api/verification`, { method: "POST" }),
+    );
+    const { params } = await fetchRentalsParams(session.request);
+    const posted = await present(issued, session, {
+      pointers: IDENTITY_POINTERS,
+      rangeClaims: rangeClaimsFor(session.request, params),
     });
-
-    const { response } = await present({
-      vc,
-      session,
-      verifierOrigin: new URL(RENTALS).origin,
-      pointers: [...IDENTITY_POINTERS, `${LICENSE}/birthDateCommitment`],
-      zkAgeProof: bundle,
-    });
-    const ack = await json<{ redirect_uri?: string }>(response);
-    expect(ack.redirect_uri).toContain(`session=${session.session_id}`);
+    const ack = await json<{ redirect_uri?: string }>(posted);
+    expect(ack.redirect_uri).toBeDefined();
 
     const status = await json<SessionStatus>(await fetch(session.status_url));
-    expect(status).toMatchObject({ status: "verified", verdict: "zk_pending" });
+    expect(status).toMatchObject({ status: "verified", verdict: "allowed" });
     const outcome = status as SessionOutcome;
-    // The live counter learned identity + the opaque commitment — no age data.
-    expect(outcome.disclosed["given_name"]).toBe("Jamie");
-    expect(outcome.disclosed["birthDateCommitment"]).toBe(opening.commitment);
-    expect(outcome.disclosed["age_over_25"]).toBeUndefined();
+    // Identity disclosed (the rental agreement needs it); the age question
+    // cost one live bit — no birthdate, no flag.
+    expect(outcome.disclosed["given_name"]).toBe("Marisol");
     expect(outcome.disclosed["birth_date"]).toBeUndefined();
+    expect(outcome.disclosed["age_over_25"]).toBeUndefined();
+    expect(outcome.predicate?.pointer).toBe(BIRTH_DATE_POINTER);
 
-    // The rentals client's final check, byte-for-byte (Node runs the same code).
-    expect(outcome.zk).toBeDefined();
-    const zkResult = await verifyAgeProof({
-      proof: outcome.zk!.proof,
-      commitment: outcome.zk!.commitment,
-      cutoffDays: outcome.zk!.cutoffDays,
-    });
-    expect(zkResult.verified).toBe(true);
+    // The flipped cross-verifier exhibit: the recorded presentation carries
+    // NO holder identifier — nothing for this counter and the shop to join.
+    const vpToken = outcome.vpToken as Record<string, unknown[]>;
+    const vp = vpToken[session.request.dcql_query.credentials[0]!.id]?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(vp["holder"]).toBeUndefined();
   }, 120_000);
 
-  it("tier 2: the live Worker rejects a cutoff later than today's over-25 policy", async () => {
-    const { vc, opening } = await issueCredential({
-      givenName: "Jamie",
-      familyName: "Voss",
-      birthDate: "1988-04-19",
+  it("predicate route: a range proof without the identity disclosures fails the policy", async () => {
+    const issued = await issueCredential({
+      givenName: "Marisol",
+      familyName: "Deng",
+      birthDate: "1958-06-21",
     });
-    const session = await createSession(RENTALS);
-    // A cutoff 30 days in the future is a strictly weaker statement
-    // (would admit 24.9-year-olds). Proving succeeds; policy must not.
-    const { bundle } = await proveAgePredicate({
-      dobDays: opening.value,
-      blinding: opening.blinding,
-      commitment: opening.commitment,
-      cutoffDays: ageCutoffDays(25) + 30,
-      years: 25,
+    const session = await json<VerificationSessionBody>(
+      await fetch(`${RENTALS}/api/verification`, { method: "POST" }),
+    );
+    const { params } = await fetchRentalsParams(session.request);
+    const posted = await present(issued, session, {
+      rangeClaims: rangeClaimsFor(session.request, params),
     });
-    const { response } = await present({
-      vc,
-      session,
-      verifierOrigin: new URL(RENTALS).origin,
-      pointers: [...IDENTITY_POINTERS, `${LICENSE}/birthDateCommitment`],
-      zkAgeProof: bundle,
-    });
-    expect(response.status).toBe(400);
+    expect(posted.status).toBe(400);
     const status = await json<SessionStatus>(await fetch(session.status_url));
     expect(status.status).toBe("failed");
-    expect((status as SessionOutcome).reason).toMatch(/cutoff/);
+    expect((status as SessionOutcome).reason).toMatch(/driver's identity/);
   }, 120_000);
 
-  it("unlinkability: one credential, two live verifiers, nothing to join — except the seal when both take the ZK tier (needs the shop dev server too)", async () => {
-    const { vc, opening } = await issueCredential({
+  it("predicate route: the under-25 holder's prover THROWS — nothing is posted", async () => {
+    const issued = await issueCredential({
       givenName: "Jamie",
       familyName: "Voss",
-      birthDate: "1988-04-19",
+      birthDate: "2003-05-05",
     });
-
-    // Same wallet, same credential — the shop's 18+ gate and the rentals
-    // counter, each with its own pairwise presenter key.
-    const shopSession = await createSession(SHOP);
-    const rentalsSession = await createSession(RENTALS);
-
-    const shop = await present({
-      vc,
-      session: shopSession,
-      verifierOrigin: new URL(SHOP).origin,
-      pointers: [`${LICENSE}/age_over_18`],
-    });
-    const rentals = await present({
-      vc,
-      session: rentalsSession,
-      verifierOrigin: new URL(RENTALS).origin,
-      pointers: [...IDENTITY_POINTERS, `${LICENSE}/age_over_25`],
-    });
-    expect(shop.response.status).toBe(200);
-    expect(rentals.response.status).toBe(200);
-
-    const shopOutcome = (await json<SessionStatus>(
-      await fetch(shopSession.status_url),
-    )) as SessionOutcome;
-    const rentalsOutcome = (await json<SessionStatus>(
-      await fetch(rentalsSession.status_url),
-    )) as SessionOutcome;
-    expect(shopOutcome.verdict).toBe("allowed");
-    expect(rentalsOutcome.verdict).toBe("allowed");
-
-    // 1. Each verifier RECORDED a different presenter DID (from its own
-    // vpToken) — the pairwise keys, as seen from the relying parties' side.
-    const recordedHolder = (outcome: SessionOutcome): string => {
-      const vpToken = outcome.vpToken as Record<string, VerifiablePresentation[]>;
-      const vp = Object.values(vpToken)[0]![0]!;
-      return String(vp.holder);
-    };
-    const shopHolder = recordedHolder(shopOutcome);
-    const rentalsHolder = recordedHolder(rentalsOutcome);
-    expect(shopHolder).toMatch(/^did:key:z6Mk/);
-    expect(rentalsHolder).toMatch(/^did:key:z6Mk/);
-    expect(shopHolder).not.toBe(rentalsHolder);
-    expect(shopHolder).toBe(shop.presenterDid);
-    expect(rentalsHolder).toBe(rentals.presenterDid);
-
-    // 2. The disclosures are disjoint: the counter knows who Jamie is; the
-    // shop knows only "someone over 18". No identifying claim/value pair
-    // appears in both records (bare booleans are one bit shared with half
-    // the population — not a correlation handle).
-    expect(rentalsOutcome.disclosed["given_name"]).toBe("Jamie");
-    expect(shopOutcome.disclosed["given_name"]).toBeUndefined();
-    expect(shopOutcome.disclosed["document_number"]).toBeUndefined();
-    const sharedPairs = Object.entries(shopOutcome.disclosed).filter(
-      ([claim, value]) =>
-        typeof value !== "boolean" &&
-        claim in rentalsOutcome.disclosed &&
-        JSON.stringify(rentalsOutcome.disclosed[claim]) === JSON.stringify(value),
+    const session = await json<VerificationSessionBody>(
+      await fetch(`${RENTALS}/api/verification`, { method: "POST" }),
     );
-    expect(sharedPairs).toEqual([]);
-
-    // 3. The honest exception (the guided tour's own path): the ZK tier at
-    // BOTH counters. Each proof binds to the same issuer-signed commitment
-    // and both verifiers must see it — the seal never opens, but the seal
-    // itself is the one stable value colluding verifiers could match. Pin
-    // it so the exhibit's claim stays true in both directions.
-    const zkShopSession = await createSession(SHOP);
-    const zkRentalsSession = await createSession(RENTALS);
-    const zkShop = await present({
-      vc,
-      session: zkShopSession,
-      verifierOrigin: new URL(SHOP).origin,
-      pointers: [`${LICENSE}/birthDateCommitment`],
-      zkAgeProof: (
-        await proveAgePredicate({
-          dobDays: opening.value,
-          blinding: opening.blinding,
-          commitment: opening.commitment,
-          cutoffDays: ageCutoffDays(18),
-          years: 18,
-          threads: 1,
-        })
-      ).bundle,
-    });
-    const zkRentals = await present({
-      vc,
-      session: zkRentalsSession,
-      verifierOrigin: new URL(RENTALS).origin,
-      pointers: [...IDENTITY_POINTERS, `${LICENSE}/birthDateCommitment`],
-      zkAgeProof: (
-        await proveAgePredicate({
-          dobDays: opening.value,
-          blinding: opening.blinding,
-          commitment: opening.commitment,
-          cutoffDays: ageCutoffDays(25),
-          years: 25,
-          threads: 1,
-        })
-      ).bundle,
-    });
-    expect(zkShop.response.status).toBe(200);
-    expect(zkRentals.response.status).toBe(200);
-    const zkShopOutcome = (await json<SessionStatus>(
-      await fetch(zkShopSession.status_url),
-    )) as SessionOutcome;
-    const zkRentalsOutcome = (await json<SessionStatus>(
-      await fetch(zkRentalsSession.status_url),
-    )) as SessionOutcome;
-    expect(zkShopOutcome.verdict).toBe("zk_pending");
-    expect(zkRentalsOutcome.verdict).toBe("zk_pending");
-    const zkSharedPairs = Object.entries(zkShopOutcome.disclosed).filter(
-      ([claim, value]) =>
-        typeof value !== "boolean" &&
-        claim in zkRentalsOutcome.disclosed &&
-        JSON.stringify(zkRentalsOutcome.disclosed[claim]) === JSON.stringify(value),
-    );
-    expect(zkSharedPairs.map(([claim]) => claim)).toEqual(["birthDateCommitment"]);
-  }, 180_000);
+    const { params } = await fetchRentalsParams(session.request);
+    await expect(
+      present(issued, session, {
+        pointers: IDENTITY_POINTERS,
+        rangeClaims: rangeClaimsFor(session.request, params),
+      }),
+    ).rejects.toThrow(/does not fit/);
+    const status = await json<SessionStatus>(await fetch(session.status_url));
+    expect(status.status).toBe("pending");
+  }, 120_000);
 });

@@ -2,15 +2,26 @@
  * @vgw/vc-kit — W3C VC 2.0 Data Integrity operations. Two proof stacks
  * coexist during the credkit migration (MIGRATION §12):
  *
- * credkit (`credkit-bbs-sha-2026`, live issuance since N2):
+ * credkit (`credkit-bbs-sha-2026` — live issuance since N2, live
+ * presentation + server-side verification since N3):
  * - `generateCredkitBbsKeyPair(seed)` — deterministic issuer keys, did:key ids
  * - `createHolderBinding(...)` — holder link-secret commitment (blind issuance)
  * - `issueCredkitCredential(...)` — issuer blind-signed base proof
  * - `verifyIssuedCredkitCredential(...)` — holder receipt check
+ * - `createCredkitPresentation(...)` — holder VP: selective disclosure +
+ *   range claims over hidden twins, no holder identifier
+ * - `verifyCredkitPresentation(...)` — the relying-party policy facade:
+ *   configured issuer DIDs → raw G2 keys → verifyGraph → issuer /
+ *   verification-method / validity policy, one fail-closed result
+ * - `summarizeCredkitPresentation(...)` — envelope claim counts (route peek)
+ * - `credkitNumericDeclarations(...)` / `credkitProofMode(...)` — a
+ *   credential's declared twins + binding mode, from its base proof
+ * - `mintSeededRangeParams(...)` + params codec/hash helpers — the published
+ *   `/.well-known/credkit-params` alphabet (deterministic seeded mint)
  * - `credkitDocumentLoader` — the strict offline loader for every credkit call
  *
- * bbs-2023 + eddsa-rdfc-2022 (@digitalbazaar stack — presentation path until
- * N3, retired at N4):
+ * bbs-2023 + eddsa-rdfc-2022 (@digitalbazaar stack — no live callers since
+ * N3, deleted at N4):
  * - `generateBbsKeyPair(seed)` — deterministic BBS keys with did:key ids
  * - `signCredential(...)` — issuer base proof (holder-only material)
  * - `deriveCredential(...)` — holder selective-disclosure derived proof
@@ -44,6 +55,35 @@ export {
   type NumericDeclarationEntry,
   type VerifyIssuedCredkitCredentialOptions,
 } from './credkit.js';
+export {
+  createCredkitPresentation,
+  credkitNumericDeclarations,
+  credkitProofMode,
+  getEncoder,
+  summarizeCredkitPresentation,
+  verifyCredkitPresentation,
+  type CreateCredkitPresentationOptions,
+  type CredkitPresentationCredential,
+  type CredkitPresentationSummary,
+  type ExpectedMembershipClaim,
+  type ExpectedRangeClaim,
+  type GraphEquality,
+  type MembershipClaimRequest,
+  type NumericEncoder,
+  type ProofMode,
+  type RangeClaimRequest,
+  type VerifyCredkitPresentationOptions,
+  type VerifyCredkitPresentationResult,
+} from './credkitPresentation.js';
+export {
+  mintSeededRangeParams,
+  rangeParamsFromBase64Url,
+  rangeParamsHashBase64Url,
+  rangeParamsToBase64Url,
+  verifyRangeParams,
+  type MintSeededRangeParamsOptions,
+  type RangeParams,
+} from './credkitParams.js';
 export { generateEd25519KeyPair } from './ed25519.js';
 export { signPresentation, verifyPresentation } from './presentation.js';
 export { documentLoader, registerContext, resolveDid } from './loader.js';

@@ -1,93 +1,84 @@
 /**
- * OID4VP wallet side — answer a verifier's presentation request (milestone
- * M3, the shop age gate).
+ * OID4VP wallet side — answer a verifier's presentation request (credkit
+ * presentations since N3).
  *
  * The flow mirrors the pinned wire contract in @vgw/protocols:
  *
  *   authorization request (by value, in /present's search params)
  *   → DCQL match against the vault's credentials
  *   → user consent with a disclosure-tier choice
- *   → pairwise presenter key (per-verifier HKDF branch) → BBS derived proof
- *   → signed presentation (challenge = nonce, domain = client_id)
+ *   → (tier 2) fetch + pin the verifier's published proof alphabet
+ *   → credkit presentation (selective disclosure ± range claims, holder
+ *     binding to the master-derived link secret; challenge = nonce,
+ *     domain = client_id, folded into the proof transcript natively)
  *   → direct_post to the verifier's response_uri
  *
  * Tier semantics (the demo's privacy ladder):
  *   0 — full disclosure: one pointer at /credentialSubject reveals the whole
- *       subject, including the issuer-pairwise subject id (a correlation
- *       handle verifiers could collude on). Today's status quo.
+ *       subject. Today's status quo.
  *   1 — selective disclosure: only the claims the verifier's DCQL query
  *       matched, plus the issuer's mandatory pointers. Unlinkable across
  *       presentations.
- *   2 — ZK predicate: disclose the claim_set holding the issuer-signed
- *       birthdate COMMITMENT (only the commitment at the shop; the rentals
- *       desk also requires name + license number alongside it) and attach an
- *       UltraHonk proof that the committed date satisfies the verifier's age
- *       cutoff (vgw_zk in the DCQL query). The proof rides
- *       inside the signed presentation as the VGW `zkAgeProof` JSON term,
- *       so the wrapper signature covers it. Requires the vault's stored
- *       commitment opening; the proving stack (noir_js + bb.js WASM) loads
- *       lazily only on this path.
+ *   2 — predicate: a credkit CCS range proof over the HIDDEN numeric twin
+ *       (`vgw_predicates` in the DCQL query) — the verifier learns one live
+ *       bit against ITS OWN cutoff, never the value, and verifies the whole
+ *       presentation server-side. Disclosed alongside: exactly the
+ *       predicate `claim_set` (nothing at the shop; the rental desk's
+ *       identity claims). No WASM, no warm-up, no proving-second waits.
+ *
+ * What no tier carries anymore: a presenter key. The credkit VP has no
+ * `holder` property (credkit rejects one outright) — the verifier sees no
+ * identifier at all, which retires the pairwise presenter DID rather than
+ * rotating it.
  */
 
-import { derivePresenterSeed, previewSecret } from "@vgw/keys";
+import { deriveLinkSecret, fromBase64Url, scalarFromBase64Url } from "@vgw/keys";
 import {
+  assertCredkitParamsDocument,
   claimPathToPointer,
   matchDcqlCredentialQuery,
   presentationRequestFromParams,
   type DcqlCredentialMatch,
   type DcqlCredentialQuery,
+  type DcqlPredicates,
   type DirectPostResult,
   type PresentationRequest,
 } from "@vgw/protocols";
 import {
-  deriveCredential,
-  generateEd25519KeyPair,
-  signPresentation,
+  CREDKIT_CRYPTOSUITE,
+  createCredkitPresentation,
+  credkitNumericDeclarations,
+  credkitProofMode,
+  rangeParamsFromBase64Url,
+  rangeParamsHashBase64Url,
+  verifyRangeParams,
+  type RangeClaimRequest,
+  type RangeParams,
   type VerifiableCredential,
   type VerifiablePresentation,
 } from "@vgw/vc-kit";
-import { VGW_CONTEXT_URL } from "@vgw/vc-kit/contexts";
-import { ageCutoffDays } from "@vgw/zk/cutoff";
-import { normalizeFieldHex } from "@vgw/zk/encoding";
 import { inspect } from "../inspector/events";
-// TODO(N3): this whole module still speaks the pre-credkit stack (bbs-2023
-// derive + eddsa presenter signature + the ZK tier over the retired Poseidon
-// commitment) and is rewritten wholesale at N3. Until then it types its
-// decrypted inputs with the deprecated LegacyCredentialPayload — v3 (credkit)
-// envelopes carry no commitmentOpening and cannot be presented by this code.
-import type { CommitmentOpening, LegacyCredentialPayload, CredentialRecord } from "./db";
+import type { CredentialPayload, CredentialRecord } from "./db";
 
 /**
  * The protocol phases for a tier, in execution order, with UI labels.
  * `onStep` fires with each id as the phase begins so the Present page can
- * render progress. Tier 2 adds the proving phase — by far the longest.
+ * render progress. Tier 2 adds the params fetch — pinning the verifier's
+ * published alphabet before anything is proven.
  */
 export function presentationSteps(
   tier: DisclosureTier,
 ): { id: PresentationStep; label: string }[] {
   return [
-    { id: "deriving-presenter", label: "Deriving a pairwise presenter key" },
-    {
-      id: "deriving-disclosure",
-      label:
-        tier === 2
-          ? "Deriving the commitment-only disclosure"
-          : "Deriving the selective disclosure",
-    },
     ...(tier === 2
-      ? [{ id: "proving" as const, label: "Generating the zero-knowledge proof" }]
+      ? [{ id: "fetching-params" as const, label: "Fetching the verifier's proof alphabet" }]
       : []),
-    { id: "signing-presentation", label: "Signing the presentation" },
+    { id: "deriving-presentation", label: "Deriving the presentation proof" },
     { id: "posting", label: "Sending it to the verifier" },
   ];
 }
 
-export type PresentationStep =
-  | "deriving-presenter"
-  | "deriving-disclosure"
-  | "proving"
-  | "signing-presentation"
-  | "posting";
+export type PresentationStep = "fetching-params" | "deriving-presentation" | "posting";
 
 /** Result of {@link parsePresentParams} — a tiny state machine for /present. */
 export type PresentParams =
@@ -144,8 +135,8 @@ export function previewPresentationRequest(request: PresentationRequest): Verifi
 export interface CandidateCredential {
   record: CredentialRecord;
   vc: VerifiableCredential;
-  /** The decrypted vault envelope — carries the commitment opening (tier 2). */
-  payload: LegacyCredentialPayload;
+  /** The decrypted v3 vault envelope — carries the scalar-encoded blind. */
+  payload: CredentialPayload;
   match: DcqlCredentialMatch;
 }
 
@@ -156,16 +147,35 @@ export interface QueryCandidates {
   candidates: CandidateCredential[];
 }
 
+/** Only the versioned credkit envelope can be presented. */
+function isPresentableEnvelope(payload: CredentialPayload): boolean {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    payload.version === 3 &&
+    typeof payload.secretProverBlind === "string" &&
+    payload.secretProverBlind !== ""
+  );
+}
+
 /**
  * Match the verifier's DCQL query against the vault's decrypted credentials.
  * This demo wallet answers single-credential queries (the shop and rentals
  * verifiers each ask for exactly one) — anything else fails loudly rather
- * than silently presenting less than the verifier asked for.
+ * than silently presenting less than the verifier asked for. Requests
+ * carrying `vgw_equalities` (the reserved N5 cross-credential linkage) are
+ * rejected loudly for the same reason: answering without the demanded
+ * linkage would just fail at the verifier.
  */
 export function matchCredentials(
-  decrypted: { record: CredentialRecord; payload: LegacyCredentialPayload }[],
+  decrypted: { record: CredentialRecord; payload: CredentialPayload }[],
   request: PresentationRequest,
 ): QueryCandidates {
+  if ((request.dcql_query.vgw_equalities?.length ?? 0) > 0) {
+    throw new Error(
+      "This verifier demands a cross-credential equality proof (vgw_equalities) — this wallet doesn't support linked presentations yet",
+    );
+  }
   const queries = request.dcql_query.credentials;
   const query = queries[0];
   if (query === undefined || queries.length !== 1) {
@@ -174,6 +184,9 @@ export function matchCredentials(
     );
   }
   const candidates = decrypted.flatMap(({ record, payload }) => {
+    // Pre-v3 envelopes carry no credkit blind and cannot be presented — they
+    // are not candidates (re-issuing at the DMV is the only path).
+    if (!isPresentableEnvelope(payload)) return [];
     const match = matchDcqlCredentialQuery(payload.vc, query);
     return match === null ? [] : [{ record, vc: payload.vc, payload, match }];
   });
@@ -182,87 +195,169 @@ export function matchCredentials(
 
 export type DisclosureTier = 0 | 1 | 2;
 
-/** Whether (and how) this candidate can answer the verifier's ZK predicate. */
-export type ZkAgeOption =
+/** One range claim of the predicate route, described for consent + proving. */
+export interface PredicateRangeDescription {
+  /** RFC-6901 pointer of the DECLARED twin the proof is about. */
+  pointer: string;
+  /** The twin's declared encoder id (from the credential's own base proof). */
+  encoder: string;
+  kind: "greaterOrEqual" | "lessOrEqual";
+  /** The verifier's inclusive bound, decimal string, in encoder units. */
+  bound: string;
+  digits: number;
+  /** Human-readable consent line derived from (encoder, kind, bound). */
+  description: string;
+  /** For `date1900` + lessOrEqual: the derived "at least N years" label. */
+  years?: number;
+}
+
+/** Whether (and how) this candidate can answer the verifier's predicate request. */
+export type PredicateOption =
   | {
       available: true;
-      years: number;
-      /** Selective-disclosure pointer for the commitment claim. */
-      pointer: string;
+      /** Where the verifier publishes its proof alphabet (same-origin enforced at fetch). */
+      paramsUri: string;
+      /** The requested range claims, in wire order. */
+      range: PredicateRangeDescription[];
       /**
-       * Everything tier 2 discloses: the pointers of the query's claim_set
-       * that contains the commitment. The verifier's own claim_sets define
-       * what must accompany the proof — for the shop that set is just the
-       * commitment; the rentals verifier also requires the driver's name and
-       * license number alongside it.
+       * Everything tier 2 DISCLOSES: the pointers of the predicate
+       * `claim_set` — nothing at the shop; name + license number at the
+       * rentals desk. The proofs themselves disclose no value.
        */
       pointers: string[];
       /** Claim label → value for the consent preview, in claim-set order. */
       disclosed: Record<string, unknown>;
-      /** The credential's signed commitment, canonical hex. */
-      commitment: string;
-      opening: CommitmentOpening;
     }
   | { available: false; reason: string };
 
+const MS_PER_DAY = 86_400_000;
+const EPOCH_1900 = Date.UTC(1900, 0, 1);
+
+function date1900DaysToIso(days: bigint): string {
+  return new Date(EPOCH_1900 + Number(days) * MS_PER_DAY).toISOString().slice(0, 10);
+}
+
+/** Full calendar years elapsed since `iso` as of `now` (birthday semantics). */
+function yearsSince(iso: string, now: Date): number {
+  const [y, m, d] = iso.split("-").map(Number) as [number, number, number];
+  let years = now.getUTCFullYear() - y;
+  if (now.getUTCMonth() + 1 < m || (now.getUTCMonth() + 1 === m && now.getUTCDate() < d)) {
+    years -= 1;
+  }
+  return years;
+}
+
 /**
- * Tier 2 needs four things to line up: the verifier asked for a predicate
- * (vgw_zk), the credential carries the committed birthdate, the vault kept
- * the opening, and the opening matches the signed commitment. Anything
- * missing gets a human reason for the tier picker to show.
+ * Render one requested range claim for the consent screen, from the
+ * credential's DECLARED encoder — never from the verifier's framing.
  */
-export function zkAgeOption(
+function describeRangeClaim(
+  pointer: string,
+  encoder: string,
+  kind: "greaterOrEqual" | "lessOrEqual",
+  bound: string,
+  digits: number,
+  now = new Date(),
+): PredicateRangeDescription {
+  const label = pointer.slice(pointer.lastIndexOf("/") + 1);
+  if (encoder === "date1900") {
+    const iso = date1900DaysToIso(BigInt(bound));
+    if (kind === "lessOrEqual") {
+      const years = yearsSince(iso, now);
+      return {
+        pointer,
+        encoder,
+        kind,
+        bound,
+        digits,
+        years,
+        description: `${label} on or before ${iso} — at least ${years} years old`,
+      };
+    }
+    return {
+      pointer,
+      encoder,
+      kind,
+      bound,
+      digits,
+      description: `${label} on or after ${iso}`,
+    };
+  }
+  return {
+    pointer,
+    encoder,
+    kind,
+    bound,
+    digits,
+    description: `${label} ${kind === "lessOrEqual" ? "≤" : "≥"} ${bound}`,
+  };
+}
+
+/**
+ * Tier 2 availability is STRUCTURAL: the verifier asked for range claims
+ * (`vgw_predicates`), every claimed pointer is a twin this credential's own
+ * base proof DECLARES, and every `claim_set` claim has a value to disclose.
+ * Deliberately NOT checked: whether the hidden value actually satisfies the
+ * bound — an underage holder must be able to attempt the proof and watch
+ * the prover refuse (fail closed), not be silently pre-filtered.
+ */
+export function predicateOption(
   query: DcqlCredentialQuery,
-  candidate: { vc: VerifiableCredential; payload: LegacyCredentialPayload },
-): ZkAgeOption {
-  const zk = query.vgw_zk;
-  if (zk === undefined) {
-    return { available: false, reason: "This verifier doesn't accept ZK proofs." };
+  candidate: { vc: VerifiableCredential; payload: CredentialPayload },
+): PredicateOption {
+  const predicates: DcqlPredicates | undefined = query.vgw_predicates;
+  if (predicates === undefined) {
+    return { available: false, reason: "This verifier doesn't request predicate proofs." };
   }
-  const claim = query.claims?.find((c) => c.id === zk.claim_id);
-  if (claim === undefined) {
-    return { available: false, reason: "The verifier's ZK request is malformed." };
-  }
-  const commitment = claimValue(candidate.vc, claim.path);
-  if (typeof commitment !== "string") {
+  if ((predicates.membership?.length ?? 0) > 0) {
     return {
       available: false,
       reason:
-        "This credential predates birthdate commitments — re-issue it at the Utopia DMV to unlock the ZK tier.",
+        "The verifier asks for a set-membership proof — this wallet doesn't support membership proofs yet.",
     };
   }
-  const opening = candidate.payload.commitmentOpening;
-  if (opening === undefined) {
-    return {
-      available: false,
-      reason:
-        "The commitment's opening isn't in this wallet's vault — re-issue the credential to store one.",
-    };
+  const rangeEntries = predicates.range ?? [];
+  if (rangeEntries.length === 0) {
+    return { available: false, reason: "The verifier's predicate request is malformed." };
   }
-  let canonical: string;
+
+  // The credential's own declared twins, from its signature-bound base proof.
+  let declarations;
   try {
-    canonical = normalizeFieldHex(commitment);
+    declarations = credkitNumericDeclarations(candidate.vc);
   } catch {
-    return { available: false, reason: "The credential's commitment is malformed." };
-  }
-  if (normalizeFieldHex(opening.commitment) !== canonical) {
     return {
       available: false,
-      reason: "The stored opening belongs to a different commitment — re-issue the credential.",
+      reason:
+        "This credential predates the credkit upgrade — re-issue it at the Utopia DMV to unlock predicate proofs.",
     };
   }
 
-  // The tier-2 disclosure is the claim_set the commitment belongs to — the
-  // verifier's declaration of what must ride alongside the proof. Every
-  // claim in it must exist on this credential, or the set is unanswerable.
-  const setRefs =
-    query.claim_sets?.find((set) => set.includes(zk.claim_id)) ?? [zk.claim_id];
+  const range: PredicateRangeDescription[] = [];
+  for (const entry of rangeEntries) {
+    const pointer = claimPathToPointer(entry.path);
+    const declared = declarations.find((decl) => decl.pointer === pointer);
+    if (declared === undefined) {
+      const label = String(entry.path[entry.path.length - 1]);
+      return {
+        available: false,
+        reason: `This credential declares no hidden numeric twin for "${label}" — re-issue it at the Utopia DMV to unlock predicate proofs.`,
+      };
+    }
+    range.push(
+      describeRangeClaim(pointer, declared.encoder, entry.kind, entry.bound, entry.digits),
+    );
+  }
+
+  // The predicate claim_set — the verifier's declaration of what must be
+  // DISCLOSED alongside the proofs. Every claim in it must exist on this
+  // credential, or the route is unanswerable.
   const pointers: string[] = [];
   const disclosed: Record<string, unknown> = {};
-  for (const ref of setRefs) {
-    const setClaim = ref === zk.claim_id ? claim : query.claims?.find((c) => c.id === ref);
+  for (const ref of predicates.claim_set ?? []) {
+    const setClaim = query.claims?.find((c) => c.id === ref);
     if (setClaim === undefined) {
-      return { available: false, reason: "The verifier's ZK request is malformed." };
+      return { available: false, reason: "The verifier's predicate request is malformed." };
     }
     const value = claimValue(candidate.vc, setClaim.path);
     if (value === undefined) {
@@ -276,15 +371,7 @@ export function zkAgeOption(
     disclosed[String(setClaim.path[setClaim.path.length - 1])] = value;
   }
 
-  return {
-    available: true,
-    years: zk.years,
-    pointer: claimPathToPointer(claim.path),
-    pointers,
-    disclosed,
-    commitment: canonical,
-    opening,
-  };
+  return { available: true, paramsUri: predicates.params_uri, range, pointers, disclosed };
 }
 
 function claimValue(vc: VerifiableCredential, path: (string | number)[]): unknown {
@@ -296,33 +383,32 @@ function claimValue(vc: VerifiableCredential, path: (string | number)[]): unknow
   return current;
 }
 
-/** The bbs-2023 selective pointers a tier would disclose. */
+/** The selective-disclosure pointers a tier reveals. */
 export function tierPointers(
   tier: DisclosureTier,
   match: DcqlCredentialMatch,
-  zk?: ZkAgeOption,
+  predicate?: PredicateOption,
 ): string[] {
   if (tier === 0) {
     // One subtree pointer = the whole credentialSubject, id included.
     return ["/credentialSubject"];
   }
   if (tier === 2) {
-    if (zk === undefined || !zk.available) {
-      throw new Error("Tier 2 requires a satisfiable ZK option for this credential");
+    if (predicate === undefined || !predicate.available) {
+      throw new Error("Tier 2 requires a satisfiable predicate option for this credential");
     }
-    // The commitment's claim_set — the proof carries the actual answer, and
-    // the set names whatever the verifier requires alongside it (nothing but
-    // the commitment at the shop; name + license number at the rentals desk).
-    return zk.pointers;
+    // The predicate claim_set — nothing at the shop; the rental desk's
+    // identity claims. The range proofs ride separately and disclose nothing.
+    return predicate.pointers;
   }
   return match.claims.map((claim) => claim.pointer);
 }
 
 /**
  * True when the credential embeds a subject identifier. Credentials issued
- * before the unlinkable-by-default change carry one, and bbs-2023 reveals
- * node ids structurally — so EVERY tier disclosing subject claims reveals
- * it. The consent screen must say so.
+ * before the unlinkable-by-default change carry one, and selective
+ * disclosure reveals node ids structurally — so EVERY tier disclosing
+ * subject claims reveals it. The consent screen must say so.
  */
 export function hasEmbeddedSubjectId(vc: VerifiableCredential): boolean {
   const subject = vc.credentialSubject;
@@ -340,7 +426,7 @@ export function disclosurePreview(
   tier: DisclosureTier,
   vc: VerifiableCredential,
   match: DcqlCredentialMatch,
-  zk?: ZkAgeOption,
+  predicate?: PredicateOption,
 ): Record<string, unknown> {
   const subject = vc.credentialSubject;
   const disclosed: Record<string, unknown> = {};
@@ -350,10 +436,12 @@ export function disclosurePreview(
     disclosed["subject id"] = subject["id"];
   }
   if (tier === 2) {
-    if (zk !== undefined && zk.available) {
-      Object.assign(disclosed, zk.disclosed);
-      disclosed[`age_over_${zk.years}`] =
-        "proven in zero knowledge — the verifier learns this one bit, never the date";
+    if (predicate !== undefined && predicate.available) {
+      Object.assign(disclosed, predicate.disclosed);
+      for (const claim of predicate.range) {
+        disclosed[lastSegment(claim.pointer)] =
+          `proven, not shown: ${claim.description} — the value never leaves this wallet`;
+      }
     }
     return disclosed;
   }
@@ -379,6 +467,138 @@ function lastSegment(pointer: string): string {
   return pointer.slice(pointer.lastIndexOf("/") + 1);
 }
 
+// ---------------------------------------------------------------------------
+// Published-params pinning (MIGRATION §8, Appendix D.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Alphabets that passed the full pinning ritual, keyed by `${uri}#${hash}`.
+ * `verifyRangeParams` costs 2 pairings per digit — run once per alphabet,
+ * remembered for the tab's lifetime (the hash key makes a rotated alphabet
+ * a different entry, never a stale hit).
+ */
+const verifiedParamsCache = new Map<string, RangeParams>();
+
+/**
+ * Fetch and PIN the verifier's published proof alphabet. The discipline
+ * (anti-tag, MIGRATION §8): same-origin with the response endpoint, the
+ * SAME public artifact every holder fetches, sha256(octets) equal to BOTH
+ * the document's hash and every DCQL claim's params_hash, full point
+ * validation on decode, and a one-time pairing check. Any mismatch throws —
+ * nothing is proven against an unpinned alphabet.
+ */
+async function resolveRangeParams(
+  request: PresentationRequest,
+  predicate: Extract<PredicateOption, { available: true }>,
+): Promise<RangeParams> {
+  const responseOrigin = new URL(request.response_uri).origin;
+  const paramsUrl = new URL(predicate.paramsUri);
+  if (paramsUrl.origin !== responseOrigin) {
+    throw new Error(
+      `The verifier's params_uri (${predicate.paramsUri}) is not on its own origin (${responseOrigin}) — refusing a third-party proof alphabet`,
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(paramsUrl);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(
+      `Could not fetch the verifier's proof alphabet (${predicate.paramsUri}): ${detail}`,
+      { cause },
+    );
+  }
+  if (!response.ok) {
+    throw new Error(
+      `The verifier's proof alphabet endpoint (${predicate.paramsUri}) answered HTTP ${response.status}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch {
+    throw new Error(`The verifier's proof alphabet (${predicate.paramsUri}) is not valid JSON`);
+  }
+  const document = assertCredkitParamsDocument(parsed);
+  if (document.suite !== CREDKIT_CRYPTOSUITE) {
+    throw new Error(
+      `The verifier's proof alphabet is for cryptosuite "${document.suite}" — this wallet presents only ${CREDKIT_CRYPTOSUITE}`,
+    );
+  }
+  if (document.range === undefined) {
+    throw new Error("The verifier's proof alphabet document publishes no range params");
+  }
+
+  // THE hash: sha256 of the published octets. It must equal what the
+  // document claims about itself AND what the DCQL request pinned — the
+  // same value credkit embeds in the proof and the verifier restates.
+  const octets = fromBase64Url(document.range.params);
+  const hash = await rangeParamsHashBase64Url(octets);
+  if (hash !== document.range.hash) {
+    throw new Error(
+      "The published proof alphabet does not match its own declared hash — refusing it",
+    );
+  }
+  for (const claim of predicate.range) {
+    // The request's params_hash values were validated as present; every one
+    // must name this exact artifact.
+    const requested = requestParamsHash(request, claim.pointer);
+    if (requested !== hash) {
+      throw new Error(
+        "The verification request pins a different proof alphabet than the verifier publishes — refusing to prove against it",
+      );
+    }
+  }
+  inspect.emit({
+    label: "Verifier proof alphabet fetched & hash-pinned",
+    data: {
+      paramsUri: predicate.paramsUri,
+      suite: document.suite,
+      base: document.range.base,
+      hash,
+      octetsBytes: octets.length,
+    },
+  });
+
+  const cacheKey = `${predicate.paramsUri}#${hash}`;
+  const cached = verifiedParamsCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const params = rangeParamsFromBase64Url(document.range.params);
+  if (params.base !== document.range.base) {
+    throw new Error(
+      "The published proof alphabet's base does not match its document — refusing it",
+    );
+  }
+  // One-time cryptographic validation (2 pairings per digit): a malformed
+  // alphabet would make every proof silently unverifiable.
+  if (!verifyRangeParams(params)) {
+    throw new Error("The verifier's proof alphabet failed its pairing check — refusing it");
+  }
+  verifiedParamsCache.set(cacheKey, params);
+  inspect.emit({
+    label: "Proof alphabet validated (pairing check) & cached",
+    data: { base: params.base, cacheKey },
+  });
+  return params;
+}
+
+/** The params_hash the request pinned for the claim at `pointer`. */
+function requestParamsHash(
+  request: PresentationRequest,
+  pointer: string,
+): string | undefined {
+  for (const entry of request.dcql_query.credentials[0]?.vgw_predicates?.range ?? []) {
+    if (claimPathToPointer(entry.path) === pointer) return entry.params_hash;
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// The ceremony
+// ---------------------------------------------------------------------------
+
 export type PresentCredentialOptions = {
   request: PresentationRequest;
   queryId: string;
@@ -393,7 +613,7 @@ export type PresentCredentialOptions = {
 export interface PresentCredentialResult {
   /** Where the verifier wants the user afterwards (its result page). */
   redirectUri?: string;
-  /** The signed presentation, for the "what was shared" recap. */
+  /** The presentation as posted, for the "what was shared" recap. */
   presentation: VerifiablePresentation;
 }
 
@@ -425,104 +645,123 @@ async function runPresentCredential(
 ): Promise<PresentCredentialResult> {
   const { request, candidate, tier } = opts;
 
-  // Tier 2 preconditions resolve BEFORE any key material is derived.
-  const zk =
-    tier === 2
-      ? zkAgeOption(request.dcql_query.credentials[0] as DcqlCredentialQuery, candidate)
-      : undefined;
-  if (tier === 2 && (zk === undefined || !zk.available)) {
+  // The vault envelope must be the v3 credkit shape — anything else has no
+  // blind to bind with and can only be fixed by re-issuance.
+  if (!isPresentableEnvelope(candidate.payload)) {
     throw new Error(
-      zk !== undefined && !zk.available
-        ? `The ZK tier is not available: ${zk.reason}`
-        : "The ZK tier is not available for this request",
+      "This credential predates the credkit upgrade and cannot be presented — re-issue it at the Utopia DMV",
+    );
+  }
+  let proofMode;
+  try {
+    proofMode = credkitProofMode(candidate.vc);
+  } catch {
+    throw new Error(
+      "This credential does not carry a credkit proof and cannot be presented — re-issue it at the Utopia DMV",
+    );
+  }
+  if (proofMode !== "holderBound") {
+    throw new Error(
+      "This credential is not bound to this wallet's link secret — re-issue it at the Utopia DMV",
     );
   }
 
-  // 1. Pairwise presenter key for THIS verifier only — a different DID at
-  // every verifier, so presentations cannot be correlated by key.
-  step("deriving-presenter");
-  const verifierOrigin = new URL(request.response_uri).origin;
-  const presenterSeed = await derivePresenterSeed(masterSecret, verifierOrigin);
-  let presenter;
+  // Tier-2 preconditions resolve BEFORE any key material is derived.
+  const predicate =
+    tier === 2
+      ? predicateOption(request.dcql_query.credentials[0] as DcqlCredentialQuery, candidate)
+      : undefined;
+  if (tier === 2 && (predicate === undefined || !predicate.available)) {
+    throw new Error(
+      predicate !== undefined && !predicate.available
+        ? `The predicate tier is not available: ${predicate.reason}`
+        : "The predicate tier is not available for this request",
+    );
+  }
+
+  // 1 (tier 2 only). Fetch + pin the verifier's PUBLISHED proof alphabet —
+  // the same artifact every other holder fetches (MIGRATION §8).
+  let rangeClaims: RangeClaimRequest[] | undefined;
+  if (tier === 2 && predicate !== undefined && predicate.available) {
+    step("fetching-params");
+    const params = await resolveRangeParams(request, predicate);
+    // Claims in the request's wire order — the verifier restates them
+    // positionally at verification.
+    rangeClaims = predicate.range.map((claim) => ({
+      pointer: claim.pointer,
+      kind: claim.kind,
+      bound: BigInt(claim.bound),
+      digits: claim.digits,
+      params,
+    }));
+  }
+
+  // 2. The presentation: one credkit VP folding selective disclosure, the
+  // range claims (tier 2), the holder binding, and challenge/domain into a
+  // single transcript. There is no presenter key to derive and no wrapper
+  // signature to add: the VP deliberately carries NO holder identifier.
+  step("deriving-presentation");
+  const selectivePointers = tierPointers(tier, candidate.match, predicate);
+  const linkSecret = await deriveLinkSecret(masterSecret);
+  let secretProverBlind: bigint;
   try {
-    presenter = await generateEd25519KeyPair(presenterSeed);
-    inspect.emit({
-      label: "Presenter seed derived",
-      data: {
-        verifierOrigin,
-        preview: await previewSecret(presenterSeed),
-        presenterDid: presenter.controller,
-      },
+    secretProverBlind = scalarFromBase64Url(candidate.payload.secretProverBlind);
+  } catch {
+    linkSecret.fill(0);
+    throw new Error(
+      "This credential's stored blind is malformed — re-issue it at the Utopia DMV",
+    );
+  }
+  let presentation: VerifiablePresentation;
+  try {
+    presentation = await createCredkitPresentation({
+      credentials: [
+        {
+          verifiableCredential: candidate.vc,
+          selectivePointers,
+          ...(rangeClaims !== undefined ? { rangeClaims } : {}),
+          holderBinding: { linkSecret, secretProverBlind },
+        },
+      ],
+      challenge: request.nonce,
+      domain: request.client_id,
     });
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    if (/does not fit/.test(detail) && predicate !== undefined && predicate.available) {
+      // The §9 fail-closed beat: the value does not satisfy the bound, so
+      // the prover REFUSES — there is no such thing as proving a false
+      // statement, only failing to prove a true one.
+      const asked = predicate.range.map((claim) => claim.description).join("; ");
+      inspect.emit({
+        label: "Range proof refused (fail closed)",
+        data: { reason: detail, requested: asked },
+      });
+      throw new Error(
+        `The proof could not be generated: this credential's hidden value does not satisfy the verifier's bound (${asked}). ` +
+          `The prover fails closed — it cannot emit a proof for a statement that isn't true. Nothing was sent.`,
+        { cause },
+      );
+    }
+    throw cause;
   } finally {
-    presenterSeed.fill(0);
+    linkSecret.fill(0);
   }
-
-  // 2. The disclosure: a bbs-2023 derived proof revealing exactly the
-  // tier's pointers (plus the issuer's mandatory ones). Each derivation is
-  // unlinkable to every other derivation of the same credential.
-  step("deriving-disclosure");
-  const selectivePointers = tierPointers(tier, candidate.match, zk);
-  const derived = await deriveCredential({
-    verifiableCredential: candidate.vc,
-    selectivePointers,
-  });
   inspect.emit({
-    label: "Selective disclosure derived",
-    data: { tier, selectivePointers },
+    label: "Presentation derived",
+    data: {
+      tier,
+      selectivePointers,
+      ...(predicate !== undefined && predicate.available
+        ? { rangeClaims: predicate.range.map((claim) => claim.description) }
+        : {}),
+      challenge: request.nonce,
+      domain: request.client_id,
+      holderIdentifier: "none — the presentation carries no holder key or DID",
+    },
   });
 
-  // 2½ (tier 2 only). Prove the predicate over the committed birthdate. The
-  // proving stack — noir_js's ACVM and bb.js's barretenberg WASM — loads
-  // here and only here; today's cutoff makes the statement current, unlike
-  // the issuance-frozen age flags.
-  let zkAgeProof;
-  if (tier === 2 && zk !== undefined && zk.available) {
-    step("proving");
-    const { proveAgePredicate } = await import("@vgw/zk/prove");
-    const cutoffDays = ageCutoffDays(zk.years);
-    const { bundle, publicInputs, provingMs } = await proveAgePredicate({
-      dobDays: zk.opening.value,
-      blinding: zk.opening.blinding,
-      commitment: zk.commitment,
-      cutoffDays,
-      years: zk.years,
-    });
-    zkAgeProof = bundle;
-    inspect.emit({
-      label: "ZK age proof generated",
-      data: {
-        scheme: bundle.scheme,
-        circuit: bundle.circuit,
-        publicInputs,
-        cutoffDays,
-        years: zk.years,
-        provingMs,
-        proofBytes: Math.ceil((bundle.proof.length * 3) / 4),
-      },
-    });
-  }
-
-  // 3. The presentation wrapper, signed by the presenter key over the
-  // verifier's nonce (challenge) and identifier (domain) — replay armor.
-  // The zkAgeProof (if any) is INSIDE the signed payload: a VGW JSON-literal
-  // term, so tampering with the proof breaks the wrapper signature.
-  step("signing-presentation");
-  const presentation = await signPresentation({
-    credentials: [derived],
-    keyPair: presenter,
-    challenge: request.nonce,
-    domain: request.client_id,
-    ...(zkAgeProof !== undefined
-      ? { contexts: [VGW_CONTEXT_URL], properties: { zkAgeProof } }
-      : {}),
-  });
-  inspect.emit({
-    label: "Presentation signed",
-    data: { challenge: request.nonce, domain: request.client_id, presentation },
-  });
-
-  // 4. direct_post to the verifier (form-encoded, per OID4VP).
+  // 3. direct_post to the verifier (form-encoded, per OID4VP).
   step("posting");
   const body = new URLSearchParams({
     vp_token: JSON.stringify({ [opts.queryId]: [presentation] }),

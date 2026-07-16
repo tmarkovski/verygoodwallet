@@ -49,19 +49,72 @@ export interface DcqlClaimQuery {
 }
 
 /**
- * VGW extension to a credential query: the verifier also accepts a ZK age
- * predicate proven against the credential's Poseidon `birthDateCommitment`
- * (the tier-2 path). Standard DCQL cannot express predicates — `values`
- * filters only match disclosed values — so this rides alongside as a
- * vendor-prefixed member, which OID4VP-compliant consumers ignore.
+ * One range claim over a HIDDEN numeric twin (MIGRATION Appendix D.1). The
+ * wallet answers with a credkit CCS range proof: the verifier learns only
+ * that the twin satisfies `kind`/`bound` — never the value.
  */
-export interface DcqlZkAgePredicate {
-  predicate: "age_over";
-  /** The age threshold; the wallet derives the day cutoff at proving time. */
-  years: number;
-  /** Which claim id in `claims` addresses the commitment the proof opens. */
-  claim_id: string;
+export interface DcqlRangePredicate {
+  /** DCQL path of the claim whose declared twin the proof is about. */
+  path: (string | number)[];
+  kind: "greaterOrEqual" | "lessOrEqual";
+  /**
+   * Inclusive bound in the twin's declared encoder units (`date1900` days,
+   * `uint64`), as a decimal STRING — bigint-safe for uint64 values that
+   * exceed Number.MAX_SAFE_INTEGER.
+   */
+  bound: string;
+  /** Digit count of the base-`params` decomposition (`base^digits` must cover the honest range). */
+  digits: number;
+  /** base64url SHA-256 of this verifier's published range-params octets (D.3). */
+  params_hash: string;
 }
+
+/**
+ * One set-membership claim over a hidden twin — reserved N5 shape, typed and
+ * validated now, rejected by the wallet until membership params ship.
+ */
+export interface DcqlMembershipPredicate {
+  path: (string | number)[];
+  /** Which published set (under `sets` in the params document) the proof is against. */
+  set_id: string;
+  params_hash: string;
+}
+
+/**
+ * VGW extension to a credential query: claims proven about HIDDEN numeric
+ * twins via credkit CCS proofs (the predicate route). Standard DCQL cannot
+ * express predicates — `values` filters only match disclosed values — so this
+ * rides alongside as a vendor-prefixed member, which OID4VP-compliant
+ * consumers ignore (MIGRATION §7, Appendix D.1). Replaces the retired
+ * `vgw_zk` Poseidon-commitment extension at N3.
+ */
+export interface DcqlPredicates {
+  /**
+   * Where THIS verifier publishes its proof alphabets
+   * ({@link CREDKIT_PARAMS_PATH}). The wallet enforces same-origin with
+   * `response_uri` and fetches the same public artifact every other holder
+   * fetches — the anti-tag discipline of MIGRATION §8.
+   */
+  params_uri: string;
+  /** Range claims, in presentation order (the proof restates them positionally). */
+  range?: DcqlRangePredicate[];
+  /** Reserved for N5 set-membership; the wallet rejects requests carrying it. */
+  membership?: DcqlMembershipPredicate[];
+  /**
+   * Claim ids from `claims` that MUST be disclosed alongside the predicate
+   * route — the old tier-2 claim_set made explicit. Absent/empty = the
+   * predicate route discloses nothing beyond the issuer's mandatory pointers.
+   */
+  claim_set?: string[];
+}
+
+/**
+ * One side of a cross-credential equality (reserved N5 shape): a query id
+ * plus either the statement's link secret or a declared twin pointer.
+ */
+export type DcqlEqualityRef =
+  | { query: string; link_secret: true }
+  | { query: string; path: (string | number)[] };
 
 /** One credential the verifier asks for, with the claims it wants from it. */
 export interface DcqlCredentialQuery {
@@ -79,12 +132,19 @@ export interface DcqlCredentialQuery {
    * before the flags existed.
    */
   claim_sets?: string[][];
-  /** See {@link DcqlZkAgePredicate}. */
-  vgw_zk?: DcqlZkAgePredicate;
+  /** See {@link DcqlPredicates}. */
+  vgw_predicates?: DcqlPredicates;
 }
 
 export interface DcqlQuery {
   credentials: DcqlCredentialQuery[];
+  /**
+   * Cross-credential witness equalities over query ids — each inner array
+   * demands its referenced hidden slots hold the SAME value (the link-secret
+   * linkage lives here). Reserved N5 shape, typed and validated now; the
+   * wallet rejects requests carrying it until then (MIGRATION Appendix D.1).
+   */
+  vgw_equalities?: DcqlEqualityRef[][];
 }
 
 // ---------------------------------------------------------------------------
@@ -356,28 +416,9 @@ export function assertDcqlQuery(value: unknown): DcqlQuery {
         }
       }
     }
-    const zk = entry["vgw_zk"];
-    if (zk !== undefined) {
-      if (!isRecord(zk)) {
-        throw new Error(`Credential query "${id}" has a non-object vgw_zk`);
-      }
-      if (zk["predicate"] !== "age_over") {
-        throw new Error(
-          `Credential query "${id}" has unsupported vgw_zk.predicate "${String(zk["predicate"])}" — only age_over is supported`,
-        );
-      }
-      const years = zk["years"];
-      if (typeof years !== "number" || !Number.isInteger(years) || years <= 0 || years > 150) {
-        throw new Error(
-          `Credential query "${id}" has a vgw_zk.years that is not a positive integer`,
-        );
-      }
-      const claimId = zk["claim_id"];
-      if (typeof claimId !== "string" || !claimIds.has(claimId)) {
-        throw new Error(
-          `Credential query "${id}" vgw_zk.claim_id references unknown claim id "${String(claimId)}"`,
-        );
-      }
+    const predicates = entry["vgw_predicates"];
+    if (predicates !== undefined) {
+      assertDcqlPredicates(predicates, id, claimIds);
     }
     const claimSets = entry["claim_sets"];
     if (claimSets !== undefined) {
@@ -405,5 +446,195 @@ export function assertDcqlQuery(value: unknown): DcqlQuery {
       }
     }
   }
+  const equalities = value["vgw_equalities"];
+  if (equalities !== undefined) {
+    const queryIds = new Set(
+      (value["credentials"] as Record<string, unknown>[]).map((entry) => String(entry["id"])),
+    );
+    assertDcqlEqualities(equalities, queryIds);
+  }
   return value as unknown as DcqlQuery;
+}
+
+/**
+ * Inclusive predicate bound: a canonical decimal integer string (no sign, no
+ * leading zeros) — bigint-safe for uint64 twins whose values exceed
+ * Number.MAX_SAFE_INTEGER.
+ */
+const BOUND_PATTERN = /^(0|[1-9][0-9]*)$/;
+
+/** `base^digits ≤ 2^64` caps useful digit counts well below this. */
+const MAX_PREDICATE_DIGITS = 16;
+
+function isAbsoluteHttpUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value === "") return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return url.protocol === "https:" || url.protocol === "http:";
+}
+
+function assertPredicatePath(
+  path: unknown,
+  id: string,
+  member: string,
+): asserts path is (string | number)[] {
+  if (!Array.isArray(path) || path.length === 0 || !path.every(isClaimPathSegment)) {
+    throw new Error(
+      `Credential query "${id}" has a vgw_predicates.${member} entry without a valid path (string/index segments)`,
+    );
+  }
+}
+
+/** Validate one query's `vgw_predicates` object (throws on the first problem). */
+function assertDcqlPredicates(
+  value: unknown,
+  id: string,
+  claimIds: ReadonlySet<string>,
+): void {
+  if (!isRecord(value)) {
+    throw new Error(`Credential query "${id}" has a non-object vgw_predicates`);
+  }
+  if (!isAbsoluteHttpUrl(value["params_uri"])) {
+    throw new Error(
+      `Credential query "${id}" has a vgw_predicates.params_uri that is not an absolute http(s) URL`,
+    );
+  }
+
+  const range = value["range"];
+  if (range !== undefined) {
+    if (!Array.isArray(range)) {
+      throw new Error(`Credential query "${id}" has a non-array vgw_predicates.range`);
+    }
+    for (const claim of range) {
+      if (!isRecord(claim)) {
+        throw new Error(`Credential query "${id}" has a non-object vgw_predicates.range entry`);
+      }
+      assertPredicatePath(claim["path"], id, "range");
+      const kind = claim["kind"];
+      if (kind !== "greaterOrEqual" && kind !== "lessOrEqual") {
+        throw new Error(
+          `Credential query "${id}" has an unsupported vgw_predicates.range kind "${String(kind)}"`,
+        );
+      }
+      const bound = claim["bound"];
+      if (typeof bound !== "string" || !BOUND_PATTERN.test(bound)) {
+        throw new Error(
+          `Credential query "${id}" has a vgw_predicates.range bound that is not a decimal integer string`,
+        );
+      }
+      const digits = claim["digits"];
+      if (
+        typeof digits !== "number" ||
+        !Number.isInteger(digits) ||
+        digits < 1 ||
+        digits > MAX_PREDICATE_DIGITS
+      ) {
+        throw new Error(
+          `Credential query "${id}" has a vgw_predicates.range digits outside 1..${MAX_PREDICATE_DIGITS}`,
+        );
+      }
+      if (typeof claim["params_hash"] !== "string" || claim["params_hash"] === "") {
+        throw new Error(
+          `Credential query "${id}" has a vgw_predicates.range entry without a params_hash`,
+        );
+      }
+    }
+  }
+
+  const membership = value["membership"];
+  if (membership !== undefined) {
+    if (!Array.isArray(membership)) {
+      throw new Error(`Credential query "${id}" has a non-array vgw_predicates.membership`);
+    }
+    for (const claim of membership) {
+      if (!isRecord(claim)) {
+        throw new Error(
+          `Credential query "${id}" has a non-object vgw_predicates.membership entry`,
+        );
+      }
+      assertPredicatePath(claim["path"], id, "membership");
+      if (typeof claim["set_id"] !== "string" || claim["set_id"] === "") {
+        throw new Error(
+          `Credential query "${id}" has a vgw_predicates.membership entry without a set_id`,
+        );
+      }
+      if (typeof claim["params_hash"] !== "string" || claim["params_hash"] === "") {
+        throw new Error(
+          `Credential query "${id}" has a vgw_predicates.membership entry without a params_hash`,
+        );
+      }
+    }
+  }
+
+  // A vgw_predicates object that demands no proof is malformed, not vacuous.
+  const rangeCount = Array.isArray(range) ? range.length : 0;
+  const membershipCount = Array.isArray(membership) ? membership.length : 0;
+  if (rangeCount === 0 && membershipCount === 0) {
+    throw new Error(
+      `Credential query "${id}" has a vgw_predicates with neither range nor membership claims`,
+    );
+  }
+
+  const claimSet = value["claim_set"];
+  if (claimSet !== undefined) {
+    if (!Array.isArray(claimSet) || !claimSet.every((ref) => typeof ref === "string")) {
+      throw new Error(
+        `Credential query "${id}" has a malformed vgw_predicates.claim_set (expected string[])`,
+      );
+    }
+    for (const ref of claimSet as string[]) {
+      if (!claimIds.has(ref)) {
+        throw new Error(
+          `Credential query "${id}" vgw_predicates.claim_set references unknown claim id "${ref}"`,
+        );
+      }
+    }
+  }
+}
+
+/** Validate the top-level `vgw_equalities` array (throws on the first problem). */
+function assertDcqlEqualities(value: unknown, queryIds: ReadonlySet<string>): void {
+  if (!Array.isArray(value)) {
+    throw new Error("dcql_query.vgw_equalities must be an array of equality groups");
+  }
+  for (const equality of value) {
+    if (!Array.isArray(equality) || equality.length < 2) {
+      throw new Error(
+        "dcql_query.vgw_equalities groups need at least two references each",
+      );
+    }
+    for (const ref of equality) {
+      if (!isRecord(ref)) {
+        throw new Error("dcql_query.vgw_equalities references must be objects");
+      }
+      const query = ref["query"];
+      if (typeof query !== "string" || !queryIds.has(query)) {
+        throw new Error(
+          `dcql_query.vgw_equalities references unknown credential query "${String(query)}"`,
+        );
+      }
+      const hasLinkSecret = ref["link_secret"] !== undefined;
+      const hasPath = ref["path"] !== undefined;
+      if (hasLinkSecret === hasPath) {
+        throw new Error(
+          "dcql_query.vgw_equalities references need exactly one of link_secret or path",
+        );
+      }
+      if (hasLinkSecret && ref["link_secret"] !== true) {
+        throw new Error("dcql_query.vgw_equalities link_secret must be exactly true");
+      }
+      if (hasPath) {
+        const path = ref["path"];
+        if (!Array.isArray(path) || path.length === 0 || !path.every(isClaimPathSegment)) {
+          throw new Error(
+            "dcql_query.vgw_equalities has a reference without a valid path (string/index segments)",
+          );
+        }
+      }
+    }
+  }
 }

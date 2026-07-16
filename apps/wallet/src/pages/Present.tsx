@@ -5,7 +5,7 @@
  * request in the query string. The page shows who is asking and for what
  * BEFORE any key material is touched, matches the DCQL query against the
  * vault, and offers the demo's disclosure-tier picker: full disclosure,
- * selective disclosure, or (disabled until M4) the ZK predicate.
+ * selective disclosure, or the credkit range predicate over the hidden twin.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -20,21 +20,18 @@ import {
   hasEmbeddedSubjectId,
   matchCredentials,
   parsePresentParams,
+  predicateOption,
   presentCredential,
   presentationSteps,
   previewPresentationRequest,
-  zkAgeOption,
   type CandidateCredential,
   type DisclosureTier,
+  type PredicateOption,
   type PresentCredentialResult,
   type PresentationStep,
   type QueryCandidates,
-  type ZkAgeOption,
 } from "../services/presentation";
-// TODO(N3): the presentation path still speaks the legacy envelope; v3
-// (credkit) payloads decrypt fine but cannot be presented until N3 rewires
-// presentation.ts to credkit deriveProof/presentGraph (MIGRATION §12).
-import { listCredentials, type LegacyCredentialPayload } from "../services/db";
+import { listCredentials, type CredentialPayload } from "../services/db";
 import { recordPresentation } from "../services/activity";
 import { inspect } from "../inspector/events";
 import { InlineUnlock } from "../components/InlineUnlock";
@@ -42,12 +39,13 @@ import { StepList } from "../components/StepList";
 import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
 
 /** The tier picker's rows; tier 2 depends on the request and the credential. */
-function tierRows(zk: ZkAgeOption | null): {
+function tierRows(predicate: PredicateOption | null): {
   tier: DisclosureTier;
   title: string;
   detail: string;
   disabled?: boolean;
 }[] {
+  const available = predicate !== null && predicate.available;
   return [
     {
       tier: 0,
@@ -59,21 +57,27 @@ function tierRows(zk: ZkAgeOption | null): {
       tier: 1,
       title: "Share only what's asked",
       detail:
-        "BBS selective disclosure — just the claims below, unlinkable across presentations.",
+        "Selective disclosure — just the claims below, unlinkable across presentations.",
     },
-    zk !== null && zk.available
+    available
       ? {
           tier: 2,
-          title: "Prove the age, never the date",
-          detail: `A zero-knowledge proof that you're over ${zk.years}, computed against today's cutoff. The verifier gets the claims listed below plus that one proven bit — your birthdate never leaves this wallet. Proving takes a few seconds in this tab.`,
+          title: "Prove the answer, never the value",
+          detail: `A range proof over the hidden ${
+            predicate.range.map((claim) => claim.description).join("; ") || "value"
+          } — the verifier learns that one bit against its own live cutoff and verifies it entirely on its server. Disclosed alongside: ${
+            predicate.pointers.length === 0
+              ? "nothing beyond the issuer's mandatory fields"
+              : "only the claims listed below"
+          }. No proving wait, no WASM.`,
         }
       : {
           tier: 2,
-          title: "Prove the age, never the date",
+          title: "Prove the answer, never the value",
           disabled: true,
           detail:
-            zk?.reason ??
-            "A zero-knowledge predicate over the committed birthdate — unavailable for this request.",
+            (predicate !== null && !predicate.available ? predicate.reason : undefined) ??
+            "A range predicate over a hidden value — unavailable for this request.",
         },
   ];
 }
@@ -170,7 +174,7 @@ export function Present() {
         const decrypted = await Promise.all(
           records.map(async (record) => ({
             record,
-            payload: await decryptJson<LegacyCredentialPayload>(vaultKey, record.payload),
+            payload: await decryptJson<CredentialPayload>(vaultKey, record.payload),
           })),
         );
         const result = matchCredentials(decrypted, params.request);
@@ -200,12 +204,12 @@ export function Present() {
 
   // Tier 2 availability is per-candidate; a switch to an ineligible
   // credential falls back to selective disclosure rather than a dead button.
-  const zk: ZkAgeOption | null =
-    matches !== null && selected !== null ? zkAgeOption(matches.query, selected) : null;
-  const zkAvailable = zk !== null && zk.available;
+  const predicate: PredicateOption | null =
+    matches !== null && selected !== null ? predicateOption(matches.query, selected) : null;
+  const predicateAvailable = predicate !== null && predicate.available;
   useEffect(() => {
-    if (!zkAvailable) setTier((current) => (current === 2 ? 1 : current));
-  }, [zkAvailable]);
+    if (!predicateAvailable) setTier((current) => (current === 2 ? 1 : current));
+  }, [predicateAvailable]);
 
   const share = async () => {
     if (
@@ -234,7 +238,10 @@ export function Present() {
       // Best-effort: the verifier already has its answer, so a storage
       // failure must not turn a successful presentation into an error.
       if (preview !== null && account !== null && vaultKey !== null) {
-        const holder = result.presentation.holder;
+        const predicateYears =
+          tier === 2 && predicate !== null && predicate.available
+            ? predicate.range.find((claim) => claim.years !== undefined)?.years
+            : undefined;
         try {
           await recordPresentation({
             accountId: account.id,
@@ -242,10 +249,17 @@ export function Present() {
             entry: {
               verifierOrigin: preview.verifierOrigin,
               verifierName: preview.verifierName,
-              presenterDid: typeof holder === "string" ? holder : "",
+              // The credkit VP carries NO holder identifier — record that
+              // honestly rather than a key nobody saw.
+              presenterDid: "",
               tier,
-              disclosed: disclosurePreview(tier, selected.vc, selected.match, zk ?? undefined),
-              ...(tier === 2 && zk !== null && zk.available ? { zkYears: zk.years } : {}),
+              disclosed: disclosurePreview(
+                tier,
+                selected.vc,
+                selected.match,
+                predicate ?? undefined,
+              ),
+              ...(predicateYears !== undefined ? { zkYears: predicateYears } : {}),
               at: Date.now(),
             },
           });
@@ -316,10 +330,11 @@ export function Present() {
         </h1>
         <div className="mt-6 rounded-3xl border border-line bg-surface p-6">
           <p className="text-[13px] leading-relaxed text-ink-dim">
-            The presentation was signed with a presenter key that exists only
-            for <span className="font-mono text-[12px]">{preview.verifierOrigin}</span>{" "}
-            and bound to this request's nonce — it cannot be replayed
-            elsewhere. The inspector holds every message that crossed the wire.
+            The proof was bound to this request's nonce and to{" "}
+            <span className="font-mono text-[12px]">{preview.verifierOrigin}</span>{" "}
+            — it cannot be replayed elsewhere — and it carried no holder key
+            or identifier of any kind. The inspector holds every message that
+            crossed the wire.
           </p>
           {selected !== null && (
             <div className="mt-4 rounded-2xl border border-line bg-canvas p-4">
@@ -328,7 +343,7 @@ export function Present() {
               </p>
               <div className="mt-2">
                 <DisclosureList
-                  entries={disclosurePreview(tier, selected.vc, selected.match, zk ?? undefined)}
+                  entries={disclosurePreview(tier, selected.vc, selected.match, predicate ?? undefined)}
                 />
               </div>
             </div>
@@ -455,7 +470,7 @@ export function Present() {
           <div className="mt-6">
             <SectionTitle>How much to reveal</SectionTitle>
             <ul className="mt-2 space-y-2" role="radiogroup" aria-label="Disclosure tier">
-              {tierRows(zk).map((option) => {
+              {tierRows(predicate).map((option) => {
                 const active = !option.disabled && option.tier === tier;
                 return (
                   <li key={option.tier}>
@@ -496,7 +511,7 @@ export function Present() {
               <SectionTitle>This will reveal</SectionTitle>
               <div className="mt-3">
                 <DisclosureList
-                  entries={disclosurePreview(tier, selected.vc, selected.match, zk ?? undefined)}
+                  entries={disclosurePreview(tier, selected.vc, selected.match, predicate ?? undefined)}
                 />
               </div>
               {hasEmbeddedSubjectId(selected.vc) && (

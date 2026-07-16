@@ -52,16 +52,11 @@ export default function App() {
   );
   const [verdict, setVerdict] = useState<"allowed" | "denied" | null>(null);
 
-  // Guided tour: adopt the ?tour= param, and warm the in-browser verifier at
-  // the arrival stop — by the time the visitor returns from the wallet, the
-  // WASM is cached and the tier-2 verdict lands in well under a second
-  // instead of paying the fresh-origin cold start.
+  // Guided tour: adopt the ?tour= param. (The pre-N3 in-browser verifier
+  // warm-up is gone: verification runs entirely on the Worker now — there is
+  // no client WASM to warm.)
   useEffect(() => {
-    if (adoptTourFromUrl() === "rentals") {
-      import("@vgw/zk/verify")
-        .then((zk) => void zk.warmAgeVerifier())
-        .catch(() => {});
-    }
+    adoptTourFromUrl();
   }, []);
 
   return (

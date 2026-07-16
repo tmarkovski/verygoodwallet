@@ -17,14 +17,13 @@ import { Settings } from "./pages/Settings";
  * navigations drop query params, so the adopted sessionStorage state is what
  * persists. Two stops complete on wallet-side events rather than links —
  * "create" on reaching the unlocked home, "offer" on the accepted
- * credential's detail page — and an active tour warms the prover's WASM so
- * tier 2 doesn't pay the cold start mid-ceremony.
+ * credential's detail page. (The pre-N3 WASM prover warm-up is gone: credkit
+ * range proofs are pure JS and need no cold-start amortization.)
  */
 function TourController() {
   const location = useLocation();
   const { locked } = useSession();
   const stop = useTourStop();
-  const active = stop !== null;
 
   useEffect(() => {
     adoptTourFromUrl(location.search);
@@ -39,13 +38,6 @@ function TourController() {
       advanceTourFrom("offer");
     }
   }, [stop, locked, location]);
-
-  useEffect(() => {
-    if (!active) return;
-    import("@vgw/zk/prove")
-      .then((zk) => void zk.warmAgeProver())
-      .catch(() => {});
-  }, [active]);
 
   return <TourOverlay origins={TOUR_ORIGINS} />;
 }

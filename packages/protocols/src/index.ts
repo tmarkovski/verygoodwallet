@@ -51,13 +51,21 @@ export {
   walletPresentLink,
   type DcqlClaimQuery,
   type DcqlCredentialQuery,
+  type DcqlEqualityRef,
+  type DcqlMembershipPredicate,
+  type DcqlPredicates,
   type DcqlQuery,
-  type DcqlZkAgePredicate,
+  type DcqlRangePredicate,
   type DirectPostResult,
   type OauthErrorResponse,
   type PresentationRequest,
   type VpTokenMap,
 } from "./oid4vp.js";
+export {
+  CREDKIT_PARAMS_PATH,
+  assertCredkitParamsDocument,
+  type CredkitParamsDocument,
+} from "./credkitParams.js";
 export {
   claimPathToPointer,
   matchDcqlCredentialQuery,
