@@ -156,9 +156,10 @@ const { verifiableCredential } = await issueCredential({
   mandatoryPointers: ["/issuer", "/validFrom", "/validUntil"],
   numericDeclarations: [{ pointer: "/credentialSubject/driversLicense/birth_date", encoder: "date1900" }],
   holderCommitment: binding.commitmentWithProof,
+  documentLoader,                                // @vgw/vc-kit: every bundled VGW context, offline
 });
-// wallet persists { verifiableCredential, secretProverBlind } in the vault; secretProverBlind is
-// per-credential (random, not re-derivable). The link secret is re-derived from the PRF, not stored.
+// wallet persists versioned { vc: verifiableCredential, secretProverBlind: <base64url> } in the vault;
+// the blind is per-credential (random, not re-derivable). The link secret is re-derived, not stored.
 ```
 
 **Present** (wallet — the three tiers collapse into one API; the N-credential path is new):
@@ -170,7 +171,7 @@ const { verifiablePresentation } = await deriveProof({
   rangeClaims: [{ pointer: "/credentialSubject/driversLicense/birth_date",
                   kind: "lessOrEqual",            // older = smaller number ⇒ "18+" is birthDate <= cutoff
                   bound: daysSince1900(cutoff18), digits: 4, params }],
-  presentationHeader, holderBinding: binding,
+  presentationHeader, holderBinding: binding, documentLoader,
 });
 
 // NEW (N5): two credentials, prove same holder, reveal neither identity
@@ -178,22 +179,37 @@ const vp = await presentGraph({
   credentials: [{ verifiableCredential: dl,         rangeClaims: [/* over-25 */], holderBinding },
                 { verifiableCredential: residentId, membershipClaims: [/* coastal ZIP */], holderBinding }],
   equalities: [[{ statement: 0, linkSecret: true }, { statement: 1, linkSecret: true }]],
-  challenge, domain,
+  challenge, domain, documentLoader,
 });
 ```
 
 **Verify** (shop/rentals Worker — now the *whole* check, server-side):
 ```ts
-const r = await verifyProof({                       // or verifyGraph for N credentials
-  verifiablePresentation,
-  publicKey,                                        // the verifier's OWN trust anchor, never the wire
-  presentationHeader,
-  expectedRangeClaims: [{ pointer: ".../birth_date", kind: "lessOrEqual", bound: daysSince1900(cutoff18), digits: 4 }],
+const expectedIssuerDid = await trustedIssuerDid(env); // pin/config or existing TLS metadata discovery
+const r = await verifyPresentation({                  // VGW policy facade over credkit verifyGraph
+  presentation: verifiablePresentation,
+  expectedIssuerDids: [expectedIssuerDid],            // verifier policy, statement order — never the wire
+  challenge, domain, documentLoader,
+  expectedRangeClaims: [{ statement: 0, pointer: ".../birth_date",
+                          kind: "lessOrEqual", bound: daysSince1900(cutoff18), digits: 4 }],
+  now: new Date(),
 });
 // r.verified === true → one verdict, no zk_pending, no client-side bb.js
 ```
 
-Three credkit invariants VGW must honor. First, the verifier **restates the claim list — and the
+`verifyPresentation` above deliberately remains a VGW policy facade, not a rename of credkit's
+`verifyGraph`. For each statement it takes the expected issuer DID from verifier configuration/policy,
+decodes that self-certifying `did:key:zUC7…` into the 96-byte compressed BLS12-381 G2 key,
+validates the multicodec/length/curve point, and passes the ordered raw keys to credkit. Only after the
+cryptographic result is true does it accept the proof-bound input and enforce the policies VGW already
+has: the revealed `issuer` must equal the configured DID; that statement's proof
+`verificationMethod` must be controlled by the same DID; and `validFrom <= now <= validUntil` for the
+disclosed bounds. Any mismatch makes the facade return `verified: false`. For N statements,
+`expectedIssuerDids[i]`, `publicKeys[i]`, the input credential proof, and credkit's returned
+`documents[i]` stay positionally aligned. Never select a key from an issuer or public-key value carried
+by the presentation itself.
+
+Four credkit invariants VGW must honor. First, the verifier **restates the claim list — and the
 equalities — in the same order** the proof carries them (a mismatch is a loud typed failure, not a
 silent pass — FINDINGS §11/§15; `verifyGraph` takes `expectedEqualities` beside
 `expectedRangeClaims`/`expectedMembershipClaims`, and a link-secret linkage the verifier did not
@@ -202,7 +218,10 @@ scalar is suite-dependent — a `sha` credential and a `shake` credential can ne
 FINDINGS §16); VGW pins `credkit-bbs-sha-2026` everywhere, forever. Third, on the N=1
 `deriveProof`/`verifyProof` path only, VGW itself encodes `challenge`+`domain` into the opaque
 `presentationHeader` (credkit exports `encodePresentationHeader`) — the native folding lives in
-`presentGraph`/`verifyGraph`, one more reason to prefer them.
+`presentGraph`/`verifyGraph`, one more reason to prefer them. Fourth, pass VGW's existing strict,
+offline `documentLoader` to **every** credkit issue/present/verify call. Credkit's default loader knows
+only the VC v2 context and rejects the vDL, AAMVA, VGW, and resident context URLs; relying on the
+default makes N2 issuance fail before any proof is produced.
 
 ---
 
@@ -219,16 +238,23 @@ FINDINGS §16); VGW pins `credkit-bbs-sha-2026` everywhere, forever. Third, on t
 - **Keep** the `age_over_{18,21,25}` flags. They are ordinary disclosable claims and stay as the
   **tier-1 rung and the teaching contrast** ("frozen at issuance; staleness is the point — the
   predicate proves any cutoff live"). Their staleness argument survives intact.
-- **Gate to verify early (N2):** `birth_date` must be typed `xsd:date` by the vDL context and issued
-  in XSD-canonical lexical form, or the credkit pipeline fail-closes at issuance (FINDINGS §14). It
-  must stay non-mandatory (it already is) so the twin is hideable.
+- **Change in N2:** `vc-kit/src/contexts/vdl-v1.json` currently types `birth_date` as `xsd:dateTime`,
+  while `utopia-dl.ts` emits `YYYY-MM-DD` and credkit's `date1900` encoder accepts only `xsd:date`.
+  Change that exact `@type` to `http://www.w3.org/2001/XMLSchema#date` and add an end-to-end
+  issue/derive/verify test using VGW's loader. The value must remain XSD-canonical and non-mandatory so
+  the twin is hideable; otherwise the credkit pipeline fails closed at issuance (FINDINGS §14).
 - **Unchanged residual:** `validFrom`/`validUntil` remain mandatory-disclosed and date-granular — a
   small correlation vector credkit does not (and cannot) remove; the DL already documents this.
 
 **NEW — Utopia Resident Registration** (issued by the *same* DMV): carries `stateFips` (`uint64`,
 set-membership) and `postalCode` (`uint64`, two-sided range), both numeric-declared. This one
 addition powers *both* new showcases (residency set-membership **and** cross-credential link secret)
-and can reuse the `citizenship-v1/v3` contexts already sitting in `vc-kit/src/contexts`.
+but **cannot reuse `citizenship-v1/v3` alone**: neither context defines `stateFips` or `postalCode`
+with a datatype accepted by credkit's `uint64` encoder. Add a bundled
+`https://verygoodwallet.com/contexts/utopia-resident/v1` context defining the resident credential/type
+and both predicate fields as canonical `xsd:unsignedInt` literals; citizenship v3 may still supply its
+ordinary person/address vocabulary. Register the new URL in `BUNDLED_CONTEXTS` and pass the same
+offline loader through issuance, presentation, and verification.
 
 ---
 
@@ -301,16 +327,24 @@ stays; `claimPathToPointer` (RFC-6901) stays. Concrete edits:
   `presentGraph`/`verifyGraph`, or via `encodePresentationHeader` on the N=1 path (§4).
 - **`dcql.ts`, `dcApi.ts`** — unchanged in shape (`claimPathToPointer` already emits the JSON pointers
   credkit consumes; the DC API carries the same DCQL).
-- **vc-kit** — `bbs.ts` (sign/derive/verify) and `presentation.ts` (eddsa-rdfc-2022 VP wrapper) are
-  replaced by credkit's `issueCredential` / `deriveProof`+`presentGraph` / `verifyProof`+`verifyGraph`.
-  `keys.ts` swaps `@digitalbazaar/bls12-381-multikey` for `@credkit/bbs` `keyGen`; the `zUC7…` did:key
-  encoding for BLS12-381-G2 and the `loader.ts` driver stay.
+- **vc-kit** — remains VGW's facade. `bbs.ts` delegates crypto to credkit's `issueCredential` /
+  `deriveProof`+`presentGraph` / `verifyProof`+`verifyGraph`, while `presentation.ts` drops the
+  eddsa-rdfc-2022 presenter signature but retains the verifier-facing policy wrapper described in §4.
+  Do not replace `verifyCredential`/`verifyPresentation` with bare re-exports: the facade still owns
+  expected-issuer, proof-verification-method, and validity-window enforcement.
+- **Issuer key bridge** — `keys.ts` swaps key generation to `@credkit/bbs` `keyGen` and adds inverse,
+  tested `bbsDidKeyFromPublicKey(G2Point)` / `bbsPublicKeyFromDidKey(did:key:zUC7…)` helpers. The first
+  preserves the issuer DID published as `vgw_issuer_did`; the second decodes only the BLS12-381-G2
+  multicodec, requires exactly 96 compressed key bytes, validates the point, and supplies Credkit's raw
+  trust anchor. `TRUSTED_ISSUER_DID` remains the production pin; no raw key is accepted from the VP.
+- **JSON-LD loader** — keep `loader.ts`, its offline `BUNDLED_CONTEXTS`, and the `zUC7…` driver. Pass
+  its exported `documentLoader` explicitly to every Credkit call; add the resident context in N5.
 
 ---
 
-## 8. Verifier infrastructure: published params + server-side verify
+## 8. Verifier infrastructure: published params + trusted server-side verify
 
-Two new obligations on the verifier Workers:
+Three obligations on the verifier Workers:
 
 1. **Publish range/set alphabets at a stable, per-verifier-single location** (e.g.
    `/.well-known/credkit-params`). Two reasons, not one. Tracking: a verifier that hands each prover
@@ -326,6 +360,12 @@ Two new obligations on the verifier Workers:
    and the two-runtime split exhibit. The Worker returns one verdict. This is safe by precedent: the
    shop/rentals Workers already run `jsonld` + `rdf-canonize` + bbs-2023 verify in workerd via
    `@vgw/vc-kit`; credkit's runtime graph is a lighter subset of that, minus bb.js.
+3. **Keep trust and credential policy outside the primitive.** Shop/rentals keep discovering or
+   pinning `TRUSTED_ISSUER_DID` exactly as today. The vc-kit facade converts those configured DIDs — in
+   statement order for `verifyGraph` — to raw G2 keys, invokes Credkit, then checks the proof-bound
+   issuer/verification-method relationship and validity period before returning success. Credkit
+   intentionally does none of those application-policy checks; a bare `verified: true` is necessary
+   but not sufficient for a VGW acceptance verdict.
 
 ---
 
@@ -406,10 +446,10 @@ encoder registry can be referenced/published openly rather than embedded per dep
 |---|---|
 | **N0** | ✅ Worker-viability proven under workerd (spike result below); consumption **decided** — publish credkit as public packages (§11). Remaining: credkit publish prerequisites, then VGW pins a version. Full `issueCredential`/`verifyProof` under workerd deferred to N2/N3 (needs a document loader + the pinned VP envelope) |
 | **N1** | Link secret in `@vgw/keys` (`deriveLinkSecret`); issuer key via `@credkit/bbs` `keyGen` |
-| **N2** | DMV reissues the DL with credkit + the `date1900` twin; OID4VCI request carries the commitment-with-proof as an extension (freshness a-vs-c decided here, §3.3); drop Poseidon + opening; wallet threads the master-derived link secret and persists per-credential `secretProverBlind` |
-| **N3** | Wallet `deriveProof`; shop/rentals **server-side** `verifyProof`; generalize the DCQL predicate extension; publish range params; delete client bb.js |
+| **N2** | DMV reissues the DL with credkit + the `date1900` twin; change vDL `birth_date` to `xsd:date`; pass VGW's offline loader through issuance; OID4VCI request carries the commitment-with-proof as an extension (freshness a-vs-c decided here, §3.3); drop Poseidon + opening; wallet threads the master-derived link secret and persists per-credential `secretProverBlind` |
+| **N3** | Wallet `deriveProof`; shop/rentals **server-side** verification through the vc-kit policy facade; add the `did:key:zUC7…` ↔ raw G2 trust-anchor bridge; preserve expected issuer, verification-method ownership, and validity checks; pass the offline loader; generalize the DCQL predicate extension; publish range params; delete client bb.js |
 | **N4** | Rip out `packages/zk` + `commitment.ts`; retire the bbs-2023 / eddsa wrappers; reframe the exhibits |
-| **N5** | Resident Registration credential → residency set-membership (B) and cross-credential link secret (C) via `presentGraph`/`verifyGraph` |
+| **N5** | Add and bundle the typed Utopia Resident context; Resident Registration credential → residency set-membership (B) and cross-credential link secret (C) via `presentGraph`/`verifyGraph` |
 | **N6** | Stretch: cross-issuer loyalty (D) and/or agent delegation (E) |
 
 N0–N4 are a strict upgrade of the *existing* age story and should land before the new showcases.
@@ -486,7 +526,9 @@ risk. Spike harness kept under the session scratchpad (`credkit-spike/`), not co
 
 Verified against `credkit/packages/*/src` on 2026-07-16. Symbols are stable; line hints drift.
 Import credentials/presentations from `@credkit/cryptosuite`, alphabets from `@credkit/range`,
-keys from `@credkit/bbs`.
+keys from `@credkit/bbs`. Although Credkit types `documentLoader` as optional, VGW treats it as
+required at every call boundary: Credkit's default knows only the VC v2 context, whereas VGW's loader
+also vendors the vDL, AAMVA, VGW, security, and resident contexts.
 
 **Keys / suites / encoders**
 - `keyGen(suite, keyMaterial: Uint8Array≥32, keyInfo?) → { secretKey, publicKey }` — `@credkit/bbs`
@@ -509,6 +551,9 @@ keys from `@credkit/bbs`.
 **Verify** — issuer key + nonce are verifier inputs, NEVER the wire; the verifier must restate the claim list in the same order or it fails loudly.
 - `verifyProof(VerifyOptions) → { verified, document?, reason? }`, `VerifyOptions = { verifiablePresentation, publicKey: G2Point, presentationHeader: Uint8Array, expectedRangeClaims?, expectedMembershipClaims?, documentLoader? }`
 - `verifyGraph(VerifyGraphOptions) → { verified, documents?, reason? }`, `VerifyGraphOptions = { verifiablePresentation, publicKeys: G2Point[], challenge, domain?, expectedRangeClaims?, expectedMembershipClaims?, expectedEqualities?, documentLoader? }`
+- These are cryptographic primitives, not VGW acceptance policy. Call them only through vc-kit's
+  wrapper, which derives ordered raw keys from configured issuer DIDs and, after crypto succeeds,
+  enforces issuer equality, proof-verification-method control, and credential validity windows (§4).
 
 **Alphabets** (verifier publishes, holder fetches the same copy) — `@credkit/range`
 - `createRangeParams(suite, base, opts?) → RangeParams` (base 2..65536; age uses base 16, digits 4)
@@ -532,11 +577,14 @@ keys from `@credkit/bbs`.
 - Issuance commitment — `apps/dmv/worker/index.ts` `createCommitment` (~435), `vgw_commitment_opening` (~457); wallet `services/issuance.ts` opening store/validate (~307, ~519), `services/demo.ts` (~80).
 
 **Replace (crypto bodies → credkit)**
-- `packages/vc-kit/src/bbs.ts` — `signCredential`(~66)/`deriveCredential`(~102)/`verifyCredential`(~148), `DEFAULT_MANDATORY_POINTERS=['/issuer','/validFrom','/validUntil']`(~40) → `issueCredential` / `deriveProof`+`presentGraph` / `verifyProof`+`verifyGraph`.
-- `packages/vc-kit/src/presentation.ts` — eddsa-rdfc-2022 `signPresentation`(~55; `properties` hook carries `zkAgeProof` ~83)/`verifyPresentation`(~117) → credkit VP proof; no presenter signature (deleted).
-- `packages/vc-kit/src/keys.ts` — `generateBbsKeyPair` (@digitalbazaar/bls12-381-multikey) → `keyGen` (@credkit/bbs); did:key `zUC7` + `loader.ts` driver (~38) stay.
+- `packages/vc-kit/src/bbs.ts` — delegate `signCredential`(~66)/`deriveCredential`(~102) to `issueCredential` / `deriveProof`+`presentGraph`; keep `DEFAULT_MANDATORY_POINTERS=['/issuer','/validFrom','/validUntil']`(~40). `verifyCredential`(~148) becomes a policy adapter over `verifyProof`/`verifyGraph`, retaining exact expected-issuer, verification-method-controller, and `checkValidityPeriod` behavior instead of returning Credkit's cryptographic boolean directly.
+- `packages/vc-kit/src/presentation.ts` — remove the eddsa-rdfc-2022 presenter signature from `signPresentation`(~55; `properties` hook carries `zkAgeProof` ~83), but keep `verifyPresentation`(~117) as the verifier-facing facade: accept `expectedIssuerDids` in statement order, obtain raw keys only from those pins, call Credkit, then run the per-document vc-kit policy checks before producing one fail-closed result.
+- `packages/vc-kit/src/keys.ts` — replace `generateBbsKeyPair` with `keyGen` and add `bbsDidKeyFromPublicKey` + `bbsPublicKeyFromDidKey`. Decode/encode the BLS12-381-G2 multicodec explicitly, require 96 key bytes, validate with Credkit's `g2FromBytes`, and pin round-trip/rejection vectors for wrong codec, length, and malformed points. The existing `did:key:zUC7…` identity remains the issuer metadata/config contract.
 - `packages/vc-kit/src/credentials/utopia-dl.ts` — drop `birthDateCommitment`(~124); add a numeric declaration for `/credentialSubject/driversLicense/birth_date`; keep `AGE_OVER_FLAGS=[18,21,25]`(~58) as the tier-1 rung (§5). DL subject shape: `credentialSubject.driversLicense = { document_number, given_name, family_name, birth_date, age_over_{18,21,25}, issuing_authority, issuing_country, un_distinguishing_sign, issue_date, expiry_date }`.
+- `packages/vc-kit/src/contexts/vdl-v1.json` — change only `birth_date.@type` from `xsd:dateTime` to `xsd:date`; keep the emitted `YYYY-MM-DD` lexical form and add a Credkit pipeline regression test.
 - `packages/vc-kit/src/contexts/vgw-v1.json` — remove `birthDateCommitment` + `zkAgeProof` terms.
+- `packages/vc-kit/src/loader.ts`, `contexts/index.ts` — keep the strict offline loader as the sole VGW loader passed to Credkit; bundle/export the Utopia Resident context URL and document in N5. Unknown contexts remain a hard failure; no runtime network fallback.
+- `apps/{shop,rentals}/worker/env.ts` — retain `TRUSTED_ISSUER_DID` and `vgw_issuer_did` discovery. Resolve each policy-selected DID through `bbsPublicKeyFromDidKey`; for graphs build `expectedIssuerDids[]`/`publicKeys[]` in statement order, never from credential-supplied keys.
 
 **Protocol edits — hardcoded strings (grep targets)**
 
@@ -552,12 +600,21 @@ keys from `@credkit/bbs`.
 
 **Keys edits**
 - `packages/keys/src/hierarchy.ts` — keep `PRF_EVAL_INPUT="vgw/v1/master-secret"`(~21); ADD `deriveLinkSecret(master)` under a new **non-origin-scoped** info `vgw/v1/link-secret`; REPLACE `deriveHolderSeed`(~76) with `deriveIssuancePopSeed(master, issuerOrigin)` under pairwise info `vgw/v1/issuance-pop:<issuer-origin>` when option (c) is selected; `derivePresenterSeed`(~87) is vestigial.
-- `packages/keys/src/vault.ts` — the persisted per-credential envelope is `{ verifiableCredential, secretProverBlind }` (**not** `linkSecret` — it is re-derived from the PRF, §6). Watch the encoding: `secretProverBlind` is a **bigint scalar** (`Scalar = bigint`, `credkit/packages/bbs/src/core.ts:18`), and `encryptJson` calls `JSON.stringify`, which *throws* on a bigint. Encode it at the persistence boundary — `i2osp(secretProverBlind, 32)` → base64url, reusing `@credkit/bbs`'s `i2osp`/`os2ip` (`utils.ts:25,38`) rather than a hand-rolled encoder — and `os2ip` + range-check (`< r`) on read. `encryptJson`/`decryptJson` themselves stay JSON-only; scalars never reach them raw.
-- `apps/wallet/src/services/db.ts` — credential-store **schema migration** (v2→v3): the stored payload today is the `encryptJson` output of `{ vc, commitmentOpening? }`; drop the Poseidon-era `commitmentOpening` and add the encoded `secretProverBlind`. Bump the `idb` version and add the upgrade path; decode/validate blinds on retrieval.
+- `packages/keys/src/vault.ts` — the versioned per-credential envelope is `{ version: 3, vc, secretProverBlind: <base64url> }` (**not** `linkSecret` — it is re-derived from the PRF, §6). Watch the encoding: `secretProverBlind` is a **bigint scalar** (`Scalar = bigint`, `credkit/packages/bbs/src/core.ts:18`), and `encryptJson` calls `JSON.stringify`, which *throws* on a bigint. Encode it at the persistence boundary — `i2osp(secretProverBlind, 32)` → base64url, reusing `@credkit/bbs`'s `i2osp`/`os2ip` (`utils.ts:25,38`) rather than a hand-rolled encoder — and `os2ip` + range-check (`< r`) on read. `encryptJson`/`decryptJson` themselves stay JSON-only; scalars never reach them raw.
+- `apps/wallet/src/services/db.ts` — the stored payload today is opaque AES-GCM ciphertext for `{ vc, commitmentOpening? }`; an IndexedDB `upgrade` callback has no vault key and therefore cannot transform that JSON, and legacy bbs-2023 credentials contain no Credkit blind to add. Treat them as incompatible at the N2 cutover and require reissuance (a v3 upgrade may retire/clear those credential records, but must not pretend to rewrite them). New writes use the versioned encoded-blind envelope above; decode and validate it only after wallet unlock.
 
 **New (N5)**
-- `packages/vc-kit/src/credentials/utopia-resident.ts` — Utopia Resident Registration, DMV-issued, numeric declarations `stateFips` (uint64, set-membership) + `postalCode` (uint64, range); reuse `citizenship-v1/v3` contexts.
+- `packages/vc-kit/src/credentials/utopia-resident.ts` — Utopia Resident Registration, DMV-issued, numeric declarations `stateFips` (uint64, set-membership) + `postalCode` (uint64, range); use citizenship v3 only for its existing person/address terms.
+- `packages/vc-kit/src/contexts/utopia-resident-v1.json` — define the resident credential/subject terms plus `stateFips` and `postalCode` as `xsd:unsignedInt`; register `https://verygoodwallet.com/contexts/utopia-resident/v1` in `BUNDLED_CONTEXTS`. Do not claim citizenship v1/v3 defines these predicate fields.
 - `/.well-known/credkit-params` on shop + rentals serving `createRangeParams` (age) / `createSetParams` (residency); server-side `verifyProof`/`verifyGraph` in the Worker; delete client-side verify.
+
+**Required regression tests for N2/N3**
+- Full issue → derive/present → verify with VGW's offline loader; an unknown context and the old
+  `birth_date` `xsd:dateTime` mapping must fail closed.
+- Trusted `did:key:zUC7…` round-trip to the Credkit `G2Point`; wrong multicodec, malformed point, and a
+  proof checked under a different configured issuer key must fail.
+- Cryptographically valid proofs with the wrong `issuer`, a verification method outside the configured
+  issuer DID, `validFrom` in the future, or expired `validUntil` must all return VGW `verified: false`.
 
 ---
 
