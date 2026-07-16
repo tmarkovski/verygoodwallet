@@ -107,10 +107,19 @@ Every decision below has a reason; to overturn one, overturn the reason.
    credential request on standard rails — `proof_type: jwt`, not a bespoke type — while naming two
    distinct jobs: the PoP proves liveness, the commitment proves binding. One condition keeps that honest rather than decorative: the credential
    is bound to the link secret and carries no `cnf` key, so a bare PoP would attest a key bound to
-   nothing — the PoP JWT MUST also sign the commitment digest, attesting liveness *of the committing
-   party* — a VGW-defined claim inside an otherwise-standard PoP JWT, a payload extension, not a new
-   proof type. Use a single device-bound PoP key, not a per-issuer one: scoping bought privacy only when
-   the key *was* the binding, and it is freshness-only now, never seen at presentation. (a) stays the
+   nothing — the PoP JWT MUST also sign the commitment digest, binding the proof to *this* request and
+   attesting liveness of a party *holding* the commitment — a VGW-defined claim inside an
+   otherwise-standard PoP JWT, a payload extension, not a new proof type. Be precise about the claim:
+   it is *possession* of the commitment, not fresh *knowledge* of the link secret. The commitment is a
+   public, transferable value whose own proof-of-knowledge carries no nonce, so an intercepted commitment
+   could be signed over by another party; freshly proving knowledge would need session/authorization-binding
+   the commitment (§13) or nonce'ing its PoK (= rejected option (b)), and we do neither. Keep the PoP key
+   **pairwise per issuer** — as `popJwt.ts` already does ("pairwise did:key"): its `kid` is exposed to
+   each issuer, so one reused key is a cross-issuer correlation handle, and scoping still buys
+   issuer↔issuer unlinkability even though the key is freshness-only now. (An earlier draft said "single
+   device-bound key"; that conflated this with the *presentation*-side per-verifier key —
+   `derivePresenterSeed`, §7 — which does become vestigial because the VP carries no holder key. That
+   retirement does not transfer to the issuance PoP key.) (a) stays the
    fallback — dropping the PoP collapses (c)→(a) with no rework.
 4. **Land the core migration (N0–N4) before the new showcases (N5–N6).** N0–N4 are a strict upgrade
    of the existing age story; the new capabilities build on a stable base.
@@ -239,10 +248,13 @@ branching — the machinery exists. The shift:
   so there is no presenter signature and no per-verifier DID. The "each verifier sees a different DID"
   exhibit *upgrades* to "the verifier sees no identifier at all." Retire the branch, or keep it only
   for transport-level plumbing.
-- **Issuance-PoP key (under the §3.3 (c) lean):** VGW keeps one lightweight Ed25519 key for the
-  OID4VCI request PoP — *not* the removed BBS binding key, and *not* per-issuer. It signs `c_nonce`
-  + the commitment digest at issuance only, attests liveness of the committing party, and never
-  appears at presentation, so it is no correlation handle. Under fallback (a) it goes away entirely.
+- **Issuance-PoP key (under the §3.3 (c) lean):** VGW keeps a lightweight Ed25519 key for the
+  OID4VCI request PoP — *not* the removed BBS binding key. Scope it **pairwise per issuer**, as
+  `popJwt.ts` already does: its `kid` reaches each issuer, so a single reused key would be a
+  cross-issuer correlation handle. It signs `c_nonce` + the commitment digest at issuance only, attests
+  liveness of a party *holding* the commitment (possession, not fresh knowledge of the link secret —
+  §3.3), and never appears at presentation, so it adds no *presentation*-side handle. Under fallback (a)
+  it goes away entirely.
 - **Threading & vault:** `deriveLinkSecret(master)` returns the **same** secret every session, and
   VGW must feed *that* into every issuance (`createHolderBinding({ linkSecret })`). The bare
   `createHolderBinding()` mints a fresh random secret per call (`issue.ts:48,57`) — which passes the
@@ -265,8 +277,9 @@ stays; `claimPathToPointer` (RFC-6901) stays. Concrete edits:
   a vs c). Remove `CommitmentOpeningLike` and `vgw_commitment_opening` from `CredentialResponse` — no
   opening travels; the secret is the holder's, blind-signed.
 - **`popJwt.ts`** — kept under (c) (the lean, §3.3), removed under (a) — the N2 decision. Under (c) it
-  signs the commitment digest alongside `c_nonce`, so it proves liveness *of the committing party*,
-  not of a key bound to nothing.
+  signs the commitment digest alongside `c_nonce`, so it proves liveness of a party holding the
+  commitment (possession, not fresh knowledge — §3.3), not of a key bound to nothing. Keep its existing
+  **pairwise-per-issuer** `kid`; do not collapse it to one device-wide key.
   The commitment's builder/verifier (holder `commit` / issuer `blindSign`-verify) is added regardless:
   it is the binding, orthogonal to the PoP.
 - **`oid4vp.ts`** — the predicate extension generalizes. `DcqlZkAgePredicate { predicate:"age_over",
@@ -434,10 +447,17 @@ risk. Spike harness kept under the session scratchpad (`credkit-spike/`), not co
   cross-credential equality) — decided at credkit publish time (§11).
 - Whether credkit source-publishes (`main: src/index.ts`) or ships a built `dist` (§11).
 - OID4VCI request freshness (§3.3): **leaning (c)** — keep the standard `proof_type: jwt` PoP and have
-  it sign the commitment digest, so it attests liveness of the committing party (a bare PoP binds a
-  key to nothing in credkit's link-secret model). (a) — token-only, no PoP — is the fallback.
-  Confirmed at N2; the commitment-as-extension framing keeps (c) additive, so nothing before N2
-  depends on the choice.
+  it sign the commitment digest, so it attests liveness of a party holding the commitment (a bare PoP
+  binds a key to nothing in credkit's link-secret model). The PoP key stays **pairwise per issuer** (its
+  `kid` is issuer-visible, so a reused key is a cross-issuer handle). Neither (a) nor (c) proves fresh
+  *knowledge* of the link secret — the commitment is public and its PoK carries no nonce. (a) —
+  token-only, no PoP — is the fallback. Confirmed at N2; the commitment-as-extension framing keeps (c)
+  additive, so nothing before N2 depends on the choice.
+- Whether to session/authorization-bind the holder commitment (e.g. to the OID4VCI authorization code or
+  PKCE verifier), so an intercepted or replayed commitment cannot be injected into a different request.
+  This is what would upgrade the PoP from attesting *possession* of the commitment to fresh *knowledge*
+  of the link secret; it applies under both (a) and (c) and is orthogonal to that choice. Unspecified
+  here — an N2 design point.
 - Credential status / revocation — unaddressed, and out of scope for the showcase as written. If it
   becomes needed, a status-list entry is an ordinary disclosable claim and can ride along as
   mandatory-disclosed content, but the mechanism (and its own correlation surface) is unspecified here.
