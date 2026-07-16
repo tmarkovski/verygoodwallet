@@ -112,11 +112,13 @@ Every decision below has a reason; to overturn one, overturn the reason.
    otherwise-standard PoP JWT, a payload extension, not a new proof type. Be precise about the claim:
    it is *possession* of the commitment, not fresh *knowledge* of the link secret. The commitment is a
    public, transferable value whose own proof-of-knowledge carries no nonce, so an intercepted commitment
-   could be signed over by another party; freshly proving knowledge would need session/authorization-binding
-   the commitment (§13) or nonce'ing its PoK (= rejected option (b)), and we do neither. Keep the PoP key
-   **pairwise per issuer** — as `popJwt.ts` already does ("pairwise did:key"): its `kid` is exposed to
-   each issuer, so one reused key is a cross-issuer correlation handle, and scoping still buys
-   issuer↔issuer unlinkability even though the key is freshness-only now. (An earlier draft said "single
+   could be signed over by another party. Request/session-binding can prevent cross-request injection, but
+   freshly proving knowledge would require a new link-secret PoK whose transcript binds the session and,
+   under (c), the PoP key — effectively reopening the rejected nonce/challenge change in option (b). Keep the PoP key
+   **pairwise per issuer** — as the current issuance flow does by deriving
+   `deriveHolderSeed(master, issuerOrigin)` before passing its seed to the seed-agnostic `popJwt.ts`.
+   Its `kid` is exposed to each issuer, so one reused key is a cross-issuer correlation handle, and
+   scoping still buys issuer↔issuer unlinkability even though the key is freshness-only now. (An earlier draft said "single
    device-bound key"; that conflated this with the *presentation*-side per-verifier key —
    `derivePresenterSeed`, §7 — which does become vestigial because the VP carries no holder key. That
    retirement does not transfer to the issuance PoP key.) (a) stays the
@@ -239,20 +241,24 @@ branching — the machinery exists. The shift:
   (`vgw/v1/link-secret`). This is *not* pairwise: it is one secret across all issuers (FINDINGS §8).
   Verifier-unlinkability is preserved regardless — the secret is never disclosed and proofs are
   re-randomized per presentation; only *holder-elected* linking ever reveals "same holder."
-- **Remove** `deriveHolderSeed(master, issuerOrigin)` (the per-issuer BBS keypair for the old
-  binding) and `commitment.ts` wholesale (Poseidon2/BN254 `createCommitment`/`verifyCommitment`/
-  `daysSinceEpoch`/`BN254_SCALAR_FIELD` — all superseded by credkit `createHolderBinding`/`commit`
-  on BLS12-381).
+- **Replace** `deriveHolderSeed(master, issuerOrigin)`: credkit's global link secret takes over the old
+  holder-binding job; under freshness option (c), add
+  `deriveIssuancePopSeed(master, issuerOrigin)` under an explicitly origin-scoped
+  `vgw/v1/issuance-pop:<issuer-origin>` label for the remaining Ed25519 request PoP. Remove
+  `commitment.ts` wholesale (Poseidon2/BN254 `createCommitment`/`verifyCommitment`/`daysSinceEpoch`/
+  `BN254_SCALAR_FIELD` — all superseded by credkit `createHolderBinding`/`commit` on BLS12-381).
 - **`derivePresenterSeed`** (per-verifier Ed25519) becomes vestigial: the credkit VP carries no
   holder/presenter key and no `holder` property (unrepresentable, actively rejected — FINDINGS §16),
   so there is no presenter signature and no per-verifier DID. The "each verifier sees a different DID"
   exhibit *upgrades* to "the verifier sees no identifier at all." Retire the branch, or keep it only
   for transport-level plumbing.
 - **Issuance-PoP key (under the §3.3 (c) lean):** VGW keeps a lightweight Ed25519 key for the
-  OID4VCI request PoP — *not* the removed BBS binding key. Scope it **pairwise per issuer**, as
-  `popJwt.ts` already does: its `kid` reaches each issuer, so a single reused key would be a
-  cross-issuer correlation handle. It signs `c_nonce` + the commitment digest at issuance only, attests
-  liveness of a party *holding* the commitment (possession, not fresh knowledge of the link secret —
+  OID4VCI request PoP — *not* the removed binding key. Derive it with
+  `deriveIssuancePopSeed(master, issuerOrigin)`, preserving the current issuance flow's **pairwise-per-issuer**
+  scope after `deriveHolderSeed` is removed. (`popJwt.ts` itself is seed-agnostic.) Its `kid` reaches each
+  issuer, so a single reused key would be a cross-issuer correlation handle. At issuance it signs
+  `c_nonce` + the commitment digest and attests liveness of a party *holding* the commitment
+  (possession, not fresh knowledge of the link secret —
   §3.3), and never appears at presentation, so it adds no *presentation*-side handle. Under fallback (a)
   it goes away entirely.
 - **Threading & vault:** `deriveLinkSecret(master)` returns the **same** secret every session, and
@@ -278,8 +284,9 @@ stays; `claimPathToPointer` (RFC-6901) stays. Concrete edits:
   opening travels; the secret is the holder's, blind-signed.
 - **`popJwt.ts`** — kept under (c) (the lean, §3.3), removed under (a) — the N2 decision. Under (c) it
   signs the commitment digest alongside `c_nonce`, so it proves liveness of a party holding the
-  commitment (possession, not fresh knowledge — §3.3), not of a key bound to nothing. Keep its existing
-  **pairwise-per-issuer** `kid`; do not collapse it to one device-wide key.
+  commitment (possession, not fresh knowledge — §3.3), not of a key bound to nothing. Pass the
+  issuer-scoped `deriveIssuancePopSeed` result so its `kid` stays **pairwise per issuer**; do not collapse
+  it to one device-wide key.
   The commitment's builder/verifier (holder `commit` / issuer `blindSign`-verify) is added regardless:
   it is the binding, orthogonal to the PoP.
 - **`oid4vp.ts`** — the predicate extension generalizes. `DcqlZkAgePredicate { predicate:"age_over",
@@ -455,8 +462,10 @@ risk. Spike harness kept under the session scratchpad (`credkit-spike/`), not co
   additive, so nothing before N2 depends on the choice.
 - Whether to session/authorization-bind the holder commitment (e.g. to the OID4VCI authorization code or
   PKCE verifier), so an intercepted or replayed commitment cannot be injected into a different request.
-  This is what would upgrade the PoP from attesting *possession* of the commitment to fresh *knowledge*
-  of the link secret; it applies under both (a) and (c) and is orthogonal to that choice. Unspecified
+  That strengthens anti-replay but does **not** by itself upgrade possession of the public commitment to
+  fresh knowledge of the link secret. That stronger claim requires a fresh link-secret PoK whose transcript
+  binds the session and, under (c), the PoP key, which may require reopening option (b)'s rejected
+  `blindChallenge` change and its fixture-fidelity cost. It applies under both (a) and (c); unspecified
   here — an N2 design point.
 - Credential status / revocation — unaddressed, and out of scope for the showcase as written. If it
   becomes needed, a status-list entry is an ordinary disclosable claim and can ride along as
@@ -533,7 +542,7 @@ keys from `@credkit/bbs`.
 | `"openid4vp-v1-unsigned"` | dcApi.ts:19 | keep |
 
 **Keys edits**
-- `packages/keys/src/hierarchy.ts` — keep `PRF_EVAL_INPUT="vgw/v1/master-secret"`(~21); ADD `deriveLinkSecret(master)` under a new **non-origin-scoped** info `vgw/v1/link-secret`; REMOVE `deriveHolderSeed`(~76); `derivePresenterSeed`(~87) is vestigial.
+- `packages/keys/src/hierarchy.ts` — keep `PRF_EVAL_INPUT="vgw/v1/master-secret"`(~21); ADD `deriveLinkSecret(master)` under a new **non-origin-scoped** info `vgw/v1/link-secret`; REPLACE `deriveHolderSeed`(~76) with `deriveIssuancePopSeed(master, issuerOrigin)` under pairwise info `vgw/v1/issuance-pop:<issuer-origin>` when option (c) is selected; `derivePresenterSeed`(~87) is vestigial.
 - `packages/keys/src/vault.ts` — `encryptJson`/`decryptJson` must now also persist `{ linkSecret, secretProverBlind }`.
 
 **New (N5)**
