@@ -104,11 +104,12 @@ Every decision below has a reason; to overturn one, overturn the reason.
    foreclose (c)). Option **(b)** — threading a nonce into `blindChallenge` — is rejected: it breaks
    the IETF `Commit` fixture fidelity that is a core credkit value (FINDINGS §1–3). **Recommended
    lean: (c), confirmed at N2.** The demo's thesis is that the protocols are real, and (c) keeps the
-   credential request textbook while naming two distinct jobs — the PoP proves liveness, the
-   commitment proves binding. One condition keeps that honest rather than decorative: the credential
+   credential request on standard rails — `proof_type: jwt`, not a bespoke type — while naming two
+   distinct jobs: the PoP proves liveness, the commitment proves binding. One condition keeps that honest rather than decorative: the credential
    is bound to the link secret and carries no `cnf` key, so a bare PoP would attest a key bound to
    nothing — the PoP JWT MUST also sign the commitment digest, attesting liveness *of the committing
-   party*. Use a single device-bound PoP key, not a per-issuer one: scoping bought privacy only when
+   party* — a VGW-defined claim inside an otherwise-standard PoP JWT, a payload extension, not a new
+   proof type. Use a single device-bound PoP key, not a per-issuer one: scoping bought privacy only when
    the key *was* the binding, and it is freshness-only now, never seen at presentation. (a) stays the
    fallback — dropping the PoP collapses (c)→(a) with no rework.
 4. **Land the core migration (N0–N4) before the new showcases (N5–N6).** N0–N4 are a strict upgrade
@@ -238,6 +239,10 @@ branching — the machinery exists. The shift:
   so there is no presenter signature and no per-verifier DID. The "each verifier sees a different DID"
   exhibit *upgrades* to "the verifier sees no identifier at all." Retire the branch, or keep it only
   for transport-level plumbing.
+- **Issuance-PoP key (under the §3.3 (c) lean):** VGW keeps one lightweight Ed25519 key for the
+  OID4VCI request PoP — *not* the removed BBS binding key, and *not* per-issuer. It signs `c_nonce`
+  + the commitment digest at issuance only, attests liveness of the committing party, and never
+  appears at presentation, so it is no correlation handle. Under fallback (a) it goes away entirely.
 - **Threading & vault:** `deriveLinkSecret(master)` returns the **same** secret every session, and
   VGW must feed *that* into every issuance (`createHolderBinding({ linkSecret })`). The bare
   `createHolderBinding()` mints a fresh random secret per call (`issue.ts:48,57`) — which passes the
