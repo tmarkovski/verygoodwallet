@@ -50,6 +50,7 @@ import { recordPresentation } from "../services/activity";
 import { inspect } from "../inspector/events";
 import { InlineUnlock } from "../components/InlineUnlock";
 import { StepList } from "../components/StepList";
+import { createPacedStepper } from "../components/pacedStepper";
 import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
 
 /** The tier picker's rows; tier 2 depends on the request and the credential. */
@@ -404,6 +405,8 @@ export function Present() {
     setRunning(true);
     setError(null);
     setStep(null);
+    // Pace the checklist: fast phases would otherwise checkmark in a blink.
+    const stepper = createPacedStepper(setStep);
     try {
       const result = composite
         ? await presentComposite({
@@ -411,7 +414,7 @@ export function Present() {
             matches,
             masterSecret,
             signal: lockSignal ?? undefined,
-            onStep: setStep,
+            onStep: stepper.step,
           })
         : await presentCredential({
             request: params.request,
@@ -420,7 +423,7 @@ export function Present() {
             tier,
             masterSecret,
             signal: lockSignal ?? undefined,
-            onStep: setStep,
+            onStep: stepper.step,
           });
       // Log the ceremony for the cross-verifier exhibit (encrypted, local).
       // Best-effort: the verifier already has its answer, so a storage
@@ -458,6 +461,8 @@ export function Present() {
           // Exhibit only — never fail the share over it.
         }
       }
+      // Let the checklist finish playing before the recap replaces it.
+      await stepper.settled();
       setOutcome(result);
     } catch (err) {
       setError(describeError(err));

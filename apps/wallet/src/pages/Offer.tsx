@@ -22,6 +22,7 @@ import {
 } from "../services/issuance";
 import { InlineUnlock } from "../components/InlineUnlock";
 import { StepList } from "../components/StepList";
+import { createPacedStepper } from "../components/pacedStepper";
 import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
 
 export function Offer() {
@@ -81,6 +82,8 @@ export function Offer() {
     setRunning(true);
     setError(null);
     setStep(null);
+    // Pace the checklist: fast phases would otherwise checkmark in a blink.
+    const stepper = createPacedStepper(setStep);
     try {
       const record = await acceptCredentialOffer({
         offer: preview.offer,
@@ -91,8 +94,10 @@ export function Offer() {
         // Locking the wallet mid-ceremony aborts the flow before it can sign
         // or store anything with the (now zeroed) session secret.
         signal: lockSignal ?? undefined,
-        onStep: setStep,
+        onStep: stepper.step,
       });
+      // Let the checklist finish playing before leaving the page.
+      await stepper.settled();
       await navigate(`/credentials/${record.id}`);
     } catch (err) {
       setError(describeError(err));
