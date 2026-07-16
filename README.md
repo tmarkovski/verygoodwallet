@@ -8,6 +8,8 @@ free-tier infrastructure.
 [guided tour](https://verygoodwallet.com) (~3 minutes) or read the
 [technical writeup](https://verygoodwallet.com/writeup/).
 
+[![See credkit in action: blind issuance, selective disclosure, and private age proofs.](assets/credkit-demo-banner.webp)](https://verygoodwallet.com)
+
 ## The thesis
 
 Digital identity wallets keep re-inventing enrollment: install an app, write down

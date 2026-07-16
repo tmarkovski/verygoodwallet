@@ -59,6 +59,63 @@ function SectionTitle({ no, children }: { no: string; children: string }) {
   );
 }
 
+function GuidedDemoBanner({ startHref }: { startHref: string | null }) {
+  return (
+    <section
+      aria-labelledby="guided-demo-title"
+      className="mx-auto max-w-5xl px-5 pt-10"
+    >
+      <div className="tour-promo overflow-hidden rounded-3xl border border-foil/35 bg-accent text-accent-contrast">
+        <div className="tour-promo-art" aria-hidden="true">
+          <img
+            src="/guided-demo-banner.webp"
+            alt=""
+            width="2172"
+            height="724"
+            loading="lazy"
+            decoding="async"
+          />
+          <div className="tour-promo-scrim" />
+        </div>
+
+        <div className="tour-promo-copy">
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.24em] text-foil">
+            Guided demo · about 3 minutes
+          </p>
+          <h2
+            id="guided-demo-title"
+            className="mt-3 text-balance font-display text-3xl font-bold leading-tight tracking-tight"
+          >
+            Carry one credential through the whole story.
+          </h2>
+          <p className="mt-4 text-[14px] leading-relaxed text-accent-contrast/80">
+            Create a passkey wallet, collect a real BBS-signed license, prove
+            your age without revealing your birthday, and inspect exactly what
+            each verifier learns.
+          </p>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            {startHref !== null ? (
+              <a
+                href={startHref}
+                className="rounded-xl bg-canvas px-5 py-3 text-[12px] font-bold uppercase tracking-[0.09em] text-accent transition-opacity hover:opacity-90"
+              >
+                Start the guided demo
+              </a>
+            ) : (
+              <p className="rounded-xl bg-danger-soft px-4 py-3 text-sm text-accent-contrast">
+                The wallet is unavailable in this build.
+              </p>
+            )}
+            <p className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-accent-contrast/55">
+              12 guided stops · runs in your browser
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 const CAST: {
   name: string;
   role: string;
@@ -263,6 +320,8 @@ export default function App() {
           ▾ open the passport
         </p>
       </header>
+
+      <GuidedDemoBanner startHref={startHref} />
 
       <main className="mx-auto max-w-3xl px-5 pb-20">
         {/* ——— Page 01 · the idea ——— */}
