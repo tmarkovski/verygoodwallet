@@ -102,7 +102,15 @@ Every decision below has a reason; to overturn one, overturn the reason.
    only layers the standard PoP for real request liveness — and keeping the commitment *out* of the
    `proof_type` slot is what preserves that (a proprietary proof_type would fork the wire shape and
    foreclose (c)). Option **(b)** — threading a nonce into `blindChallenge` — is rejected: it breaks
-   the IETF `Commit` fixture fidelity that is a core credkit value (FINDINGS §1–3).
+   the IETF `Commit` fixture fidelity that is a core credkit value (FINDINGS §1–3). **Recommended
+   lean: (c), confirmed at N2.** The demo's thesis is that the protocols are real, and (c) keeps the
+   credential request textbook while naming two distinct jobs — the PoP proves liveness, the
+   commitment proves binding. One condition keeps that honest rather than decorative: the credential
+   is bound to the link secret and carries no `cnf` key, so a bare PoP would attest a key bound to
+   nothing — the PoP JWT MUST also sign the commitment digest, attesting liveness *of the committing
+   party*. Use a single device-bound PoP key, not a per-issuer one: scoping bought privacy only when
+   the key *was* the binding, and it is freshness-only now, never seen at presentation. (a) stays the
+   fallback — dropping the PoP collapses (c)→(a) with no rework.
 4. **Land the core migration (N0–N4) before the new showcases (N5–N6).** N0–N4 are a strict upgrade
    of the existing age story; the new capabilities build on a stable base.
 5. **Consume credkit as published, versioned packages** (credkit becomes a **public repo**). VGW deps
@@ -251,7 +259,9 @@ stays; `claimPathToPointer` (RFC-6901) stays. Concrete edits:
   that slot still carries a `proof_type: jwt` PoP (freshness) or is dropped is the N2 decision (§3.3,
   a vs c). Remove `CommitmentOpeningLike` and `vgw_commitment_opening` from `CredentialResponse` — no
   opening travels; the secret is the holder's, blind-signed.
-- **`popJwt.ts`** — kept under (c) (it *is* the freshness proof), removed under (a) — the N2 decision.
+- **`popJwt.ts`** — kept under (c) (the lean, §3.3), removed under (a) — the N2 decision. Under (c) it
+  signs the commitment digest alongside `c_nonce`, so it proves liveness *of the committing party*,
+  not of a key bound to nothing.
   The commitment's builder/verifier (holder `commit` / issuer `blindSign`-verify) is added regardless:
   it is the binding, orthogonal to the PoP.
 - **`oid4vp.ts`** — the predicate extension generalizes. `DcqlZkAgePredicate { predicate:"age_over",
@@ -418,9 +428,11 @@ risk. Spike harness kept under the session scratchpad (`credkit-spike/`), not co
 - Whether `credkit-bbs-sha-2026` or `-shake-2026` is the pinned era (once chosen, it is forever for
   cross-credential equality) — decided at credkit publish time (§11).
 - Whether credkit source-publishes (`main: src/index.ts`) or ships a built `dist` (§11).
-- OID4VCI request freshness (§3.3): rely on the pre-authorized access token alone (a), or keep the
-  standard `proof_type: jwt` PoP (c). Deferred to N2; the commitment-as-extension framing keeps it
-  additive, so nothing before N2 depends on the choice.
+- OID4VCI request freshness (§3.3): **leaning (c)** — keep the standard `proof_type: jwt` PoP and have
+  it sign the commitment digest, so it attests liveness of the committing party (a bare PoP binds a
+  key to nothing in credkit's link-secret model). (a) — token-only, no PoP — is the fallback.
+  Confirmed at N2; the commitment-as-extension framing keeps (c) additive, so nothing before N2
+  depends on the choice.
 - Credential status / revocation — unaddressed, and out of scope for the showcase as written. If it
   becomes needed, a status-list entry is an ordinary disclosable claim and can ride along as
   mandatory-disclosed content, but the mechanism (and its own correlation surface) is unspecified here.
