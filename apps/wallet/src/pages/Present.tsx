@@ -55,6 +55,9 @@ import { StepList } from "../components/StepList";
 import { createPacedStepper } from "../components/pacedStepper";
 import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
 
+/** How long the presentation recap lingers before returning to the verifier. */
+const RETURN_COUNTDOWN_SECONDS = 8;
+
 /** The tier picker's rows; tier 2 depends on the request and the credential. */
 function tierRows(predicate: PredicateOption | null): {
   tier: DisclosureTier;
@@ -340,6 +343,30 @@ export function Present() {
   const [step, setStep] = useState<PresentationStep | null>(null);
   const [outcome, setOutcome] = useState<PresentCredentialResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [autoReturn, setAutoReturn] = useState(true);
+  const [returnSecondsLeft, setReturnSecondsLeft] = useState(RETURN_COUNTDOWN_SECONDS);
+
+  // Once the verifier has its answer, linger on the recap long enough to
+  // read it, then return automatically. The draining film on the button is
+  // the visible clock; "Stay here" cancels both it and the navigation.
+  useEffect(() => {
+    if (
+      outcome?.redirectUri === undefined ||
+      !autoReturn ||
+      locked
+    ) {
+      return;
+    }
+    if (returnSecondsLeft <= 0) {
+      window.location.assign(returnHref(outcome.redirectUri, tourStop?.id));
+      return;
+    }
+    const timer = setTimeout(
+      () => setReturnSecondsLeft((seconds) => seconds - 1),
+      1000,
+    );
+    return () => clearTimeout(timer);
+  }, [outcome, autoReturn, returnSecondsLeft, locked, tourStop?.id]);
 
   // Matching needs the vault open; it runs (and re-runs) once unlocked.
   useEffect(() => {
@@ -603,21 +630,36 @@ export function Present() {
         <div className="mt-5 flex gap-2">
           {outcome.redirectUri !== undefined && (
             <Button
-              onClick={() =>
+              className="relative overflow-hidden"
+              onClick={() => {
+                setAutoReturn(false);
                 window.location.assign(
                   returnHref(outcome.redirectUri as string, tourStop?.id),
-                )
-              }
+                );
+              }}
             >
-              Return to {preview.verifierName}
+              {autoReturn && (
+                <span
+                  aria-hidden="true"
+                  className="animate-drain absolute inset-0 origin-left bg-accent-contrast/25"
+                  style={{ animationDuration: `${RETURN_COUNTDOWN_SECONDS}s` }}
+                />
+              )}
+              <span className="relative">Return to {preview.verifierName}</span>
             </Button>
           )}
-          <Link
-            to="/"
-            className="inline-flex items-center px-3 text-sm text-ink underline decoration-accent/70 underline-offset-2 hover:decoration-accent"
-          >
-            Back to wallet
-          </Link>
+          {outcome.redirectUri !== undefined && autoReturn ? (
+            <Button variant="ghost" onClick={() => setAutoReturn(false)}>
+              Stay here
+            </Button>
+          ) : (
+            <Link
+              to="/"
+              className="inline-flex items-center px-3 text-sm text-ink underline decoration-accent/70 underline-offset-2 hover:decoration-accent"
+            >
+              Back to wallet
+            </Link>
+          )}
         </div>
       </div>
     );

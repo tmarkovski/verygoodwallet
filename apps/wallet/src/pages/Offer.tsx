@@ -25,6 +25,9 @@ import { StepList } from "../components/StepList";
 import { createPacedStepper } from "../components/pacedStepper";
 import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
 
+/** How long the issued screen lingers before opening the credential. */
+const VIEW_COUNTDOWN_SECONDS = 8;
+
 export function Offer() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -46,6 +49,22 @@ export function Offer() {
   const [running, setRunning] = useState(false);
   const [step, setStep] = useState<IssuanceStep | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [storedId, setStoredId] = useState<number | null>(null);
+  const [autoAdvance, setAutoAdvance] = useState(true);
+  const [secondsLeft, setSecondsLeft] = useState(VIEW_COUNTDOWN_SECONDS);
+
+  // The issued screen auto-opens the credential after a short countdown, so
+  // the completed checklist gets read but the flow still lands where it used
+  // to. Any click ("View credential" / "Stay here") pre-empts it.
+  useEffect(() => {
+    if (storedId === null || !autoAdvance || locked) return;
+    if (secondsLeft <= 0) {
+      void navigate(`/credentials/${storedId}`);
+      return;
+    }
+    const timer = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [storedId, autoAdvance, secondsLeft, locked, navigate]);
 
   // Preview loads immediately — even while locked — so the user can see who
   // is asking before deciding whether to unlock at all.
@@ -96,9 +115,10 @@ export function Offer() {
         signal: lockSignal ?? undefined,
         onStep: stepper.step,
       });
-      // Let the checklist finish playing before leaving the page.
+      // Let the checklist finish playing, then hold on the issued screen —
+      // the countdown effect (or a click) takes it to the credential.
       await stepper.settled();
-      await navigate(`/credentials/${record.id}`);
+      setStoredId(record.id);
     } catch (err) {
       setError(describeError(err));
       setRunning(false);
@@ -220,6 +240,46 @@ export function Offer() {
             </div>
           ) : locked ? (
             <InlineUnlock accounts={accounts} />
+          ) : storedId !== null ? (
+            <>
+              <StepList title="Issued" steps={ISSUANCE_STEPS} current={null} complete />
+              <div className="mt-4 animate-rise rounded-3xl border border-line bg-surface p-5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ok">
+                  Credential added
+                </p>
+                <p className="mt-1.5 text-[13px] leading-relaxed text-ink-dim">
+                  Verified, encrypted, and stored in this wallet — the
+                  checklist above is everything that just happened.
+                </p>
+                <div className="mt-4 flex gap-2">
+                  <Button
+                    className="relative overflow-hidden"
+                    onClick={() => void navigate(`/credentials/${storedId}`)}
+                  >
+                    {/* Netflix-style countdown: a film over the button drains
+                        for the auto-advance window (duration in sync with the
+                        navigation effect above). */}
+                    {autoAdvance && (
+                      <span
+                        aria-hidden="true"
+                        className="animate-drain absolute inset-0 origin-left bg-accent-contrast/25"
+                        style={{ animationDuration: `${VIEW_COUNTDOWN_SECONDS}s` }}
+                      />
+                    )}
+                    <span className="relative">View credential</span>
+                  </Button>
+                  {autoAdvance ? (
+                    <Button variant="ghost" onClick={() => setAutoAdvance(false)}>
+                      Stay here
+                    </Button>
+                  ) : (
+                    <Button variant="ghost" onClick={() => void navigate("/")}>
+                      Back to wallet
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </>
           ) : running ? (
             <StepList title="Issuing" steps={ISSUANCE_STEPS} current={step} />
           ) : (

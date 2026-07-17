@@ -14,12 +14,19 @@ export function StepList({
   title,
   steps,
   current,
+  complete = false,
 }: {
   title: string;
   steps: readonly StepDescriptor[];
   current: string | null;
+  /** Render every step checked — the ceremony finished. */
+  complete?: boolean;
 }) {
-  const activeIndex = current === null ? -1 : steps.findIndex((s) => s.id === current);
+  const activeIndex = complete
+    ? steps.length
+    : current === null
+      ? -1
+      : steps.findIndex((s) => s.id === current);
   return (
     <div className="mt-6 animate-fade rounded-3xl border border-line bg-surface p-5">
       <SectionTitle>{title}</SectionTitle>

@@ -87,6 +87,8 @@
 
   --animate-rise: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
   --animate-fade: fade 0.3s ease both;
+  /* Countdown film: duration comes from an inline style at the call site. */
+  --animate-drain: drain linear both;
 
   @keyframes rise {
     from {
@@ -105,6 +107,15 @@
     }
     to {
       opacity: 1;
+    }
+  }
+
+  @keyframes drain {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
     }
   }
 }
@@ -211,10 +222,15 @@ body {
     inset 0 0 0 4px #d64545;
 }
 
-/* Keep the rise/fade system, but stand still for reduced-motion users. */
+/* Keep the rise/fade system, but stand still for reduced-motion users.
+   The countdown film is hidden outright — a frozen film would just dim the
+   button forever, and the auto-advance it narrates still happens. */
 @media (prefers-reduced-motion: reduce) {
   .animate-rise,
   .animate-fade {
     animation: none;
+  }
+  .animate-drain {
+    display: none;
   }
 }
