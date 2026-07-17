@@ -72,7 +72,7 @@ export function OfferResult({
             href={walletLink}
             className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-accent-contrast shadow-sm transition-all duration-150 hover:brightness-110 active:scale-[0.98]"
           >
-            Open in VeryGoodWallet
+            Continue in VeryGoodWallet
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path
                 d="M7 17L17 7M9 7h8v8"
@@ -115,21 +115,22 @@ export function OfferResult({
         </p>
       )}
 
-      <details className="mt-5 rounded-xl border border-line bg-canvas">
-        <summary className="cursor-pointer select-none px-4 py-3 text-[12px] font-medium text-ink-dim">
+      {/* Same collapsible-inspector idiom as the verifiers' raw-JSON exhibits. */}
+      <details className="group mt-5 rounded-xl border border-line bg-canvas text-left">
+        <summary className="cursor-pointer px-3 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-muted group-open:border-b group-open:border-line">
           Raw credential offer
         </summary>
-        <div className="border-t border-line px-4 py-3">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+        <div className="max-h-72 overflow-auto p-3">
+          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
             credential_offer_uri
           </p>
-          <pre className="mt-1 overflow-x-auto font-mono text-[11px] leading-relaxed text-muted">
+          <pre className="mt-1 overflow-x-auto font-mono text-[11px] leading-relaxed text-ink-dim">
             {credentialOfferUri}
           </pre>
-          <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">
+          <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
             credential_offer
           </p>
-          <pre className="mt-1 overflow-x-auto font-mono text-[11px] leading-relaxed text-muted">
+          <pre className="mt-1 overflow-x-auto font-mono text-[11px] leading-relaxed text-ink-dim">
             {JSON.stringify(credentialOffer, null, 2)}
           </pre>
         </div>

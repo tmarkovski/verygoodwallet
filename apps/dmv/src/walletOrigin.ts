@@ -1,5 +1,5 @@
 /**
- * Which wallet the "Open in VeryGoodWallet" link targets.
+ * Which wallet the "Continue in VeryGoodWallet" link targets.
  *
  * Precedence: `?wallet=<origin>` query param → `VITE_WALLET_ORIGIN` →
  * localhost in dev → nothing (null) in production. The link itself is rebuilt

@@ -82,7 +82,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
       "The DMV is the issuer. The counter form is already filled with your tour persona — Avery Fontaine, comfortably over 25. That number will matter later.",
       "Issuing creates a pre-authorized credential offer. Note what the DMV never does: it doesn't talk to your wallet, and it will never learn where the license gets used.",
     ],
-    action: "Press “Issue driver's license”, then follow “Open in VeryGoodWallet”.",
+    action: "Press “Issue driver's license”, then follow “Continue in VeryGoodWallet”.",
   },
   {
     id: "offer",
