@@ -79,14 +79,16 @@ export function Shell({ children }: { children: ReactNode }) {
               </svg>
             </IconButton>
             <IconButton label="Settings" onClick={() => void navigate("/settings")}>
+              {/* sliders glyph — two rails with offset knobs */}
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
                 <path
-                  d="M12 3v2.2M12 18.8V21M21 12h-2.2M5.2 12H3M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6M18.4 18.4l-1.6-1.6M7.2 7.2L5.6 5.6"
+                  d="M4 7.5h7M15.5 7.5H20M4 16.5h4.5M13 16.5h7"
                   stroke="currentColor"
                   strokeWidth="1.8"
                   strokeLinecap="round"
                 />
+                <circle cx="13.25" cy="7.5" r="2.25" stroke="currentColor" strokeWidth="1.8" />
+                <circle cx="10.75" cy="16.5" r="2.25" stroke="currentColor" strokeWidth="1.8" />
               </svg>
             </IconButton>
           </div>
