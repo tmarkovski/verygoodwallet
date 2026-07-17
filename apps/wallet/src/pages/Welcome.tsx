@@ -2,12 +2,16 @@
  * Onboarding: the thesis, plus the create-wallet passkey flow.
  */
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { WalletCreatedError, useSession } from "../session";
 import type { AccountRecord } from "../services/db";
 import { passkeysAvailable } from "../services/webauthn";
 import { Button, ErrorNote, describeError } from "../components/ui";
+
+/** Auto sign-in countdown after creation — long enough for the OS passkey
+    sheet from `create()` to finish tearing down before `get()` fires. */
+const SIGNIN_COUNTDOWN_SECONDS = 3;
 
 function Step({
   title,
@@ -39,8 +43,11 @@ export function Welcome() {
   const [error, setError] = useState<string | null>(null);
   // Set when the passkey/account were created but the automatic sign-in was
   // rejected (macOS can refuse a `get()` fired while the creation sheet is
-  // still dismissing). The click on "Sign in" retries with fresh activation.
+  // still dismissing). The card retries automatically after a short drain —
+  // by then the sheet is gone — and a click pre-empts it. A second failure
+  // turns auto off so the user isn't looped through rejected prompts.
   const [created, setCreated] = useState<AccountRecord | null>(null);
+  const [autoSignIn, setAutoSignIn] = useState(false);
 
   const available = passkeysAvailable();
   const hasAccounts = accounts !== null && accounts.length > 0;
@@ -57,6 +64,7 @@ export function Welcome() {
     } catch (err) {
       if (err instanceof WalletCreatedError) {
         setCreated(err.account);
+        setAutoSignIn(true);
       } else {
         setError(describeError(err));
       }
@@ -67,6 +75,7 @@ export function Welcome() {
 
   const onSignIn = async () => {
     if (created === null || busy) return;
+    setAutoSignIn(false);
     setBusy(true);
     setError(null);
     try {
@@ -78,6 +87,15 @@ export function Welcome() {
       setBusy(false);
     }
   };
+
+  // Netflix-style auto-advance: fire the sign-in once the film has drained.
+  // `onSignIn` clears `autoSignIn` when it runs, so a failed attempt (or a
+  // pre-empting click) never re-arms the timer.
+  useEffect(() => {
+    if (created === null || !autoSignIn || busy) return;
+    const timer = setTimeout(() => void onSignIn(), SIGNIN_COUNTDOWN_SECONDS * 1000);
+    return () => clearTimeout(timer);
+  }, [created, autoSignIn, busy]);
 
   return (
     <div className="animate-rise">
@@ -132,9 +150,20 @@ export function Welcome() {
               type="button"
               busy={busy}
               onClick={() => void onSignIn()}
-              className="mt-4 w-full"
+              className="relative mt-4 w-full overflow-hidden"
             >
-              {busy ? "Waiting for your passkey…" : "Sign in"}
+              {/* Netflix-style countdown: the film drains for the auto
+                  sign-in window; clicking pre-empts it. */}
+              {autoSignIn && !busy && (
+                <span
+                  aria-hidden="true"
+                  className="animate-drain absolute inset-0 origin-left bg-accent-contrast/25"
+                  style={{ animationDuration: `${SIGNIN_COUNTDOWN_SECONDS}s` }}
+                />
+              )}
+              <span className="relative">
+                {busy ? "Waiting for your passkey…" : "Sign in"}
+              </span>
             </Button>
             {error !== null && <div className="mt-3"><ErrorNote>{error}</ErrorNote></div>}
           </div>
