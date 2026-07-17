@@ -15,8 +15,9 @@ const STORAGE_KEY = "vgw:tour:stop";
  * an abandoned tour, not a running one. Without the cutoff, any tab that
  * ever toured resurrects the narrator on every later visit to that origin
  * (sessionStorage survives reloads and even browser tab restore, and the
- * ✕ only clears the origin it's clicked on). Every adopt/advance
- * re-stamps the clock, so a genuinely running tour never expires.
+ * End-tour link only clears the origin it's clicked on). Every
+ * adopt/advance re-stamps the clock, so a genuinely running tour never
+ * expires.
  */
 const TOUR_TTL_MS = 30 * 60 * 1000;
 
