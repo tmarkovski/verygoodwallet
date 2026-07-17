@@ -90,6 +90,11 @@ No ambient/looping animation — engraved things do not shimmer.
   blue-gray stock, white forms, cobalt clerk ink, and an oxblood issuance stamp.
   It deliberately avoids both the wallet's dark Intaglio world and the landing
   guide's warm passport paper, navy cover, gold foil, and serif typography.
+- **Landing guide + tour narrator**: self-hosted Source Serif 4 carries the
+  passport's headlines and reading text with screen-friendly optical sizing;
+  system UI sans handles small labels and controls. The federal-document feel
+  comes from the navy cover, cream stock, foil rules, stamps, and hierarchy —
+  not from forcing antique text faces into small sizes.
 - **Verifier demo sites (Nightcap, Utopia Wheels)**: intentionally different brands
   (they are third parties in the story) — do not reuse Intaglio tokens; only the
   embedded credential cards keep their petrol faces, since the card belongs to the wallet.

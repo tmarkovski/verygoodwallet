@@ -47,6 +47,10 @@ const NAVY = "#1c2742";
 const CREAM = "#f3ecd9";
 const FOIL = "#c9a86a";
 const STAMP = "#8d76c4";
+const READING_SERIF =
+  "'Source Serif 4 Variable', Charter, 'Bitstream Charter', Georgia, serif";
+const UI_SANS =
+  "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
 
 /** Gap between the card and the viewport edges at every anchor. */
 const INSET = 16;
@@ -120,7 +124,7 @@ const styles: Record<string, CSSProperties> = {
   card: {
     position: "fixed",
     zIndex: 9999,
-    width: "min(340px, calc(100vw - 32px))",
+    width: "min(352px, calc(100vw - 32px))",
     background: NAVY,
     color: CREAM,
     border: `1px solid rgba(243, 236, 217, 0.28)`,
@@ -128,8 +132,9 @@ const styles: Record<string, CSSProperties> = {
     boxShadow:
       "inset 0 0 0 3px #1c2742, inset 0 0 0 4px rgba(201, 168, 106, 0.55), 0 12px 40px rgba(0, 0, 0, 0.45)",
     padding: "18px 18px 16px",
-    fontFamily: "Georgia, 'Times New Roman', serif",
-    lineHeight: 1.55,
+    fontFamily: READING_SERIF,
+    fontOpticalSizing: "auto",
+    lineHeight: 1.58,
     touchAction: "none",
     // Selection would start on pointerdown, before any drag state exists —
     // a dragged card must never leave its own prose highlighted behind.
@@ -144,6 +149,7 @@ const styles: Record<string, CSSProperties> = {
   },
   eyebrow: {
     margin: 0,
+    fontFamily: UI_SANS,
     fontSize: 10,
     fontWeight: 700,
     letterSpacing: "0.22em",
@@ -152,7 +158,7 @@ const styles: Record<string, CSSProperties> = {
   },
   title: {
     margin: "8px 24px 0 0",
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: 700,
     letterSpacing: "-0.01em",
   },
@@ -165,14 +171,14 @@ const styles: Record<string, CSSProperties> = {
   },
   body: {
     margin: "8px 0 0",
-    fontSize: 13,
+    fontSize: 14,
     color: "rgba(243, 236, 217, 0.82)",
   },
   action: {
     margin: "12px 0 0",
     padding: "2px 0 2px 10px",
     borderLeft: `3px solid ${STAMP}`,
-    fontSize: 13,
+    fontSize: 14,
     fontStyle: "italic",
     color: CREAM,
   },
@@ -183,6 +189,7 @@ const styles: Record<string, CSSProperties> = {
     background: CREAM,
     color: NAVY,
     borderRadius: 8,
+    fontFamily: UI_SANS,
     fontSize: 12,
     fontWeight: 700,
     letterSpacing: "0.08em",
@@ -198,6 +205,7 @@ const styles: Record<string, CSSProperties> = {
     background: "none",
     border: "none",
     color: "rgba(243, 236, 217, 0.55)",
+    fontFamily: UI_SANS,
     fontSize: 14,
     lineHeight: 1,
     cursor: "pointer",
@@ -208,9 +216,8 @@ const styles: Record<string, CSSProperties> = {
     padding: 0,
     background: "none",
     border: "none",
-    fontFamily: "inherit",
+    fontFamily: UI_SANS,
     fontSize: 11,
-    fontStyle: "italic",
     color: "rgba(243, 236, 217, 0.5)",
     textDecoration: "underline",
     textUnderlineOffset: 2,

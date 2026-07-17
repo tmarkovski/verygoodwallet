@@ -47,11 +47,14 @@
 }
 
 @theme {
-  /* An identity document reads in serif; sans is for micro-labels only. */
+  /*
+   * Source Serif keeps the identity-document voice but is cut for sustained
+   * screen reading. Sans is reserved for small labels and controls.
+   */
   --font-sans:
-    Georgia, "Iowan Old Style", "Times New Roman", Times, serif;
+    "Source Serif 4 Variable", Charter, "Bitstream Charter", Georgia, serif;
   --font-display:
-    Palatino, "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    "Source Serif 4 Variable", Charter, "Bitstream Charter", Georgia, serif;
   --font-mono:
     ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
     "Liberation Mono", monospace;
@@ -111,6 +114,7 @@ body {
   background-color: var(--pp-canvas);
   color: var(--pp-ink);
   font-family: var(--font-sans);
+  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   min-height: 100dvh;
 }
@@ -284,7 +288,7 @@ body {
 
 /*
  * Long-form writeup typography (/writeup/). Hand-rolled prose styles — no
- * plugin — tuned for the passport serif on cream.
+ * plugin — tuned for the screen-readable passport serif on cream.
  */
 .prose {
   font-size: 16px;

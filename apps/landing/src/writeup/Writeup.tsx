@@ -10,7 +10,7 @@ export function Writeup() {
       <header className="pt-12">
         <a
           href="/"
-          className="font-mono text-[11px] uppercase tracking-[0.2em] text-stamp underline decoration-stamp/50 underline-offset-2 hover:decoration-stamp"
+          className="font-label text-[11px] uppercase tracking-[0.2em] text-stamp underline decoration-stamp/50 underline-offset-2 hover:decoration-stamp"
         >
           ← back to the cover
         </a>

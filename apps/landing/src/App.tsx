@@ -50,7 +50,7 @@ function Crest({ size = 88 }: { size?: number }) {
 function SectionTitle({ no, children }: { no: string; children: string }) {
   return (
     <div>
-      <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.24em] text-stamp">
+      <p className="font-label text-[11px] font-semibold uppercase tracking-[0.24em] text-stamp">
         Page {no}
       </p>
       <h2 className="mt-2 font-display text-3xl font-bold tracking-tight">{children}</h2>
@@ -79,7 +79,7 @@ function GuidedDemoBanner({ startHref }: { startHref: string | null }) {
         </div>
 
         <div className="tour-promo-copy">
-          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.24em] text-foil">
+          <p className="font-label text-[10px] font-semibold uppercase tracking-[0.24em] text-foil">
             Guided demo · about 3 minutes
           </p>
           <h2
@@ -97,7 +97,7 @@ function GuidedDemoBanner({ startHref }: { startHref: string | null }) {
             {startHref !== null ? (
               <a
                 href={startHref}
-                className="rounded-xl bg-canvas px-5 py-3 text-[12px] font-bold uppercase tracking-[0.09em] text-accent transition-opacity hover:opacity-90"
+                className="rounded-xl bg-canvas px-5 py-3 font-label text-[12px] font-bold uppercase tracking-[0.09em] text-accent transition-opacity hover:opacity-90"
               >
                 Start the guided demo
               </a>
@@ -106,7 +106,7 @@ function GuidedDemoBanner({ startHref }: { startHref: string | null }) {
                 The wallet is unavailable in this build.
               </p>
             )}
-            <p className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-accent-contrast/55">
+            <p className="font-label text-[10px] uppercase tracking-[0.14em] text-accent-contrast/60">
               12 guided stops · runs in your browser
             </p>
           </div>
@@ -198,7 +198,7 @@ function StampedPage() {
           aria-hidden="true"
           className="guilloche pointer-events-none absolute -bottom-28 -left-28 size-96 text-crimson opacity-[0.08]"
         />
-        <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.24em] text-stamp">
+        <p className="font-label text-[11px] font-semibold uppercase tracking-[0.24em] text-stamp">
           Tour complete
         </p>
         <h1 className="mt-2 font-display text-4xl font-bold tracking-tight">
@@ -239,21 +239,21 @@ function StampedPage() {
         <div className="mt-8 flex flex-wrap gap-3">
           <a
             href="/writeup/"
-            className="rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-accent-contrast transition-opacity hover:opacity-90"
+            className="rounded-xl bg-accent px-5 py-3 font-label text-sm font-semibold text-accent-contrast transition-opacity hover:opacity-90"
           >
             Read how it works
           </a>
           {startHref !== null && (
             <a
               href={startHref}
-              className="rounded-xl border border-line-strong px-5 py-3 text-sm text-ink-dim transition-colors hover:border-ink"
+              className="rounded-xl border border-line-strong px-5 py-3 font-label text-sm text-ink-dim transition-colors hover:border-ink"
             >
               Run the tour again
             </a>
           )}
           <a
             href="/"
-            className="inline-flex items-center px-2 text-sm text-ink underline decoration-stamp/60 underline-offset-2 hover:decoration-stamp"
+            className="inline-flex items-center px-2 font-label text-sm text-ink underline decoration-stamp/60 underline-offset-2 hover:decoration-stamp"
           >
             Back to the cover
           </a>
@@ -283,7 +283,7 @@ export default function App() {
     <>
       {/* ——— The cover ——— */}
       <header className="foil-frame relative flex min-h-[92dvh] flex-col items-center justify-center bg-accent px-6 py-20 text-center text-accent-contrast">
-        <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.3em] text-foil">
+        <p className="font-label text-[11px] font-semibold uppercase tracking-[0.3em] text-foil">
           State of Utopia · demonstration passport
         </p>
         <div className="mt-8 text-foil">
@@ -305,21 +305,21 @@ export default function App() {
           {startHref !== null && (
             <a
               href={startHref}
-              className="rounded-xl bg-canvas px-6 py-3.5 text-sm font-bold uppercase tracking-[0.08em] text-accent transition-opacity hover:opacity-90"
+              className="rounded-xl bg-canvas px-6 py-3.5 font-label text-sm font-bold uppercase tracking-[0.08em] text-accent transition-opacity hover:opacity-90"
             >
               Take the guided tour
             </a>
           )}
           <a
             href="/writeup/"
-            className="rounded-xl border border-foil/60 px-6 py-3.5 text-sm text-accent-contrast transition-colors hover:border-foil"
+            className="rounded-xl border border-foil/60 px-6 py-3.5 font-label text-sm text-accent-contrast transition-colors hover:border-foil"
           >
             Read how it works
           </a>
         </div>
         <p
           aria-hidden="true"
-          className="absolute bottom-6 font-mono text-[10px] uppercase tracking-[0.3em] text-accent-contrast/50"
+          className="absolute bottom-6 font-label text-[10px] uppercase tracking-[0.3em] text-accent-contrast/55"
         >
           ▾ open the passport
         </p>
@@ -381,12 +381,12 @@ export default function App() {
                   <span className="font-display text-[15px] font-bold tracking-tight">
                     {site.name}
                   </span>
-                  <span className="font-mono text-[9px] uppercase tracking-[0.2em] opacity-80">
+                  <span className="font-label text-[10px] uppercase tracking-[0.18em] opacity-80">
                     visit ↗
                   </span>
                 </div>
                 <div className="px-5 py-4">
-                  <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">
+                  <p className="font-label text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">
                     {site.role}
                   </p>
                   <p className="mt-2 text-[13px] leading-relaxed text-ink-dim">{site.line}</p>
@@ -417,7 +417,7 @@ export default function App() {
               {startHref !== null ? (
                 <a
                   href={startHref}
-                  className="rounded-xl bg-accent px-6 py-3.5 text-sm font-bold uppercase tracking-[0.08em] text-accent-contrast transition-opacity hover:opacity-90"
+                  className="rounded-xl bg-accent px-6 py-3.5 font-label text-sm font-bold uppercase tracking-[0.08em] text-accent-contrast transition-opacity hover:opacity-90"
                 >
                   Begin at the wallet
                 </a>
@@ -426,13 +426,13 @@ export default function App() {
                   No wallet origin is configured for this build (VITE_WALLET_ORIGIN).
                 </p>
               )}
-              <p className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-muted">
+              <p className="font-label text-[10px] uppercase tracking-[0.14em] text-muted">
                 Needs a passkey-capable browser
               </p>
             </div>
           </div>
           <div className="mt-5 rounded-3xl border border-dashed border-line-strong p-7">
-            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">
+            <p className="font-label text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">
               Prefer to watch
             </p>
             <p className="mt-2 text-[13.5px] leading-relaxed text-ink-dim">
@@ -473,7 +473,7 @@ export default function App() {
                 keeping separate presentations unlinkable
               </li>
             </ul>
-            <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.2em] text-stamp">
+            <p className="mt-4 font-label text-[10px] uppercase tracking-[0.2em] text-stamp">
               Read the full writeup →
             </p>
           </a>

@@ -18,5 +18,8 @@
     "react": "^19.2.0",
     "typescript": "~5.9.0",
     "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@fontsource-variable/source-serif-4": "^5.2.9"
   }
 }

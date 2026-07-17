@@ -1,3 +1,5 @@
+import "./font.css";
+
 export {
   TOUR_PARAM,
   TOUR_PERSONA,
