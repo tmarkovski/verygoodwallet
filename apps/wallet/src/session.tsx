@@ -16,10 +16,12 @@ import {
   type ReactNode,
 } from "react";
 import { VAULT_INFO, deriveVaultKey } from "@vgw/keys";
+import { currentTourStopId, subscribeTour } from "@vgw/tour";
 import { inspect } from "./inspector/events";
 import {
   addAccount,
   deleteAllData,
+  getAccount,
   listAccounts,
   updateAccount,
   type AccountRecord,
@@ -29,6 +31,13 @@ import {
   registerPasskey,
   type MasterSecretSource,
 } from "./services/webauthn";
+import {
+  TOUR_KEY_TTL_MS,
+  clearTourKey,
+  hasTourKey,
+  stashTourKey,
+  takeTourKey,
+} from "./services/tourKey";
 
 const LAST_ACCOUNT_KEY = "vgw:last-account-id";
 
@@ -65,6 +74,18 @@ export interface SessionValue {
   /** True when the unlocked account uses the simulated (non-PRF) fallback. */
   simulated: boolean;
   lastAccountId: number | null;
+  /**
+   * True while a tour-key stash exists (see `keepUnlockedForTour`). Used by
+   * the offer dialog so an accepted offer is never re-asked.
+   */
+  tourKeyStashed: boolean;
+  /**
+   * DEMO ONLY: with the user's explicit consent during a tour, stash the
+   * live master secret in this tab's sessionStorage (TTL-bounded) so tour
+   * hops don't each cost a passkey prompt. A production wallet would never
+   * persist key material — the offer dialog says so.
+   */
+  keepUnlockedForTour(): void;
   /** Register a passkey, store the account, then authenticate (unlock). */
   createWallet(name: string): Promise<void>;
   /** Authenticate with an existing account's passkey and unlock. */
@@ -115,6 +136,62 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const [unlocked, setUnlocked] = useState<UnlockedState | null>(null);
   const [lastAccountId, setLastAccountId] = useState<number | null>(readLastAccountId);
+  const [tourKeyStashed, setTourKeyStashed] = useState<boolean>(hasTourKey);
+
+  // Tour-key restore: every cross-origin hop of the tour reloads the app and
+  // would otherwise cost a passkey prompt. If the user consented to the
+  // stash (and the tour is still running, and the TTL hasn't lapsed),
+  // silently rebuild the session from it on mount.
+  useEffect(() => {
+    const stash = takeTourKey();
+    if (stash === null) return;
+    let cancelled = false;
+    void (async () => {
+      const account = await getAccount(stash.accountId);
+      if (account === undefined) {
+        clearTourKey();
+        setTourKeyStashed(false);
+        return;
+      }
+      const vaultKey = await deriveVaultKey(stash.masterSecret);
+      if (cancelled) return;
+      setUnlocked((current) =>
+        current ?? {
+          account,
+          masterSecret: stash.masterSecret,
+          vaultKey,
+          source: stash.source,
+          lockController: new AbortController(),
+        },
+      );
+      inspect.emit({
+        label: "Session restored from tour key",
+        data: {
+          account: account.name,
+          storage: "sessionStorage (tour consent, TTL-bounded)",
+          warning: "demo behavior — a production wallet keeps keys in memory only",
+        },
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Mount-only: the stash is only ever written before a reload.
+  }, []);
+
+  // The stash lives and dies with the tour: ending the tour on this origin
+  // revokes it immediately (the session itself stays unlocked — only the
+  // persisted copy goes away).
+  useEffect(
+    () =>
+      subscribeTour(() => {
+        if (currentTourStopId() === null) {
+          clearTourKey();
+          setTourKeyStashed(false);
+        }
+      }),
+    [],
+  );
 
   const refreshAccounts = useCallback(async () => {
     try {
@@ -196,7 +273,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [refreshAccounts, unlock],
   );
 
+  const keepUnlockedForTour = useCallback(() => {
+    if (unlocked === null) return;
+    const stashed = stashTourKey(
+      unlocked.account.id,
+      unlocked.masterSecret,
+      unlocked.source,
+    );
+    setTourKeyStashed(stashed);
+    if (stashed) {
+      inspect.emit({
+        label: "Master secret stashed for the tour",
+        data: {
+          storage: "sessionStorage, this tab only",
+          ttlMinutes: TOUR_KEY_TTL_MS / 60_000,
+          clearedOn: "lock, tour end, TTL expiry, wallet reset",
+          warning: "demo behavior — a production wallet keeps keys in memory only",
+        },
+      });
+    }
+  }, [unlocked]);
+
   const logout = useCallback(() => {
+    // Locking always revokes the tour stash — "lock" must mean locked.
+    clearTourKey();
+    setTourKeyStashed(false);
     if (unlocked !== null) {
       unlocked.masterSecret.fill(0);
       // Zeroing revokes the secret; aborting tells anything still awaiting a
@@ -234,13 +335,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       lockSignal: unlocked?.lockController.signal ?? null,
       simulated: unlocked?.source === "simulated",
       lastAccountId,
+      tourKeyStashed,
+      keepUnlockedForTour,
       createWallet,
       login: unlock,
       logout,
       refreshAccounts,
       resetWallet,
     }),
-    [accounts, accountsError, unlocked, lastAccountId, createWallet, unlock, logout, refreshAccounts, resetWallet],
+    [accounts, accountsError, unlocked, lastAccountId, tourKeyStashed, keepUnlockedForTour, createWallet, unlock, logout, refreshAccounts, resetWallet],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

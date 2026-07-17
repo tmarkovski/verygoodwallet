@@ -4,6 +4,7 @@ import { TourOverlay, adoptTourFromUrl, advanceTourFrom, useTourStop } from "@vg
 import { SessionProvider, useSession } from "./session";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Shell } from "./components/Shell";
+import { TourKeyOffer } from "./components/TourKeyOffer";
 import { TOUR_ORIGINS } from "./services/demoSites";
 import { Welcome } from "./pages/Welcome";
 import { Home } from "./pages/Home";
@@ -39,7 +40,12 @@ function TourController() {
     }
   }, [stop, locked, location]);
 
-  return <TourOverlay origins={TOUR_ORIGINS} />;
+  return (
+    <>
+      <TourOverlay origins={TOUR_ORIGINS} />
+      <TourKeyOffer />
+    </>
+  );
 }
 
 export default function App() {
