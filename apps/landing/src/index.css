@@ -171,6 +171,49 @@ body {
 }
 
 /*
+ * Fine, interlocking guilloche rings give the front cover the texture of
+ * security printing without introducing another illustration. Two offset
+ * tiles keep the repeat from reading as a simple dot grid.
+ */
+.passport-cover {
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.passport-cover::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 9px;
+  pointer-events: none;
+  background-image:
+    repeating-radial-gradient(
+      ellipse at center,
+      transparent 0 8px,
+      rgb(201 168 106 / 0.075) 8.5px 9.5px,
+      transparent 10px 16px
+    ),
+    repeating-radial-gradient(
+      ellipse at center,
+      transparent 0 8px,
+      rgb(245 239 223 / 0.035) 8.5px 9.5px,
+      transparent 10px 16px
+    );
+  background-position: 0 0, 90px 54px;
+  background-size: 180px 108px;
+  mask-image: radial-gradient(ellipse at center, black 22%, transparent 92%);
+  -webkit-mask-image: radial-gradient(
+    ellipse at center,
+    black 22%,
+    transparent 92%
+  );
+}
+
+.passport-cover > * {
+  z-index: 1;
+}
+
+/*
  * .guilloche — engraved rosette line-work, CSS-only (concentric hairline
  * rings), always behind content and masked to fade out. Ink chosen by the
  * host via `color`; defaults to the stamp violet at whisper opacity.

@@ -296,7 +296,7 @@ export default function App() {
   return (
     <div className="passport-scroll">
       {/* ——— The cover ——— */}
-      <header className="passport-page foil-frame relative flex flex-col items-center justify-center bg-accent px-6 py-20 text-center text-accent-contrast">
+      <header className="passport-page passport-cover foil-frame relative flex flex-col items-center justify-center bg-accent px-6 py-20 text-center text-accent-contrast">
         <p className="font-label text-[11px] font-semibold uppercase tracking-[0.3em] text-foil">
           State of Utopia · demonstration passport
         </p>
