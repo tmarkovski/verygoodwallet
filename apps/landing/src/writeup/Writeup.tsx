@@ -1,6 +1,7 @@
 /**
- * /writeup/ — the long-form technical page: architecture first, then the
- * findings log (the things that fought back), then honest limitations.
+ * /writeup/ — the long-form page: an explainer of the ideas the demo runs on
+ * (verifiable credentials, BBS signatures, zero-knowledge predicates),
+ * written for newcomers and practitioners alike.
  */
 
 export function Writeup() {
@@ -18,247 +19,366 @@ export function Writeup() {
         </h1>
         <p className="mt-4 text-[16px] leading-relaxed text-ink-dim">
           A passkey-native identity wallet, an issuer, and two verifiers —
-          real protocols, real cryptography, free-tier infrastructure. This is
-          the architecture, followed by the field notes: the things that only
-          became visible because everything actually runs.
+          real protocols, real cryptography, free-tier infrastructure. This
+          page explains how it all works, starting with verifiable credentials
+          and moving through range proofs and holder binding. You don't need a
+          background in zero-knowledge proofs, but there's enough detail here
+          if you already have one.
         </p>
       </header>
 
       <article className="prose mt-4">
-        <h2>The premise</h2>
+        <h2>Why this site exists</h2>
         <p>
-          Digital identity wallets keep re-inventing the enrollment problem:
-          install an app, write down a seed phrase, trust a custodian. But the
-          platforms already solved secret management — the passkey is a
-          synced, hardware-backed, phishing-resistant credential that hundreds
-          of millions of people quietly carry. The demo's thesis is that a
-          passkey is not just a way to <em>log in to</em> a wallet.{" "}
-          <strong>The passkey is the wallet.</strong>
+          I used to work in digital identity, so this project is partly a
+          return to an area I still care about. It brings together two ideas
+          that people in my corner of the field spent years working toward:
+          credentials that can keep claims private, and presentations that
+          different verifiers can't link to one another. The math already
+          existed. These proof systems are sigma protocols, a family that
+          dates back to the late eighties. What was missing was everything
+          around them: implementations that ran in a browser, protocols for
+          moving credentials between parties, and a practical way for people
+          to manage keys without seed phrases.
         </p>
         <p>
-          WebAuthn's <code>prf</code> extension returns a deterministic secret
-          bound to the credential during authentication. Everything else is
-          derivation:
+          Those pieces are much more practical now. All of the cryptography on
+          this site — including BBS signatures, range proofs, and membership
+          proofs — runs in plain TypeScript on ordinary web infrastructure,
+          with no WASM, circuits, or trusted setup. Passkeys also turn out to
+          be a good fit for key management. This demo puts it all together in
+          a working wallet, an issuer, and two verifiers.
+        </p>
+
+        <h2>Verifiable credentials, briefly</h2>
+        <p>
+          A verifiable credential is a signed set of claims. An issuer — a
+          DMV, a university, or an employer — signs those claims and gives the
+          credential to you. Later, you can show it to a verifier, who checks
+          the signature with the issuer's public key. The verifier doesn't
+          need to call the issuer, so the issuer never learns where you use
+          the credential. The format is a W3C standard, and the demo's Utopia
+          driver's license is a W3C Verifiable Credential.
+        </p>
+        <p>
+          With a typical digital signature, though, you run into two problems
+          right away:
+        </p>
+        <ul>
+          <li>
+            <strong>You have to show everything.</strong> The signature covers
+            the whole document, so removing one field breaks it. Proving that
+            you're over 18 means sharing your name, address, and exact birthday
+            too — the same problem you have with a physical ID card.
+          </li>
+          <li>
+            <strong>Presentations can be linked.</strong> If the same signature
+            is shown in two places, the bytes match. Two verifiers can compare
+            them and connect their records, even if you shared different
+            fields with each one. The issuer can recognize its own signature
+            too.
+          </li>
+        </ul>
+        <p>
+          The question, then, is whether you can prove that an issuer signed
+          your credential without showing the whole thing or giving verifiers
+          something they can compare later. That's where zero-knowledge proofs
+          come in.
+        </p>
+
+        <h2>Your passkey is the wallet</h2>
+        <p>
+          Before getting into credentials, it helps to explain how the wallet
+          handles its secret. Most identity wallets ask you to install an app,
+          write down a seed phrase, or trust a custodian. VeryGoodWallet starts
+          with something you may already have: a synced, hardware-backed,
+          phishing-resistant passkey. WebAuthn's <code>prf</code> extension
+          lets the wallet ask that passkey for the same secret each time you
+          authenticate. From there, it derives the keys it needs:
         </p>
         <pre>
           <code>{`passkey PRF output
   └─ HKDF
-      ├─ vault key            AES-GCM over everything at rest
-      ├─ holder seed(issuer)  one keypair per issuer, for holder binding
-      └─ presenter seed(verifier origin)
-                              one keypair per verifier — pairwise identities`}</code>
+      ├─ vault key      AES-GCM over everything stored at rest
+      ├─ link secret    one secret for life, blind-committed into
+      │                 every credential — no issuer ever sees it
+      └─ issuance keys  one per issuer, for request freshness only`}</code>
         </pre>
         <p>
-          There is no seed phrase because there is nothing to back up: the
-          hierarchy is reproducible from the passkey alone, and passkey sync
-          (iCloud Keychain, Google Password Manager) is the recovery story.
-          Locking the wallet is simply forgetting the derived keys; refresh
-          the page and it's locked. The wallet is a static web page — no app
-          store, no server-side account, no custodian.
+          Those keys don't need a separate backup because the wallet can
+          derive them again from the passkey. Recovery depends on passkey sync,
+          such as iCloud Keychain or Google Password Manager. The wallet itself
+          is a static web page, and locking it simply clears the derived keys.
+          The link secret in the middle of that tree is what binds a credential
+          to its holder. We'll come back to that shortly.
         </p>
 
-        <h2>Credentials that reveal exactly what you choose</h2>
+        <h2>BBS: a signature you can quote from</h2>
         <p>
-          The Utopia DMV issues a driver's license as a W3C Verifiable
-          Credential signed with <code>bbs-2023</code>. BBS signatures allow
-          the holder to derive, per presentation, a proof over any subset of
-          the signed claims — and each derived proof is cryptographically
-          unlinkable from every other. Alongside the usual fields, the license
-          carries mdoc-style age flags (<code>age_over_18/21/25</code>)
-          stamped at issuance, and one unusual claim: a Poseidon commitment to
-          the birth date, whose purpose is the zero-knowledge tier below.
+          The license uses BBS, named for Boneh, Boyen, and Shacham. It grew
+          out of their 2004 work on group signatures and is now specified in an{" "}
+          <a href="https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/">
+            IETF draft
+          </a>. BBS signs a <em>list</em> of messages rather than one blob, and
+          you never show the signature itself. Instead, the wallet creates a
+          new <em>proof</em> for each presentation. That proof confirms that the
+          wallet holds a valid signature from the issuer while revealing only
+          the messages you choose. The verifier knows the hidden messages were
+          signed, but doesn't learn what they say. This gives us two useful
+          properties:
+        </p>
+        <ul>
+          <li>
+            <strong>Selective disclosure.</strong> Reveal a birth date to one
+            verifier and only an over-18 flag to another, all from the same
+            credential. The wallet's consent screen lets you make that choice.
+          </li>
+          <li>
+            <strong>Unlinkability.</strong> Each proof is randomized, so two
+            presentations of the same credential don't share anything that
+            can be matched. The only possible overlap comes from values you
+            choose to disclose in both places.
+          </li>
+        </ul>
+        <p>
+          If you want the cryptographic detail, a BBS-derived proof is a
+          zero-knowledge proof that the wallet knows the signature. It uses a
+          sigma protocol with the same commit, challenge, and response steps
+          as Schnorr identification, then makes it non-interactive by hashing
+          the transcript with Fiat–Shamir. There is no circuit compiler,
+          proving key, or setup ceremony — just pairing arithmetic on
+          BLS12-381, all running in plain TypeScript.
         </p>
         <p>
-          The first thing the demo taught us about bbs-2023:{" "}
-          <strong>
-            selective disclosure structurally reveals embedded node
-            identifiers
-          </strong>
-          . If the issuer writes a <code>credentialSubject.id</code> (the
-          holder's DID) into the credential, that id appears in{" "}
-          <em>every</em> derived proof, at every disclosure tier — a
-          correlation handle that quietly defeats unlinkability across
-          verifiers. So the DMV doesn't embed one. Holder binding happens at
-          issuance instead: the wallet proves possession of a
-          per-issuer key via a proof-of-possession JWT, and the credential
-          stays free of identifiers. The wallet's consent screen warns loudly
-          if a legacy credential still carries one.
+          There is an important limit: unlinkability is only as good as the
+          information you disclose. If an issuer adds a holder identifier such
+          as <code>credentialSubject.id</code>, it appears in every derived
+          proof and can be used to link them. The DMV deliberately leaves out
+          holder identifiers, so presentations contain no DID, public key, or{" "}
+          <code>holder</code> property. That leads to the next question.
+        </p>
+        <p className="spec-credit">
+          A quick shoutout to the people behind these drafts: Tobias Looker,
+          Vasilis Kalos, Andrew Whitehead, and Mike Lodder on the{" "}
+          <a href="https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/">
+            core BBS specification
+          </a>, and Vasilis Kalos and Greg M. Bernstein on the{" "}
+          <a href="https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-blind-signatures/">
+            blind BBS specification
+          </a>. Thanks as well to the wider CFRG community that helped move both
+          forward.
         </p>
 
-        <h2>Issuance and presentation, on the real rails</h2>
+        <h2>Whose credential is it, then?</h2>
         <p>
-          Both ceremonies speak the actual protocols, end to end. Issuance is
-          OpenID for Verifiable Credential Issuance (OID4VCI), pre-authorized
-          code flow: the DMV Worker mints a one-time offer, the wallet redeems
-          it for an access token (stateless, HMAC-signed — no session store),
-          presents its proof-of-possession, and verifies the issuer's
-          signature before storing the credential encrypted under the vault
-          key.
+          If the credential doesn't identify its holder, what stops someone
+          else from presenting a copy? This is where the link secret and blind
+          issuance come in. When the credential is issued, the wallet derives
+          one lifelong link secret from the passkey and sends the DMV a{" "}
+          <em>commitment</em> to it, along with proof that the wallet knows the
+          secret. Following the IETF's blind BBS extension, the DMV includes
+          that committed value in the signed credential without seeing the
+          secret itself. Only your passkey can reproduce the secret, and the
+          DMV never learns it.
         </p>
         <p>
-          Presentation is OpenID for Verifiable Presentations (OID4VP) with
-          DCQL. A verifier's request declares alternatives as{" "}
-          <code>claim_sets</code> — the age flag, or the birth date, or the
-          commitment plus a zero-knowledge proof — and the wallet renders that
-          as a disclosure-tier picker: <em>show everything</em> /{" "}
-          <em>share only what's asked</em> /{" "}
-          <em>prove the age, never the date</em>. The response is a{" "}
-          <code>direct_post</code> of a VP wrapped in an{" "}
-          <code>eddsa-rdfc-2022</code> signature whose challenge is the
-          request nonce and whose domain is the verifier — replay armor in
-          both directions. The presenting key is derived from the verifier's{" "}
-          <em>origin</em>, so The Nightcap and Utopia Wheels each see a
-          different holder DID by construction. Cross-device flows poll a
-          write-once, SQLite-backed Durable Object session that self-purges.
+          From then on, the wallet has to prove that it knows the same hidden
+          secret whenever it uses the credential. That shows the presenter
+          controls the credential without revealing an identifier, even a
+          pairwise one. Because the wallet commits the <em>same</em> secret to
+          every credential it collects, it can also prove that two credentials
+          belong to the same holder when needed.
         </p>
 
-        <h2>The zero-knowledge tier</h2>
+        <h2>Proving facts about hidden values</h2>
         <p>
-          The license's <code>birthDateCommitment</code> is{" "}
-          <code>Poseidon2(dob_days, blinding)</code> — the birth date as days
-          since the epoch, sealed with a blinding factor the wallet keeps in
-          its vault. A Noir circuit proves, in about half a second:
+          Selective disclosure lets you reveal or hide whole claims. Range
+          proofs go a step further: they prove something <em>about</em> a claim
+          while the claim itself stays hidden. When the DMV issues a license,
+          it encodes the birth date as a number (days since 1900) and includes
+          that hidden value in the signature alongside the readable date. The
+          wallet can then add a range proof to a presentation:
         </p>
         <pre>
-          <code>{`dob_days ≤ cutoff_days            // public: the verifier's age cutoff
-Poseidon2(dob_days, blinding) == commitment   // public: the BBS-disclosed claim`}</code>
+          <code>{`prove:  birth_date ≤ cutoff
+
+        birth_date — hidden, signed at issuance
+        cutoff     — public, computed by the verifier per request`}</code>
         </pre>
         <p>
-          The proof (UltraHonk, via bb.js) travels inside the VP as a{" "}
-          <code>zkAgeProof</code> bundle, covered by the VP's outer signature
-          — tampering with the bundle is just a signature failure. The
-          verifier re-derives the public inputs itself: the commitment must
-          equal the claim BBS actually disclosed, and the cutoff must match
-          its own policy computed at verification time (one day of clock skew
-          allowed). Nothing prover-supplied is trusted beyond the proof bytes.
+          Earlier birth dates have smaller numbers, so "at least 18" is a ≤
+          comparison. The Nightcap checks an 18-year cutoff, while Utopia
+          Wheels checks 25 against the same credential. The verifier chooses
+          the cutoff for each request, so the credential doesn't need a
+          separate field for every possible age rule. The demo license also
+          includes <code>age_over_18/21/25</code> flags to show the difference:
+          those flags can answer only the questions chosen when the credential
+          was issued, while a range proof can use any cutoff when it is
+          presented. If the condition is false — as it is for the demo's
+          under-18 persona at the bottle shop — the wallet can't create the
+          proof.
         </p>
         <p>
-          The elegant part is what <em>doesn't</em> change: the shop checks
-          "over 18", the rental counter checks "over 25", and both verify
-          against the <strong>same commitment</strong> — the cutoff is a
-          public input, not a property of the credential. One sealed birthdate
-          answers any age policy, forever. And because each verifier's DCQL
-          declares which claims ride alongside the proof (the claim set
-          containing the commitment), the shop's proof arrives with nothing
-          else while the rental's arrives with a name and license number —
-          policy expressed in the query language, not in custom code.
+          Set membership works in a similar way. The Utopia Resident
+          Registration contains a numeric district code, and a proof can show
+          that the code belongs to a set chosen by the verifier — the coastal
+          districts, for example — without revealing which district it is.
+          Both the range and membership proofs come from a 2008 protocol by
+          Camenisch, Chaabouni, and Shelat, in the same sigma-protocol family
+          as the BBS proof. They share one Fiat–Shamir transcript with the BBS
+          proof, which ties each predicate directly to the signed hidden value
+          it checks.
+        </p>
+        <p>
+          Two implementation details matter here. Each verifier publishes its
+          proof parameters at a well-known URL, and the wallet checks their
+          hash before creating a proof. Otherwise, a verifier could return
+          slightly different parameters to each visitor and use them as tags.
+          Verification happens on the verifier's Cloudflare Worker. It checks
+          the BBS presentation and its predicates in plain TypeScript, then
+          returns the final verdict. The same cryptography could run in a
+          browser, but this demo keeps verification server-side and requires
+          no WASM.
         </p>
 
-        <h2>Field notes: what fought back</h2>
-        <h3>Cloudflare Workers cannot run the verifier</h3>
+        <h2>Linking as a choice</h2>
         <p>
-          bb.js instantiates WASM from bytes at runtime, which Workers
-          prohibit — and its WASM alone nearly fills the free plan's 3 MiB
-          script budget. Rather than pretend, the tier-2 verdict is split
-          honestly: the Worker verifies the BBS proof, the VP wrapper, and
-          every binding on the bundle, then returns{" "}
-          <code>zk_pending</code>; the verifier's <em>own page</em>{" "}
-          lazy-loads bb.js and runs the UltraHonk check against a
-          verification key checked into the verifier's build. The e2e suite
-          runs the identical call in Node — exactly what a self-hosted
-          verifier would run server-side. An exhibit panel on the result page
-          explains the split instead of hiding it.
+          Presentations are unlinkable by default, but sometimes you may want
+          to prove that two credentials belong to the same person. Utopia
+          Wheels' resident-rate check needs to confirm three things: the
+          customer is over 25, lives in a coastal district, and is the holder
+          of both credentials. You could prove the last part by disclosing a
+          name from each credential, but this demo does it without sharing one:
         </p>
-        <h3>workers.dev doesn't route worker-to-worker</h3>
+        <pre>
+          <code>{`statement 1  driver's license       prove: birth_date ≤ cutoff(25)
+statement 2  resident registration  prove: district ∈ coastal set
+linkage      both credentials hide the SAME link secret
+
+disclosed: nothing`}</code>
+        </pre>
         <p>
-          A fetch from one <code>*.workers.dev</code> Worker to another on
-          the same account never arrives. The verifiers therefore can't
-          discover the DMV's issuer DID at runtime in production; the deploy
-          workflow discovers it and pins it as a deploy-time variable.
-          Consequence: rotating the issuer's seed means redeploying the
-          verifiers. Custom domains route normally, which is one of the quiet
-          wins of moving off workers.dev.
+          The wallet combines all three checks in one presentation. The
+          equality proof confirms that both credentials contain the same
+          hidden link secret, which is possible because the wallet committed
+          the same passkey-derived secret to each one when they were issued.
+          The verifier learns only the intended result — over 25, coastal
+          resident, same holder — plus the issuer and validity window included
+          in every presentation. The holder chooses when to prove this link;
+          verifiers can't discover it later from separate presentations.
         </p>
-        <h3>Threads need headers</h3>
+
+        <h2>What two verifiers can compare</h2>
         <p>
-          Without <code>crossOriginIsolated</code>, bb.js falls back to
-          single-threaded WASM: proving measured 33&nbsp;s. Shipping{" "}
-          <code>COOP: same-origin</code> + <code>COEP: require-corp</code> on
-          the static assets brought it to ~3.5&nbsp;s (proving, wallet) and
-          ~2.3&nbsp;s (verifying, shop) on an 8-core machine. Separately, the
-          first-ever verification on a fresh origin pays a one-time WASM
-          fetch-and-compile of ~26&nbsp;s — so the guided tour warms the
-          verifier in the background the moment you arrive at a shop, and the
-          real check lands in well under a second.
+          The wallet keeps an encrypted log of every presentation. At the end
+          of the demo, it puts what each verifier received side by side and
+          shows any claim-and-value pairs they have in common. The proofs
+          themselves don't add anything matchable because no identifier is
+          included and every proof is randomized. Only values you choose to
+          disclose to both verifiers can overlap. If you visit the shop with a
+          range proof, then share your name and license number only with the
+          rental counter, their databases have no common value they can use to
+          connect the records.
         </p>
-        <h3>Bundle discipline is a feature</h3>
+
+        <h2>How it fits with existing standards</h2>
         <p>
-          Importing poseidon-lite's package root defeats tree-shaking and
-          ships ~400&nbsp;KB of unused round constants in every bundle;
-          subpath imports cut the shop client from 817 to 247&nbsp;KB. The ZK
-          package splits its exports the same way — Worker-safe subpaths
-          (bundle checks, cutoff math) versus WASM-adjacent ones (prove,
-          verify) — because Workers upload every lazy chunk toward the size
-          cap whether they run it or not.
+          The demo adds these privacy features to protocols and formats that
+          are already used for verifiable credentials:
         </p>
-        <h3>One bit identifies nobody</h3>
+        <ul>
+          <li>
+            <strong>OpenID for Verifiable Credential Issuance (OID4VCI).</strong>{" "}
+            The DMV uses the pre-authorized code flow. The holder-binding
+            commitment is an extension field in the credential request,
+            alongside the standard proof-of-possession JWT.
+          </li>
+          <li>
+            <strong>OpenID for Verifiable Presentations (OID4VP) with DCQL.</strong>{" "}
+            Verifiers make requests in the standard query language. Predicate
+            and linkage requirements (<code>vgw_predicates</code>,{" "}
+            <code>vgw_equalities</code>) are small, documented extensions.
+            Requests are passed by reference to keep QR codes scannable,
+            responses return through <code>direct_post</code>, and each proof
+            is bound to the request's one-time nonce and the verifier's
+            identity so it can't be replayed somewhere else.
+          </li>
+          <li>
+            <strong>W3C Verifiable Credentials.</strong> Credentials are VC
+            Data Model 2.0 documents with Data Integrity proofs, using
+            standard JSON-LD processing and envelopes.
+          </li>
+          <li>
+            <strong>IETF BBS.</strong> The signature core implements the
+            CFRG BBS draft and its blind-issuance companion. The implementation
+            is checked against the drafts' published test fixtures.
+          </li>
+        </ul>
         <p>
-          The wallet keeps an encrypted log of what each verifier was shown
-          and renders the cross-verifier exhibit: presenter DIDs side by
-          side, and the honest correlation surface — the claim/value pairs
-          both verifiers hold. The first live run flagged{" "}
-          <code>age_over_18: true</code> and <code>age_over_25: true</code> as
-          a shared value. That's a bug in the correlation model, not a leak: a
-          boolean shared with half the population joins no records. The
-          comparison now requires the same claim <em>and</em> the same
-          non-boolean value — which is also the honest answer to "what could
-          they learn by comparing notes?": only the values you chose to
-          disclose to both.
-        </p>
-        <p>
-          The exhibit then earned its keep during the first full guided-tour
-          run: take the ZK tier at <em>both</em> verifiers and the panel
-          flags one shared value — the birthdate commitment itself. It has
-          to: each proof binds to the same issuer-signed seal, and both
-          verifiers must see that seal to verify against it. Neither learns
-          the date, but the seal is a stable value colluding verifiers could
-          match. The demo reports this instead of hiding it; making even the
-          seal presentation-unique (re-randomized commitments, or predicates
-          over hidden BBS messages) is the natural next step, and out of this
-          demo's scope.
+          There is one important exception: the cryptosuite itself is
+          experimental. The W3C's candidate BBS suite, <code>bbs-2023</code>,
+          supports selective disclosure, but not predicates,
+          multi-credential presentations, or a link secret. This demo uses{" "}
+          <code>credkit-bbs-sha-2026</code>, an experimental Data Integrity
+          suite from{" "}
+          <a href="https://github.com/tmarkovski/credkit">credkit</a>, a
+          companion project of mine. It keeps bbs-2023's document pipeline —
+          canonicalization, selection, mandatory pointers — and replaces the
+          proof layer with the composite construction described above. The
+          suite has deliberately distinct identifiers to avoid confusion, and a{" "}
+          <a href="https://tmarkovski.github.io/credkit/">
+            draft specification
+          </a>{" "}
+          documents the construction. It is research work, not a standard.
         </p>
 
         <h2>What this demo doesn't claim</h2>
         <ul>
           <li>
-            <strong>Issuer trust is bootstrapped over TLS.</strong> The
-            verifiers pin the DMV's DID discovered from its metadata endpoint;
-            a production system wants <code>did:web</code> or a trust
-            registry.
+            <strong>It is research software.</strong> Neither credkit nor
+            this site has been independently audited. The demo is here to show
+            how the architecture works, not to protect real credentials.
           </li>
           <li>
-            <strong>Losing every copy of the passkey loses the wallet.</strong>{" "}
-            That's the deal with deterministic derivation; passkey sync is the
-            mitigation, and it's a real dependency.
+            <strong>Issuer trust starts with TLS.</strong> The verifiers pin the
+            DMV's DID from its metadata endpoint. A production system would
+            need <code>did:web</code> or a trust registry.
           </li>
           <li>
-            <strong>No revocation, no audit.</strong> The credentials have
-            validity windows but no status lists, and none of this code has
-            been audited. It's a demonstration of an architecture, not a
-            product.
+            <strong>There is no revocation.</strong> Credentials carry
+            validity windows but no status lists. The validity window is also
+            always disclosed, so it is one small piece of information that
+            verifiers could compare.
           </li>
           <li>
-            <strong>The cast is fictional.</strong> The State of Utopia issues
-            no real licenses, the shop sells nothing, and the rental fleet is
-            six SVGs. The cryptography, the protocols, and the timings are
-            real.
+            <strong>Losing every copy of the passkey means losing the wallet.</strong>{" "}
+            Passkey sync is the recovery mechanism, so the wallet depends on
+            it.
+          </li>
+          <li>
+            <strong>The cast is fictional.</strong> The State of Utopia
+            issues no real licenses, the shop sells nothing, and the rental
+            fleet is six SVGs. The cryptography and the protocols are real.
           </li>
         </ul>
 
         <h2>Colophon</h2>
         <p>
-          pnpm monorepo; React + Vite + Tailwind on Cloudflare Workers (free
-          tier), Hono for the Worker APIs, SQLite-backed Durable Objects for
-          verification sessions. Cryptography:{" "}
-          <code>@digitalbazaar</code> bbs-2023 / eddsa-rdfc-2022 suites,
-          WebAuthn PRF + HKDF, poseidon-lite, Noir +
-          UltraHonk (bb.js). Every ceremony has unit, integration, and live
-          end-to-end coverage, and the ZK artifacts are checked in with a CI
-          freshness guard. Source and history:{" "}
+          The project is a pnpm monorepo built with React, Vite, and Tailwind
+          on Cloudflare Workers' free tier. The Worker APIs use Hono, and
+          verification sessions live in SQLite-backed Durable Objects. Credkit
+          handles the BBS core, range and membership proofs, composite
+          presentations, and the JSON-LD cryptosuite in pure TypeScript over
+          BLS12-381. WebAuthn PRF and HKDF provide the key hierarchy, with no
+          WASM anywhere. Every major flow has unit, integration, and live
+          end-to-end tests. Source:{" "}
           <a href="https://github.com/tmarkovski/verygoodwallet">
             github.com/tmarkovski/verygoodwallet
-          </a>
-          .
+          </a>{" "}
+          and{" "}
+          <a href="https://github.com/tmarkovski/credkit">
+            github.com/tmarkovski/credkit
+          </a>.
         </p>
       </article>
     </div>

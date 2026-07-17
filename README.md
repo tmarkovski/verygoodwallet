@@ -124,6 +124,5 @@ pnpm --filter @vgw/dmv smoke             # boot the built Worker under workerd
 
 No revocation, no audit, issuer trust bootstrapped over TLS, and losing every
 copy of the passkey loses the wallet — the
-[writeup](https://verygoodwallet.com/writeup/) spells out each limitation and
-the field notes behind the design. It's a demonstration of an architecture,
-not a product.
+[writeup](https://verygoodwallet.com/writeup/) spells out each limitation.
+It's a demonstration of an architecture, not a product.

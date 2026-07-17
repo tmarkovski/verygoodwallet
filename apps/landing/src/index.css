@@ -169,6 +169,36 @@ body {
 }
 
 /*
+ * Finale entrance: each visa mark drops onto the paper in sequence, briefly
+ * compresses on impact, then settles at its own imperfect angle.
+ */
+.stamp-enter {
+  animation: stamp-impact 420ms cubic-bezier(0.2, 0.85, 0.3, 1) both;
+  animation-delay: var(--stamp-delay);
+  transform-origin: center;
+  will-change: transform, opacity, filter;
+}
+
+@keyframes stamp-impact {
+  0% {
+    opacity: 0;
+    filter: blur(1.5px);
+    transform: translateY(-18px) scale(1.65)
+      rotate(calc(var(--stamp-tilt) - 5deg));
+  }
+  82% {
+    opacity: 0.98;
+    filter: blur(0);
+    transform: translateY(1px) scale(0.96) rotate(var(--stamp-tilt));
+  }
+  100% {
+    opacity: 0.92;
+    filter: blur(0);
+    transform: translateY(0) scale(1) rotate(var(--stamp-tilt));
+  }
+}
+
+/*
  * Guided-demo promo — a generated intaglio scene is decorative; all of the
  * banner's meaning and controls remain selectable, accessible HTML. The wide
  * version overlays its copy in the image's deliberate negative space, while
@@ -246,6 +276,10 @@ body {
   .animate-fade {
     animation: none;
   }
+  .stamp-enter {
+    animation: none;
+    transform: rotate(var(--stamp-tilt));
+  }
 }
 
 /*
@@ -280,6 +314,14 @@ body {
 }
 .prose p {
   margin-top: 1rem;
+}
+.prose .spec-credit,
+.prose .spec-credit a {
+  color: var(--pp-muted);
+}
+.prose .spec-credit {
+  font-size: 13px;
+  line-height: 1.6;
 }
 .prose ul {
   margin-top: 1rem;

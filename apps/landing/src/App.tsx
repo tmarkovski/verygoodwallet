@@ -4,7 +4,7 @@
  * stamped visa page instead — the only place the whole journey exists.
  */
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, type CSSProperties } from "react";
 import { TOUR_STOPS, exitTour, tourCtaHref } from "@vgw/tour";
 import { SITE_ORIGINS, TOUR_ORIGINS } from "./origins";
 
@@ -63,7 +63,7 @@ function GuidedDemoBanner({ startHref }: { startHref: string | null }) {
   return (
     <section
       aria-labelledby="guided-demo-title"
-      className="mx-auto max-w-5xl px-5 pt-10"
+      className="mx-auto max-w-5xl px-5 pb-16 pt-10"
     >
       <div className="tour-promo overflow-hidden rounded-3xl border border-foil/35 bg-accent text-accent-contrast">
         <div className="tour-promo-art" aria-hidden="true">
@@ -86,12 +86,12 @@ function GuidedDemoBanner({ startHref }: { startHref: string | null }) {
             id="guided-demo-title"
             className="mt-3 text-balance font-display text-3xl font-bold leading-tight tracking-tight"
           >
-            Carry one credential through the whole story.
+            Follow one credential from the DMV to both verifiers.
           </h2>
           <p className="mt-4 text-[14px] leading-relaxed text-accent-contrast/80">
-            Create a passkey wallet, collect a real BBS-signed license, prove
-            your age without revealing your birthday, and inspect exactly what
-            each verifier learns.
+            Create a passkey wallet, pick up a real BBS-signed license, use it
+            to prove your age without sharing your birthday, and see exactly
+            what each verifier learns.
           </p>
           <div className="mt-6 flex flex-wrap items-center gap-3">
             {startHref !== null ? (
@@ -127,7 +127,7 @@ const CAST: {
   {
     name: "VeryGoodWallet",
     role: "The wallet",
-    line: "Lives at a URL, not in an app store. One passkey derives its vault key, its per-issuer identities, and one lifelong link secret no one ever sees.",
+    line: "Lives at a URL, not in an app store. Your passkey derives its vault key, an issuance key for each issuer, and a link secret that stays hidden.",
     href: SITE_ORIGINS.wallet,
     band: "#0c1f21",
     bandText: "#d4b264",
@@ -135,7 +135,7 @@ const CAST: {
   {
     name: "Utopia DMV",
     role: "The issuer",
-    line: "Issues a BBS-signed driver's license over OID4VCI — and never learns where it gets used.",
+    line: "Issues a BBS-signed driver's license through OID4VCI, then has no part in where you use it.",
     href: SITE_ORIGINS.dmv,
     band: "#1f6280",
     bandText: "#ffffff",
@@ -143,7 +143,7 @@ const CAST: {
   {
     name: "The Nightcap",
     role: "Verifier — wants one bit",
-    line: "A bottle shop that asks a single question: 18 or over. The good answer is a zero-knowledge proof.",
+    line: "A bottle shop that asks one question: are you 18 or over? It gets a zero-knowledge proof instead of your birthday.",
     href: SITE_ORIGINS.shop,
     band: "#171310",
     bandText: "#e8a13d",
@@ -151,7 +151,7 @@ const CAST: {
   {
     name: "Utopia Wheels",
     role: "Verifier — wants a name",
-    line: "A rental counter that needs your name, license number, and over-25 — same credential, same sealed birthdate, different cutoff.",
+    line: "A rental counter that needs your name, license number, and proof that you're over 25. The birth date still stays hidden.",
     href: SITE_ORIGINS.rentals,
     band: "#00694f",
     bandText: "#f2efe4",
@@ -206,11 +206,17 @@ function StampedPage() {
         </h1>
 
         <div className="mt-10 grid gap-6 sm:grid-cols-2">
-          {STAMPS.map((stamp) => (
+          {STAMPS.map((stamp, index) => (
             <div
               key={stamp.name}
-              className="stamp"
-              style={{ color: stamp.ink, transform: `rotate(${stamp.tilt})` }}
+              className="stamp stamp-enter"
+              style={
+                {
+                  color: stamp.ink,
+                  "--stamp-tilt": stamp.tilt,
+                  "--stamp-delay": `${300 + index * 220}ms`,
+                } as CSSProperties
+              }
             >
               <p className="text-[13px] font-bold tracking-[0.18em]">{stamp.name}</p>
               <p className="mt-1 text-[10.5px] tracking-[0.1em]">{stamp.line}</p>
@@ -222,14 +228,12 @@ function StampedPage() {
         </div>
 
         <p className="mt-10 text-[15px] leading-relaxed text-ink-dim">
-          Four stamps, two verifiers. Neither site saw an identifier of any
-          kind — no key, no DID — and every proof, the age proofs included,
-          was a fresh re-randomized derivation. The cryptography gives them
-          nothing to join. What could join them is only what you chose to
-          disclose, and your name and license number went to the rental
-          counter alone; your wallet's exhibit draws that line exactly. This
-          page, in your wallet's company, is the only place the whole journey
-          exists.
+          Four stamps, two verifiers. Neither presentation included a holder
+          key or DID, and every proof was freshly randomized. The proofs
+          themselves give the two sites nothing they can match. Only claims
+          shared with both could overlap, and your name and license number went
+          to the rental counter alone. Your wallet's final comparison shows
+          exactly what each site received.
         </p>
 
         <div className="mt-8 flex flex-wrap gap-3">
@@ -292,10 +296,10 @@ export default function App() {
           Your passkey <em>is</em> the wallet.
         </p>
         <p className="mt-5 max-w-lg text-pretty text-[15px] leading-relaxed text-accent-contrast/80">
-          A working demo of passkey-native identity — no seed phrase, no
-          extension, no custodian. A driver's license you hold, an age you can
-          prove without a birthday, and two verifiers that cannot link you.
-          Everything below is real and running.
+          A working demo of passkey-native identity, with no seed phrase,
+          browser extension, or custodian. You hold the driver's license, prove
+          your age without sharing your birthday, and decide what each verifier
+          receives. Everything below is real and running.
         </p>
         <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
           {startHref !== null && (
@@ -321,8 +325,6 @@ export default function App() {
         </p>
       </header>
 
-      <GuidedDemoBanner startHref={startHref} />
-
       <main className="mx-auto max-w-3xl px-5 pb-20">
         {/* ——— Page 01 · the idea ——— */}
         <section className="relative pt-16">
@@ -333,30 +335,28 @@ export default function App() {
           <SectionTitle no="01">The idea</SectionTitle>
           <div className="mt-6 space-y-4 text-[15px] leading-relaxed text-ink-dim">
             <p>
-              Every wallet begins with a secret, and most begin by making that
-              secret your problem — a seed phrase to write down, an app to
-              install, a custodian to trust. This demo starts from a different
-              premise: you already carry a synced, hardware-backed,
-              phishing-resistant secret. It's called a passkey.
+              An identity wallet needs a secret. Most ask you to write down a
+              seed phrase, install an app, or trust a custodian. This demo uses
+              something you may already have: a synced, hardware-backed,
+              phishing-resistant passkey.
             </p>
             <p>
-              WebAuthn's PRF extension lets a web page ask your passkey for a
-              deterministic secret at every unlock. Feed that through HKDF and
-              the entire wallet falls out: the key that encrypts your
-              credentials at rest, a fresh identity for every issuer, and one
-              lifelong link secret that is blind-committed into every
-              credential without any issuer ever seeing it. Nothing to back
-              up — passkey sync is the recovery story.
+              WebAuthn's PRF extension lets the wallet get the same secret from
+              your passkey whenever you unlock it. The wallet feeds that secret
+              through HKDF to derive the key that encrypts your credentials, an
+              issuance key for each issuer, and one link secret that is
+              committed to every credential without being revealed. You don't
+              back up those keys separately; passkey sync lets the wallet
+              derive them again.
             </p>
             <p>
-              The credentials are BBS signatures (the credkit cryptosuite),
-              so every presentation discloses exactly the claims you pick and
-              is cryptographically unlinkable from the last. And the birthdate
-              never travels at all: the license seals it as a hidden numeric
-              twin, and a range proof shows "over 18" or "over 25" — any
-              cutoff, live, verified entirely on the verifier's server —
-              without ever revealing the date or leaving anything two
-              verifiers could match.
+              The DMV signs credentials with BBS through the credkit
+              cryptosuite. Each time you present one, you choose which claims
+              to reveal, and the proof is randomized so it can't be matched to
+              an earlier presentation. The license also contains a hidden
+              numeric version of the birth date. A range proof can show that
+              you're over 18 or over 25 without revealing the date, and the
+              verifier checks that proof on its server.
             </p>
           </div>
           <p className="mt-6 rounded-xl bg-accent-soft px-4 py-3 font-mono text-[12px] leading-relaxed text-ink">
@@ -395,9 +395,9 @@ export default function App() {
             ))}
           </div>
           <p className="mt-5 text-[12.5px] leading-relaxed text-muted">
-            Four sites, four operators in the story, four deliberately
-            different brands — because unlinkability only means something
-            between parties that don't share a database.
+            Each site represents a separate party and keeps its own records.
+            That separation is what makes unlinkability between the two
+            verifiers meaningful.
           </p>
         </section>
 
@@ -406,14 +406,14 @@ export default function App() {
           <SectionTitle no="03">The tour</SectionTitle>
           <div className="mt-7 rounded-3xl border border-line bg-surface p-7">
             <p className="text-[15px] leading-relaxed text-ink-dim">
-              Twelve stops, about three minutes, nothing simulated. You'll
-              create a real passkey, be issued a real BBS-signed license,
-              prove your age in zero knowledge at a bottle shop, hand a rental
-              counter exactly three answers, and end at the exhibit showing
-              why the two can never compare notes. A narrator card follows you
-              across all four sites.
+              The tour has twelve stops and takes about three minutes. You'll
+              create a real passkey, receive a BBS-signed license, prove your
+              age at a bottle shop without sharing your birthday, and give a
+              rental counter exactly the three answers it asks for. At the end,
+              you can compare what each verifier received. A narrator card
+              guides you across all four sites.
             </p>
-            <div className="mt-5 flex flex-wrap items-center gap-3">
+            <div className="mt-5 flex flex-col items-start gap-2">
               {startHref !== null ? (
                 <a
                   href={startHref}
@@ -426,7 +426,7 @@ export default function App() {
                   No wallet origin is configured for this build (VITE_WALLET_ORIGIN).
                 </p>
               )}
-              <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">
+              <p className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-muted">
                 Needs a passkey-capable browser
               </p>
             </div>
@@ -436,9 +436,8 @@ export default function App() {
               Prefer to watch
             </p>
             <p className="mt-2 text-[13.5px] leading-relaxed text-ink-dim">
-              A filmed run-through of the whole flow lands here with the move
-              to custom domains — until then, the tour above is the real
-              thing.
+              A recorded walkthrough will go here when the demo moves to its
+              custom domains. For now, you can try the live tour above.
             </p>
           </div>
         </section>
@@ -451,27 +450,27 @@ export default function App() {
             className="mt-7 block rounded-3xl border border-line bg-raised p-7 transition-transform duration-150 hover:-translate-y-0.5 hover:border-line-strong"
           >
             <h3 className="font-display text-xl font-bold tracking-tight">
-              How the first build worked — and what fought back
+              Verifiable credentials, BBS, and zero-knowledge proofs
             </h3>
             <p className="mt-2 text-[12px] leading-relaxed text-muted">
-              Field notes from the pre-credkit build. Its two honest
-              compromises — a matchable birthdate commitment and a ZK
-              verifier the server couldn't run — are exactly what the credkit
-              migration has since removed; the demo you just toured is the
-              upgraded stack.
+              The longer explanation behind the demo. It starts with
+              verifiable credentials, then works through BBS, range proofs,
+              and holder binding. No zero-knowledge background needed. The
+              implementation uses OID4VCI, OID4VP, and IETF BBS with an
+              experimental Data Integrity cryptosuite.
             </p>
             <ul className="mt-4 space-y-2 text-[13.5px] leading-relaxed text-ink-dim">
               <li>
-                · Why BBS proofs structurally leak embedded identifiers, and
-                what the issuer stopped embedding because of it
+                · Why ordinary signatures make you share too much and allow
+                presentations to be linked — and how BBS fixes both
               </li>
               <li>
-                · Why Cloudflare Workers couldn't run that build's ZK
-                verifier, and the honest split that resulted
+                · How a range proof checks any age cutoff without revealing
+                your birth date
               </li>
               <li>
-                · Why "shared boolean = correlation" was a bug: one bit
-                identifies nobody
+                · How a blind link secret binds credentials to you while
+                keeping separate presentations unlinkable
               </li>
             </ul>
             <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.2em] text-stamp">
@@ -480,6 +479,8 @@ export default function App() {
           </a>
         </section>
       </main>
+
+      <GuidedDemoBanner startHref={startHref} />
 
       <footer className="border-t border-line py-8">
         <p className="mx-auto max-w-3xl px-5 text-center text-[11.5px] leading-relaxed text-muted">
@@ -491,8 +492,7 @@ export default function App() {
             className="text-ink-dim underline decoration-stamp/60 underline-offset-2 hover:decoration-stamp"
           >
             GitHub
-          </a>
-          .
+          </a>.
         </p>
       </footer>
     </>
