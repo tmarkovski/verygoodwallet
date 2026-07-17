@@ -9,6 +9,57 @@ import { TOUR_PARAM, nextTourStop, tourStop } from "./script";
 
 const STORAGE_KEY = "vgw:tour:stop";
 
+/**
+ * How long an untouched stop stays alive. The tour bills itself as the
+ * ninety-second version, so a stop that hasn't advanced in 30 minutes is
+ * an abandoned tour, not a running one. Without the cutoff, any tab that
+ * ever toured resurrects the narrator on every later visit to that origin
+ * (sessionStorage survives reloads and even browser tab restore, and the
+ * ✕ only clears the origin it's clicked on). Every adopt/advance
+ * re-stamps the clock, so a genuinely running tour never expires.
+ */
+const TOUR_TTL_MS = 30 * 60 * 1000;
+
+/** What STORAGE_KEY holds: the stop plus when it was (re-)stamped. */
+interface StoredStop {
+  id: string;
+  at: number;
+}
+
+/**
+ * The stored stop, or null — dropping (and clearing) entries that are
+ * expired, malformed, unknown, or in the pre-TTL bare-string format.
+ */
+function readStoredStop(): string | null {
+  let raw: string | null;
+  try {
+    raw = window.sessionStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null; // storage unavailable (privacy mode) — no tour, no error
+  }
+  if (raw === null) return null;
+  let stored: Partial<StoredStop>;
+  try {
+    stored = JSON.parse(raw) as Partial<StoredStop>;
+  } catch {
+    stored = {};
+  }
+  const fresh =
+    typeof stored.id === "string" &&
+    tourStop(stored.id) !== null &&
+    typeof stored.at === "number" &&
+    Date.now() - stored.at <= TOUR_TTL_MS;
+  if (!fresh) {
+    try {
+      window.sessionStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // Removal is tidiness — the entry already reads as absent.
+    }
+    return null;
+  }
+  return stored.id as string;
+}
+
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -25,18 +76,14 @@ export function subscribeTour(listener: () => void): () => void {
 /** The active stop id on this origin, or null when no tour is running. */
 export function currentTourStopId(): string | null {
   if (typeof window === "undefined") return null;
-  try {
-    const id = window.sessionStorage.getItem(STORAGE_KEY);
-    return id !== null && tourStop(id) !== null ? id : null;
-  } catch {
-    return null; // storage unavailable (privacy mode) — no tour, no error
-  }
+  return readStoredStop();
 }
 
 export function setTourStop(id: string): void {
   if (typeof window === "undefined" || tourStop(id) === null) return;
+  const stored: StoredStop = { id, at: Date.now() };
   try {
-    window.sessionStorage.setItem(STORAGE_KEY, id);
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
   } catch {
     return;
   }

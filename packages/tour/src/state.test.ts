@@ -82,6 +82,36 @@ describe("tour state", () => {
     expect(win.location.href).toBe("https://shop.example/?session=abc");
   });
 
+  it("expires an abandoned stop after the TTL and clears the entry", () => {
+    vi.useFakeTimers();
+    const win = stubWindow();
+    setTourStop("issue");
+    vi.advanceTimersByTime(30 * 60 * 1000 - 1);
+    expect(currentTourStopId()).toBe("issue");
+    vi.advanceTimersByTime(2);
+    expect(currentTourStopId()).toBeNull();
+    expect(win.sessionStorage.getItem("vgw:tour:stop")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("re-stamps the clock on every advance, so a running tour never expires", () => {
+    vi.useFakeTimers();
+    stubWindow();
+    setTourStop("create");
+    vi.advanceTimersByTime(20 * 60 * 1000);
+    advanceTourFrom("create");
+    vi.advanceTimersByTime(20 * 60 * 1000);
+    expect(currentTourStopId()).toBe("home");
+    vi.useRealTimers();
+  });
+
+  it("drops pre-TTL bare-string entries as stale", () => {
+    const win = stubWindow();
+    win.sessionStorage.setItem("vgw:tour:stop", "issue");
+    expect(currentTourStopId()).toBeNull();
+    expect(win.sessionStorage.getItem("vgw:tour:stop")).toBeNull();
+  });
+
   it("notifies subscribers on set and exit, and honors unsubscribe", () => {
     stubWindow();
     const listener = vi.fn();
