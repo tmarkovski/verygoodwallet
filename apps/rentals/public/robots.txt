@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /api/
+Disallow: /oid4vp/
+
+Sitemap: https://rentals.verygoodwallet.com/sitemap.xml

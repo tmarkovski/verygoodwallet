@@ -30,6 +30,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@vgw/landing", "dev"],
       "port": 5177
+    },
+    {
+      "name": "landing-preview",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@vgw/landing", "preview", "--port", "5199", "--strictPort"],
+      "port": 5199
     }
   ]
 }

@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /api/
+Disallow: /oid4vp/
+
+Sitemap: https://shop.verygoodwallet.com/sitemap.xml
