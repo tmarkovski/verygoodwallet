@@ -14,7 +14,7 @@ Fully static and client-side; nothing leaves the device.
 |------|------|
 | `src/services/webauthn.ts` | Passkey register/login, **PRF-only** (largeBlob dropped). Falls back to a clearly-labeled simulated master secret when the authenticator lacks PRF. |
 | `src/services/db.ts` | `idb` database `vgw` v1: `accounts` + `credentials` stores. Full VC always encrypted (`encryptJson` under the vault key); only small `meta` is plaintext for list rendering. |
-| `src/services/demo.ts` | "Add demo credential": local demo-issuer BBS keypair (derived from the wallet's own hierarchy), Utopia DL with a Poseidon `birthDateCommitment`, bbs-2023 base proof, stored encrypted. The commitment **opening** lives inside the encrypted payload envelope (`{ vc, commitmentOpening }`) for the ZK tier (M4). |
+| `src/services/issuance.ts` | OID4VCI credential-offer client: fetches the issuer metadata, redeems the one-time code, creates the holder-binding proof, verifies the issued credential, and stores it encrypted. |
 | `src/session.tsx` | Session context. Master secret + vault key are memory-only — refresh locks the wallet. localStorage holds only the last-used account id. |
 | `src/inspector/` | Inspector drawer: live key-derivation tree (`describeHierarchy`, hashed previews), session event log (tiny pub/sub in `events.ts`), dependency-free collapsible JSON viewers. |
 | `src/pages/` | `/welcome` (onboarding), `/` (lock screen / card stack), `/credentials/:id` (detail + Verify/Raw JSON/Delete), `/settings` (PRF badge, danger zone). |

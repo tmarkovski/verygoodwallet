@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate } from "react-router";
 import { decryptJson } from "@vgw/keys";
+import { tourCtaHref, useTourStop } from "@vgw/tour";
 import { useSession } from "../session";
 import {
   listCredentials,
@@ -14,7 +15,7 @@ import {
   type CredentialRecord,
 } from "../services/db";
 import { cardFace, type CardFace } from "../services/meta";
-import { addDemoCredential } from "../services/demo";
+import { DEMO_SITE_ORIGINS, TOUR_ORIGINS } from "../services/demoSites";
 import { CredentialCard } from "../components/CredentialCard";
 import { VerifierViews } from "../components/VerifierViews";
 import { Button, ErrorNote, PrfBadge, SectionTitle, Spinner, describeError } from "../components/ui";
@@ -104,28 +105,48 @@ function LockScreen({ accounts }: { accounts: AccountRecord[] }) {
   );
 }
 
-function EmptyState({ onAdd, busy }: { onAdd: () => void; busy: boolean }) {
+function EmptyState() {
+  const tourStop = useTourStop();
+  const dmvHref =
+    tourStop?.id === "home"
+      ? (tourCtaHref(tourStop, TOUR_ORIGINS) ?? DEMO_SITE_ORIGINS.dmv)
+      : DEMO_SITE_ORIGINS.dmv;
+
   return (
     <div className="animate-rise rounded-3xl border border-dashed border-line-strong px-8 py-14 text-center">
-      <img src={emblem} alt="" className="mx-auto size-16 opacity-40 grayscale" draggable={false} />
+      <img
+        src={emblem}
+        alt=""
+        className="mx-auto size-16 rounded-2xl bg-white p-2 opacity-40 grayscale"
+        draggable={false}
+      />
       <h2 className="mt-5 text-lg font-semibold">No credentials yet</h2>
       <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-ink-dim">
-        Until the Utopia DMV portal opens, issue yourself a demo driver's
-        license — blind-signed locally on the credkit BBS suite and stored
-        encrypted.
+        Visit the Utopia DMV to have a driver's license issued directly to
+        this wallet.
       </p>
-      <Button onClick={onAdd} busy={busy} className="mt-6">
-        {busy ? "Issuing…" : "Add demo credential"}
-      </Button>
+      <a
+        href={dmvHref}
+        className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-accent-contrast shadow-sm transition-all duration-150 hover:brightness-110 active:scale-[0.98]"
+      >
+        Visit the Utopia DMV
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M7 17 17 7M9 7h8v8"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </a>
     </div>
   );
 }
 
 function CredentialList() {
-  const { account, masterSecret, vaultKey } = useSession();
+  const { account, vaultKey } = useSession();
   const [records, setRecords] = useState<CredentialRecord[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const accountId = account?.id;
@@ -170,22 +191,6 @@ function CredentialList() {
     };
   }, [records, vaultKey]);
 
-  const addDemo = async () => {
-    if (accountId === undefined || masterSecret === null || vaultKey === null || busy) {
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await addDemoCredential({ accountId, masterSecret, vaultKey });
-      await refresh();
-    } catch (err) {
-      setError(describeError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (records === null) {
     if (loadError !== null) {
       return (
@@ -212,17 +217,10 @@ function CredentialList() {
               : `${records.length} credential${records.length === 1 ? "" : "s"}`}
           </h1>
         </div>
-        {records.length > 0 && (
-          <Button variant="ghost" onClick={() => void addDemo()} busy={busy} className="shrink-0">
-            {busy ? "Issuing…" : "+ Demo credential"}
-          </Button>
-        )}
       </div>
 
-      {error !== null && <div className="mb-4"><ErrorNote>{error}</ErrorNote></div>}
-
       {records.length === 0 ? (
-        <EmptyState onAdd={() => void addDemo()} busy={busy} />
+        <EmptyState />
       ) : (
         <ul className="mx-auto max-w-md">
           {records.map((record, index) => (
