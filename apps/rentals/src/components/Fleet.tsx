@@ -13,6 +13,10 @@ interface Vehicle {
   body: string;
   /** Fill color of the paintwork. */
   paint: string;
+  /** Optional glasshouse path for silhouettes with different rooflines. */
+  glasshouse?: string;
+  /** Optional front-wheel center for shorter silhouettes. */
+  frontWheelX?: number;
 }
 
 const FLEET: Vehicle[] = [
@@ -36,6 +40,8 @@ const FLEET: Vehicle[] = [
     rate: "Ʉ 39/day",
     body: "M26 53c-6 0-9-3-9-9 0-10 5-15 14-17l9-9c3-3 6-4 10-4h22c4 0 8 1 10 4l9 9c9 2 14 7 14 17 0 6-3 9-9 9z",
     paint: "#b3812e",
+    glasshouse: "M43 26l8-8h19l9 8z",
+    frontWheelX: 92,
   },
   {
     name: "Interchange EV",
@@ -78,15 +84,15 @@ function VehicleGraphic({ vehicle }: { vehicle: Vehicle }) {
       <path d={vehicle.body} fill={vehicle.paint} stroke="rgb(29 43 37 / 0.35)" />
       {/* glasshouse */}
       <path
-        d="M62 26l8-8h22l8 8z"
+        d={vehicle.glasshouse ?? "M62 26l8-8h22l8 8z"}
         fill="#f2efe4"
         opacity="0.85"
       />
       {/* wheels */}
       <circle cx="48" cy="56" r="9" fill="#1d2b25" />
       <circle cx="48" cy="56" r="4" fill="#f2efe4" />
-      <circle cx="116" cy="56" r="9" fill="#1d2b25" />
-      <circle cx="116" cy="56" r="4" fill="#f2efe4" />
+      <circle cx={vehicle.frontWheelX ?? 116} cy="56" r="9" fill="#1d2b25" />
+      <circle cx={vehicle.frontWheelX ?? 116} cy="56" r="4" fill="#f2efe4" />
     </svg>
   );
 }

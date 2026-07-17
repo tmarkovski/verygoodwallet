@@ -61,7 +61,7 @@ export default function App() {
 
   return (
     <div className="min-h-dvh">
-      <header className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-5 pt-8">
+      <header className="mx-auto flex max-w-3xl flex-col items-start gap-3 px-5 pt-8 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="flex items-center gap-3">
           <RouteShield />
           <div>
@@ -73,7 +73,7 @@ export default function App() {
             </p>
           </div>
         </div>
-        <p aria-live="polite">
+        <p className="pl-14 sm:pl-0" aria-live="polite">
           {verdict === "allowed" ? (
             <span className="mile-chip">driver verified</span>
           ) : (

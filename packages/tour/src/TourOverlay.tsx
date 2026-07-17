@@ -20,6 +20,7 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -232,6 +233,9 @@ function TourCard({ stop, origins }: { stop: TourStop; origins: TourOrigins }) {
   // True only during the post-release glide — the sole time transform is
   // transitioned (transitions during the drag itself would add pointer lag).
   const [settling, setSettling] = useState(false);
+  const cardRef = useRef<HTMLElement>(null);
+  const resizeFromRef = useRef<DOMRect | null>(null);
+  const resizeAnimationRef = useRef<Animation | null>(null);
   // The drag is pure pointer math over the rect captured at pointerdown —
   // never the live DOM rect, which lags a render behind the latest offset.
   const pointerRef = useRef<{
@@ -250,6 +254,63 @@ function TourCard({ stop, origins }: { stop: TourStop; origins: TourOrigins }) {
   const href = stop.ctaLabel !== undefined ? tourCtaHref(stop, origins) : null;
   const min = prefs.min;
   const dragging = offset !== null && !settling;
+
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    const from = resizeFromRef.current;
+    resizeFromRef.current = null;
+    if (card === null || from === null || prefersReducedMotion()) return;
+
+    const to = card.getBoundingClientRect();
+    if (to.width < 1 || to.height < 1) return;
+
+    const dx = from.left - to.left;
+    const dy = from.top - to.top;
+    const scaleX = from.width / to.width;
+    const scaleY = from.height / to.height;
+    const animation = card.animate(
+      [
+        {
+          transformOrigin: "top left",
+          transform: `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`,
+          opacity: 0.88,
+        },
+        {
+          transformOrigin: "top left",
+          transform: "translate(0, 0) scale(1, 1)",
+          opacity: 1,
+        },
+      ],
+      {
+        duration: min ? 190 : 250,
+        easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+      },
+    );
+    resizeAnimationRef.current = animation;
+    animation.onfinish = () => {
+      if (resizeAnimationRef.current === animation) {
+        resizeAnimationRef.current = null;
+      }
+    };
+  }, [min]);
+
+  useEffect(
+    () => () => {
+      resizeAnimationRef.current?.cancel();
+    },
+    [],
+  );
+
+  const setMinimized = (next: boolean) => {
+    const card = cardRef.current;
+    resizeAnimationRef.current?.cancel();
+    resizeAnimationRef.current = null;
+    resizeFromRef.current =
+      card !== null && offset === null && !settling && !prefersReducedMotion()
+        ? card.getBoundingClientRect()
+        : null;
+    setPrefs((prev) => (prev.min === next ? prev : { ...prev, min: next }));
+  };
 
   const handlePointerDown = (e: ReactPointerEvent<HTMLElement>) => {
     if (e.button !== 0) return;
@@ -291,7 +352,7 @@ function TourCard({ stop, origins }: { stop: TourStop; origins: TourOrigins }) {
     pointerRef.current = null;
     if (!p.moved) {
       // A plain click: the whole minimized card is its own expand button.
-      if (min) setPrefs((prev) => ({ ...prev, min: false }));
+      if (min) setMinimized(false);
       return;
     }
     // Where the drop leaves the card: the pointerdown rect carried by the
@@ -357,6 +418,7 @@ function TourCard({ stop, origins }: { stop: TourStop; origins: TourOrigins }) {
 
   return (
     <aside
+      ref={cardRef}
       role="complementary"
       aria-label="Guided tour"
       style={cardStyle}
@@ -368,7 +430,7 @@ function TourCard({ stop, origins }: { stop: TourStop; origins: TourOrigins }) {
     >
       <button
         type="button"
-        onClick={() => setPrefs((prev) => ({ ...prev, min: !prev.min }))}
+        onClick={() => setMinimized(!min)}
         aria-label={min ? "Expand the tour card" : "Minimize the tour card"}
         aria-expanded={!min}
         title={min ? "Expand" : "Minimize"}
