@@ -3,6 +3,7 @@
  * ceremony's phases, driven by the flow's `onStep` callback.
  */
 
+import { useAutoReveal } from "@vgw/tour";
 import { SectionTitle, Spinner } from "./ui";
 
 export interface StepDescriptor {
@@ -22,13 +23,17 @@ export function StepList({
   /** Render every step checked — the ceremony finished. */
   complete?: boolean;
 }) {
+  const revealRef = useAutoReveal<HTMLDivElement>(true);
   const activeIndex = complete
     ? steps.length
     : current === null
       ? -1
       : steps.findIndex((s) => s.id === current);
   return (
-    <div className="mt-6 animate-fade rounded-3xl border border-line bg-surface p-5">
+    <div
+      ref={revealRef}
+      className="mt-6 animate-fade rounded-3xl border border-line bg-surface p-5"
+    >
       <SectionTitle>{title}</SectionTitle>
       <ol className="mt-3 space-y-2.5">
         {steps.map((s, index) => {

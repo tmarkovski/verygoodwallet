@@ -21,7 +21,7 @@ import {
   type DcApiOutcome,
   type PresentationRequest,
 } from "@vgw/protocols";
-import { nextTourStop, useTourStop, withTourParam } from "@vgw/tour";
+import { nextTourStop, useAutoReveal, useTourStop, withTourParam } from "@vgw/tour";
 import { clientWalletOrigin } from "../walletOrigin";
 
 /** Mirrors the Worker's VerificationSessionBody (wire contract, not import). */
@@ -130,6 +130,7 @@ function usePolledOutcome(
 
 function QrCode({ value }: { value: string }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const qrRef = useAutoReveal<HTMLImageElement>(dataUrl !== null);
   useEffect(() => {
     let cancelled = false;
     QRCode.toDataURL(value, { margin: 1, width: 240, errorCorrectionLevel: "M" })
@@ -146,6 +147,7 @@ function QrCode({ value }: { value: string }) {
   if (dataUrl === null) return null;
   return (
     <img
+      ref={qrRef}
       src={dataUrl}
       alt="QR code opening this verification request in VeryGoodWallet on another device"
       className="size-44 rounded-xl border border-line bg-white p-1.5"

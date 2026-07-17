@@ -22,3 +22,4 @@ export {
   subscribeTour,
 } from "./state";
 export { TourOverlay, useTourStop } from "./TourOverlay";
+export { useAutoReveal } from "./useAutoReveal";

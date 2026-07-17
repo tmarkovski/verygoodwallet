@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import type { CredentialOffer } from "@vgw/protocols";
+import { useAutoReveal } from "@vgw/tour";
 
 export interface OfferResultProps {
   credentialOffer: CredentialOffer;
@@ -26,6 +27,7 @@ export function OfferResult({
   walletOrigin,
 }: OfferResultProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const qrRef = useAutoReveal<HTMLImageElement>(qrDataUrl !== null);
 
   useEffect(() => {
     if (walletLink === null) {
@@ -90,6 +92,7 @@ export function OfferResult({
           <div className="mt-5 flex flex-col items-center">
             {qrDataUrl !== null && (
               <img
+                ref={qrRef}
                 src={qrDataUrl}
                 alt="QR code of the wallet offer link"
                 width={224}
