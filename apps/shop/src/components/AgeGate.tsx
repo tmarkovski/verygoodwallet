@@ -155,7 +155,7 @@ function QrCode({ value }: { value: string }) {
 /** Collapsible raw-JSON exhibit — every app in the demo shows its wire traffic. */
 function Inspector({ title, data }: { title: string; data: unknown }) {
   return (
-    <details className="group mt-2 rounded-xl border border-line bg-canvas">
+    <details className="group mt-2 rounded-xl border border-line bg-canvas text-left">
       <summary className="cursor-pointer px-3 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-muted group-open:border-b group-open:border-line">
         {title}
       </summary>
