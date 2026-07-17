@@ -14,5 +14,14 @@ export default defineConfig({
       "@credkit/proofs",
       "@credkit/cryptosuite",
     ],
+    // CJS deps under the excluded packages still need prebundling — served
+    // raw, `import jsonld from "jsonld"` has no default export and module
+    // evaluation dies silently (blank page in dev). The chains start at the
+    // workspace package so they resolve through pnpm's nested node_modules.
+    include: [
+      "@vgw/vc-kit > @credkit/cryptosuite > jsonld",
+      "@vgw/vc-kit > @credkit/cryptosuite > @digitalbazaar/di-sd-primitives > jsonld",
+      "@vgw/vc-kit > @credkit/cryptosuite > @digitalbazaar/di-sd-primitives > rdf-canonize",
+    ],
   },
 });
