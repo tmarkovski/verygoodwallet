@@ -8,9 +8,14 @@
  * is a type error, not a runtime surprise.
  *
  * Profile notes (kept deliberately narrow):
- * - Requests are *unsigned* and passed by value in the wallet link's query
- *   string (OID4VP allows this; a signed Request Object JWT adds nothing
- *   when the wallet already fetched the link from the verifier's origin).
+ * - Requests are *unsigned*. The wallet link normally carries only a
+ *   `request_uri` naming the verifier's per-session request endpoint — a
+ *   by-value link is ~1,600 characters, which forces a QR too dense for
+ *   phone cameras. The referenced endpoint serves the authorization request
+ *   as plain JSON (this profile's unsigned analogue of OID4VP's Request
+ *   Object by reference; a signed JWT adds nothing when the wallet fetches
+ *   the request straight from the verifier's origin). Passing the whole
+ *   request by value in the query string remains supported.
  * - `client_id` uses the `redirect_uri:` prefix, which for
  *   `response_mode=direct_post` names the Response URI. The wallet enforces
  *   that the prefix payload equals `response_uri` — one server, one identity.
@@ -26,6 +31,9 @@ export type OauthErrorResponse = Oid4vciErrorResponse;
 
 /** The `client_id` prefix for unsigned requests identified by their response URI. */
 export const REDIRECT_URI_CLIENT_ID_PREFIX = "redirect_uri:";
+
+/** The wallet-link search param naming a request passed by reference. */
+export const REQUEST_URI_PARAM = "request_uri";
 
 // ---------------------------------------------------------------------------
 // DCQL (Digital Credentials Query Language) — the subset used by this demo
@@ -311,6 +319,25 @@ export function presentationRequestFromParams(
 }
 
 /**
+ * Parse and validate a presentation request delivered as a JSON document (the
+ * by-reference route). Funnels through {@link presentationRequestFromParams}
+ * — string members ride as-is, structured members (`dcql_query`,
+ * `client_metadata`) as their JSON, exactly the by-value wire form — so both
+ * delivery routes pass ONE validation gate.
+ */
+export function presentationRequestFromJson(value: unknown): PresentationRequest {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("The presentation request must be a JSON object");
+  }
+  const params = new URLSearchParams();
+  for (const [name, member] of Object.entries(value)) {
+    if (member === undefined || member === null) continue;
+    params.set(name, typeof member === "string" ? member : JSON.stringify(member));
+  }
+  return presentationRequestFromParams(params);
+}
+
+/**
  * Build the wallet deep link for a presentation: the wallet's `/present`
  * route reads the authorization request from its search params.
  */
@@ -319,6 +346,19 @@ export function walletPresentLink(
   request: PresentationRequest,
 ): string {
   return `${walletOrigin}/present?${presentationRequestToParams(request).toString()}`;
+}
+
+/**
+ * Build the wallet deep link for a presentation passed by reference: the
+ * wallet's `/present` route fetches the authorization request from
+ * `requestUri` (the verifier's per-session request endpoint). This is the
+ * form QR codes carry — short enough to scan.
+ */
+export function walletPresentLinkByReference(
+  walletOrigin: string,
+  requestUri: string,
+): string {
+  return `${walletOrigin}/present?${REQUEST_URI_PARAM}=${encodeURIComponent(requestUri)}`;
 }
 
 // ---------------------------------------------------------------------------

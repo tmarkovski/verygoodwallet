@@ -52,6 +52,7 @@ import {
   compositePresentationSteps,
   compositeStatements,
   disclosurePreview,
+  fetchPresentationRequest,
   hasEmbeddedSubjectId,
   matchCredentials,
   parsePresentParams,
@@ -466,6 +467,77 @@ describe("parsePresentParams", () => {
     expect(parsed.kind).toBe("invalid");
     if (parsed.kind !== "invalid") return;
     expect(parsed.reason).toMatch(/nonce/);
+  });
+
+  it("returns the by-reference form for a request_uri link", () => {
+    const parsed = parsePresentParams(
+      new URLSearchParams({ request_uri: "https://shop.example/oid4vp/request/abc" }),
+    );
+    expect(parsed).toEqual({
+      kind: "by-reference",
+      requestUri: "https://shop.example/oid4vp/request/abc",
+    });
+  });
+
+  it("rejects a request_uri that is not an absolute http(s) URL", () => {
+    for (const requestUri of ["not-a-url", "javascript:alert(1)"]) {
+      const parsed = parsePresentParams(new URLSearchParams({ request_uri: requestUri }));
+      expect(parsed.kind).toBe("invalid");
+    }
+  });
+});
+
+describe("fetchPresentationRequest", () => {
+  it("fetches and validates the referenced request", async () => {
+    const original = request();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(original)),
+    );
+    const fetched = await fetchPresentationRequest(
+      "https://shop.example/oid4vp/request/abc",
+    );
+    expect(fetched).toEqual(original);
+  });
+
+  it("rejects a fetched request whose response_uri is on another origin", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(request())),
+    );
+    await expect(
+      fetchPresentationRequest("https://other.example/oid4vp/request/abc"),
+    ).rejects.toThrow(/verifier's own origin/);
+  });
+
+  it("explains an expired session distinctly from other endpoint errors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: "invalid_request" }, { status: 404 })),
+    );
+    await expect(
+      fetchPresentationRequest("https://shop.example/oid4vp/request/gone"),
+    ).rejects.toThrow(/expired/);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: "server_error" }, { status: 500 })),
+    );
+    await expect(
+      fetchPresentationRequest("https://shop.example/oid4vp/request/abc"),
+    ).rejects.toThrow(/500/);
+  });
+
+  it("runs the fetched document through the params validation gate", async () => {
+    const tampered = JSON.parse(JSON.stringify(request())) as Record<string, unknown>;
+    tampered["client_id"] = "redirect_uri:https://evil.example/response";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(tampered)),
+    );
+    await expect(
+      fetchPresentationRequest("https://shop.example/oid4vp/request/abc"),
+    ).rejects.toThrow(/client_id does not match/);
   });
 });
 

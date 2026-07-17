@@ -431,6 +431,37 @@ describe("POST /api/verification", () => {
     const { hash } = await fetchParams(env);
     expect(query?.vgw_predicates?.range?.[0]?.params_hash).toBe(hash);
   });
+
+  it("links the wallet by reference — the QR must stay scannable", async () => {
+    const env = makeEnv();
+    const body = await createSession(env);
+    expect(body.request_uri).toBe(`${RENTALS_ORIGIN}/oid4vp/request/${body.session_id}`);
+    expect(body.wallet_link).toBe(
+      `http://localhost:5173/present?request_uri=${encodeURIComponent(body.request_uri)}`,
+    );
+    expect(body.wallet_link!.length).toBeLessThan(200);
+  });
+});
+
+describe("GET /oid4vp/request/:id", () => {
+  it("serves the session's authorization request verbatim (both flows)", async () => {
+    const env = makeEnv();
+    const standard = await createSession(env);
+    const composite = await createResidentRateSession(env);
+    for (const session of [standard, composite]) {
+      const res = await app.request(session.request_uri, {}, env);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(session.request);
+    }
+  });
+
+  it("answers 404 for an unknown session", async () => {
+    const env = makeEnv();
+    const res = await app.request("/oid4vp/request/nonexistent", {}, env);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as OauthErrorResponse;
+    expect(body.error).toBe("invalid_request");
+  });
 });
 
 describe("POST /oid4vp/response", () => {

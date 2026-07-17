@@ -48,9 +48,11 @@
 
 import { deriveLinkSecret, fromBase64Url, scalarFromBase64Url } from "@vgw/keys";
 import {
+  REQUEST_URI_PARAM,
   assertCredkitParamsDocument,
   claimPathToPointer,
   matchDcqlCredentialQuery,
+  presentationRequestFromJson,
   presentationRequestFromParams,
   type DcqlCredentialMatch,
   type DcqlCredentialQuery,
@@ -122,15 +124,31 @@ export type PresentationStep = "fetching-params" | "deriving-presentation" | "po
 /** Result of {@link parsePresentParams} — a tiny state machine for /present. */
 export type PresentParams =
   | { kind: "request"; request: PresentationRequest }
+  | { kind: "by-reference"; requestUri: string }
   | { kind: "missing" }
   | { kind: "invalid"; reason: string };
 
 /**
- * Read the /present route's search params. The whole unsigned authorization
- * request travels by value, so a missing `client_id` (plus friends) means
- * the page was opened without a request at all.
+ * Read the /present route's search params. The link normally names the
+ * request by reference (`request_uri` — the QR-friendly form, resolved by
+ * {@link fetchPresentationRequest}); the whole unsigned authorization
+ * request traveling by value in the query string remains supported. Neither
+ * shape present means the page was opened without a request at all.
  */
 export function parsePresentParams(searchParams: URLSearchParams): PresentParams {
+  const requestUri = searchParams.get(REQUEST_URI_PARAM);
+  if (requestUri !== null) {
+    let parsed: URL;
+    try {
+      parsed = new URL(requestUri);
+    } catch {
+      return { kind: "invalid", reason: "The request_uri is not a valid URL" };
+    }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return { kind: "invalid", reason: "The request_uri must be http(s)" };
+    }
+    return { kind: "by-reference", requestUri };
+  }
   if (
     searchParams.get("client_id") === null &&
     searchParams.get("response_uri") === null &&
@@ -145,6 +163,40 @@ export function parsePresentParams(searchParams: URLSearchParams): PresentParams
   }
 }
 
+/**
+ * Resolve a by-reference presentation request: fetch the JSON the verifier
+ * parked for this session and run it through the same validation gate the
+ * by-value route uses. One extra check the by-value route can't have: the
+ * fetched request's `response_uri` must be on the request_uri's own origin —
+ * the party serving the request and the party receiving the response are
+ * the same verifier, so a request that points elsewhere is a substitution.
+ */
+export async function fetchPresentationRequest(
+  requestUri: string,
+): Promise<PresentationRequest> {
+  const response = await fetch(requestUri, { headers: { accept: "application/json" } });
+  if (!response.ok) {
+    throw new Error(
+      response.status === 404
+        ? "The verifier no longer has this request — it may have expired. Start the verification again from the verifier's site."
+        : `The verifier's request endpoint answered ${response.status}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch {
+    throw new Error("The verifier's request endpoint did not return JSON");
+  }
+  const request = presentationRequestFromJson(parsed);
+  if (new URL(request.response_uri).origin !== new URL(requestUri).origin) {
+    throw new Error(
+      "The fetched request's response_uri is not on the verifier's own origin",
+    );
+  }
+  return request;
+}
+
 /** What the Present page shows before the user consents. */
 export interface VerifierPreview {
   request: PresentationRequest;
@@ -154,8 +206,8 @@ export interface VerifierPreview {
 }
 
 /**
- * Describe who is asking. Pure and synchronous — the request came by value,
- * so no network round-trip happens before consent.
+ * Describe who is asking. Pure and synchronous over an already-resolved
+ * request — any by-reference fetch happened before this.
  */
 export function previewPresentationRequest(request: PresentationRequest): VerifierPreview {
   const verifierOrigin = new URL(request.response_uri).origin;

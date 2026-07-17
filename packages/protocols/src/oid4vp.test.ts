@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   REDIRECT_URI_CLIENT_ID_PREFIX,
   assertDcqlQuery,
+  presentationRequestFromJson,
   presentationRequestFromParams,
   presentationRequestToParams,
   walletPresentLink,
+  walletPresentLinkByReference,
   type DcqlQuery,
   type PresentationRequest,
 } from "./oid4vp.js";
@@ -99,6 +101,43 @@ describe("presentation request params codec", () => {
     params.set("client_metadata", JSON.stringify({ client_name: { evil: true } }));
     const parsed = presentationRequestFromParams(params);
     expect(parsed.client_metadata).toEqual({});
+  });
+});
+
+describe("presentation request by reference", () => {
+  it("parses a request delivered as JSON through the same gate", () => {
+    const original = request();
+    expect(presentationRequestFromJson(JSON.parse(JSON.stringify(original)))).toEqual(
+      original,
+    );
+  });
+
+  it("rejects non-object JSON documents", () => {
+    for (const value of [null, "a-string", 7, [request()]]) {
+      expect(() => presentationRequestFromJson(value)).toThrow(/JSON object/);
+    }
+  });
+
+  it("runs the full params gate on JSON requests", () => {
+    const tampered = JSON.parse(JSON.stringify(request())) as Record<string, unknown>;
+    tampered["client_id"] = `${REDIRECT_URI_CLIENT_ID_PREFIX}https://evil.example/response`;
+    expect(() => presentationRequestFromJson(tampered)).toThrow(/client_id does not match/);
+
+    const incomplete = JSON.parse(JSON.stringify(request())) as Record<string, unknown>;
+    delete incomplete["nonce"];
+    expect(() => presentationRequestFromJson(incomplete)).toThrow(/missing nonce/);
+  });
+
+  it("builds a short wallet /present link naming the request endpoint", () => {
+    const requestUri = "https://shop.example/oid4vp/request/abc-123";
+    const link = walletPresentLinkByReference("https://wallet.example", requestUri);
+    expect(link).toBe(
+      "https://wallet.example/present?request_uri=https%3A%2F%2Fshop.example%2Foid4vp%2Frequest%2Fabc-123",
+    );
+    const url = new URL(link);
+    expect(url.searchParams.get("request_uri")).toBe(requestUri);
+    // The point of the exercise: the link must fit a scannable QR.
+    expect(link.length).toBeLessThan(200);
   });
 });
 

@@ -4,15 +4,19 @@
  * ```
  * POST /api/verification        shop UI starts an age-verification session
  * GET  /api/verification/:id    shop UI polls the session outcome
+ * GET  /oid4vp/request/:id      wallet fetches the request by reference
  * POST /oid4vp/response         wallet direct_posts the vp_token
  * ```
  *
- * State model: the *request* side is stateless — the OID4VP `state` value is
- * an HMAC-signed blob carrying the session id and nonce, so any isolate can
- * validate a response with no lookup. Only the *outcome* is stored (in a
- * per-session Durable Object) because the poller and the wallet are usually
- * different devices. The shop origin is derived from each request's URL —
- * never hardcoded — matching the DMV Worker's convention.
+ * State model: response *validation* is stateless — the OID4VP `state` value
+ * is an HMAC-signed blob carrying the session id and nonce, so any isolate
+ * can validate a response with no lookup. The per-session Durable Object
+ * holds two things: the *outcome* (because the poller and the wallet are
+ * usually different devices) and the *authorization request*, so the wallet
+ * link can pass it by reference — the QR carries a short `request_uri`
+ * instead of a ~1,600-char by-value query string no camera can scan. The
+ * shop origin is derived from each request's URL — never hardcoded —
+ * matching the DMV Worker's convention.
  */
 
 import { Hono } from "hono";
@@ -22,7 +26,7 @@ import {
   REDIRECT_URI_CLIENT_ID_PREFIX,
   mintSignedToken,
   readSignedToken,
-  walletPresentLink,
+  walletPresentLinkByReference,
   type DirectPostResult,
   type OauthErrorResponse,
   type PresentationRequest,
@@ -60,8 +64,10 @@ export interface VerificationSessionBody {
   session_id: string;
   /** Poll here for the outcome. */
   status_url: string;
-  /** The authorization request the wallet link carries (inspector exhibit). */
+  /** The full authorization request (inspector exhibit; DC API input). */
   request: PresentationRequest;
+  /** Where the wallet fetches that request — what the wallet link carries. */
+  request_uri: string;
   /** Omitted when no wallet origin is configured. */
   wallet_link?: string;
 }
@@ -209,13 +215,24 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
       client_metadata: { client_name: VERIFIER_DISPLAY_NAME },
     };
 
+    // Park the request in the session's Durable Object so the wallet link
+    // can pass it by reference — the QR stays scannable.
+    const requestUri = `${origin}/oid4vp/request/${encodeURIComponent(sessionId)}`;
+    const stub = c.env.SESSIONS.get(c.env.SESSIONS.idFromName(sessionId));
+    await stub.fetch("https://sessions/request", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    });
+
     const walletOrigin = resolveWalletOrigin(c.env, c.req.header("origin"));
     const body: VerificationSessionBody = {
       session_id: sessionId,
       status_url: sessionStatusUrl(origin, sessionId),
       request,
+      request_uri: requestUri,
       ...(walletOrigin !== undefined
-        ? { wallet_link: walletPresentLink(walletOrigin, request) }
+        ? { wallet_link: walletPresentLinkByReference(walletOrigin, requestUri) }
         : {}),
     };
     return c.json(body);
@@ -227,6 +244,22 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
     const response = await stub.fetch("https://sessions/status");
     const status = (await response.json()) as SessionStatus;
     return c.json(status);
+  });
+
+  // The by-reference half of the wallet link: serves the session's
+  // authorization request verbatim. Public and CORS-open like the rest of
+  // /oid4vp/* — it holds nothing the by-value link wouldn't have printed in
+  // the open, and the write-once outcome keeps the nonce single-use.
+  app.get("/oid4vp/request/:id", async (c) => {
+    const sessionId = c.req.param("id");
+    const stub = c.env.SESSIONS.get(c.env.SESSIONS.idFromName(sessionId));
+    const response = await stub.fetch("https://sessions/request");
+    if (response.status === 404) {
+      return c.json(
+        ...oauthError(404, "invalid_request", "unknown or expired verification session"),
+      );
+    }
+    return c.json(await response.json());
   });
 
   app.post("/oid4vp/response", async (c) => {

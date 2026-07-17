@@ -289,7 +289,13 @@ describe("POST /api/verification", () => {
     expect(request.dcql_query.credentials[0]?.id).toBe(AGE_QUERY_ID);
     expect(request.client_metadata?.client_name).toBe("The Nightcap");
 
-    expect(body.wallet_link).toContain("http://localhost:5173/present?");
+    // The wallet link passes the request BY REFERENCE — a by-value link is
+    // a ~1,600-char QR no phone camera can lock onto.
+    expect(body.request_uri).toBe(`${SHOP_ORIGIN}/oid4vp/request/${body.session_id}`);
+    expect(body.wallet_link).toBe(
+      `http://localhost:5173/present?request_uri=${encodeURIComponent(body.request_uri)}`,
+    );
+    expect(body.wallet_link!.length).toBeLessThan(200);
   });
 
   it("offers the range predicate over the hidden twin: params_uri, today's bound, pinned hash", async () => {
@@ -328,6 +334,35 @@ describe("GET /api/verification/:id", () => {
   it("reports unknown sessions as pending", async () => {
     const env = makeEnv();
     expect(await sessionStatus(env, "nonexistent")).toEqual({ status: "pending" });
+  });
+});
+
+describe("GET /oid4vp/request/:id", () => {
+  it("serves the session's authorization request verbatim", async () => {
+    const env = makeEnv();
+    const session = await createSession(env);
+    const res = await app.request(session.request_uri, {}, env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(session.request);
+  });
+
+  it("answers 404 for an unknown session", async () => {
+    const env = makeEnv();
+    const res = await app.request("/oid4vp/request/nonexistent", {}, env);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as OauthErrorResponse;
+    expect(body.error).toBe("invalid_request");
+  });
+
+  it("answers cross-origin (the wallet fetches it from the browser)", async () => {
+    const env = makeEnv();
+    const session = await createSession(env);
+    const res = await app.request(
+      session.request_uri,
+      { headers: { origin: "http://localhost:5173" } },
+      env,
+    );
+    expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
   });
 });
 

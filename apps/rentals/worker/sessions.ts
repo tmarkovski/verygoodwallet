@@ -15,6 +15,12 @@
  * `POST /complete` wins and every later one is rejected, which is what makes
  * a captured direct_post unreplayable. Instances purge themselves via alarm.
  *
+ * The instance also holds the session's authorization REQUEST, so the wallet
+ * link can pass it by reference (`request_uri`) — a by-value link is a
+ * QR too dense for phone cameras (the composite request especially). Serving
+ * it back is safe: the request is exactly what the by-value link would have
+ * printed in the open, and the write-once outcome keeps its nonce single-use.
+ *
  * Deliberately a classic fetch-style DO (no `cloudflare:workers` import):
  * the Worker tests run this exact class in plain Node against a Map-backed
  * storage stub, which an RPC DO's platform base class would preclude.
@@ -115,6 +121,20 @@ export class VerificationSessions {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "PUT" && url.pathname === "/request") {
+      await this.storage.put("request", await request.json());
+      // Arm the purge at creation, not completion — an abandoned session
+      // (started, never answered) must clean itself up too.
+      await this.storage.setAlarm(Date.now() + SESSION_RETENTION_MS);
+      return Response.json({ stored: true });
+    }
+    if (request.method === "GET" && url.pathname === "/request") {
+      const stored = await this.storage.get<unknown>("request");
+      if (stored === undefined) {
+        return Response.json({ error: "not found" }, { status: 404 });
+      }
+      return Response.json(stored);
+    }
     if (request.method === "GET" && url.pathname === "/status") {
       const outcome = await this.storage.get<SessionOutcome>("outcome");
       const status: SessionStatus = outcome ?? { status: "pending" };

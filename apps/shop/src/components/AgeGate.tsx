@@ -17,7 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import {
   requestDcApiCredential,
-  walletPresentLink,
+  walletPresentLinkByReference,
   type DcApiOutcome,
   type PresentationRequest,
 } from "@vgw/protocols";
@@ -29,6 +29,7 @@ export interface VerificationSession {
   session_id: string;
   status_url: string;
   request: PresentationRequest;
+  request_uri: string;
   wallet_link?: string;
 }
 
@@ -298,11 +299,12 @@ export function AgeGate({
 
   // Wallet link: prefer building against the client-side wallet origin
   // (supports the ?wallet= override); the server's wallet_link is the
-  // fallback for when no client-side origin is known.
+  // fallback for when no client-side origin is known. Always by reference —
+  // the QR must stay scannable.
   const walletLink = (session: VerificationSession): string | null => {
     const link =
       walletOrigin !== null
-        ? walletPresentLink(walletOrigin, session.request)
+        ? walletPresentLinkByReference(walletOrigin, session.request_uri)
         : (session.wallet_link ?? null);
     // An active tour rides the link to the wallet's presentation stop.
     if (link === null || tourStopId !== "shop") return link;

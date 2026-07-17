@@ -25,6 +25,7 @@ import {
   compositePresentationSteps,
   compositeStatements,
   disclosurePreview,
+  fetchPresentationRequest,
   hasEmbeddedSubjectId,
   matchCredentials,
   parsePresentParams,
@@ -39,6 +40,7 @@ import {
   type MatchedRequest,
   type PredicateOption,
   type PresentCredentialResult,
+  type PresentParams,
   type PresentationStep,
 } from "../services/presentation";
 import {
@@ -276,7 +278,41 @@ export function Present() {
     lockSignal,
   } = useSession();
 
-  const params = useMemo(() => parsePresentParams(searchParams), [searchParams]);
+  const parsed = useMemo(() => parsePresentParams(searchParams), [searchParams]);
+
+  // A by-reference link (`request_uri` — the QR form) resolves to the same
+  // states the by-value link produces, plus a brief "fetching" while the
+  // request travels.
+  const [fetched, setFetched] = useState<PresentParams | null>(null);
+  useEffect(() => {
+    if (parsed.kind !== "by-reference") {
+      setFetched(null);
+      return;
+    }
+    let cancelled = false;
+    setFetched(null);
+    void (async () => {
+      try {
+        const request = await fetchPresentationRequest(parsed.requestUri);
+        if (cancelled) return;
+        inspect.emit({
+          label: "Presentation request fetched by reference",
+          data: { request_uri: parsed.requestUri },
+        });
+        setFetched({ kind: "request", request });
+      } catch (err) {
+        if (!cancelled) setFetched({ kind: "invalid", reason: describeError(err) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [parsed]);
+
+  const params = useMemo<PresentParams | { kind: "fetching" }>(
+    () => (parsed.kind === "by-reference" ? (fetched ?? { kind: "fetching" }) : parsed),
+    [parsed, fetched],
+  );
   const tourStop = useTourStop();
   const preview = useMemo(
     () => (params.kind === "request" ? previewPresentationRequest(params.request) : null),
@@ -470,6 +506,15 @@ export function Present() {
       setRunning(false);
     }
   };
+
+  if (params.kind === "fetching") {
+    return (
+      <div className="flex flex-col items-center gap-3 pt-24 text-muted">
+        <Spinner />
+        <p className="text-sm">Fetching the verification request…</p>
+      </div>
+    );
+  }
 
   if (params.kind === "missing" || params.kind === "invalid") {
     return (

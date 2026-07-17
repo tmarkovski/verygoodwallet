@@ -46,10 +46,13 @@ export {
 } from "./signedToken.js";
 export {
   REDIRECT_URI_CLIENT_ID_PREFIX,
+  REQUEST_URI_PARAM,
   assertDcqlQuery,
+  presentationRequestFromJson,
   presentationRequestFromParams,
   presentationRequestToParams,
   walletPresentLink,
+  walletPresentLinkByReference,
   type DcqlClaimQuery,
   type DcqlCredentialQuery,
   type DcqlEqualityRef,
