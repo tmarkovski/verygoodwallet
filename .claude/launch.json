@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "wallet",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@vgw/wallet", "dev"],
+      "port": 5173
+    },
+    {
       "name": "dmv",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@vgw/dmv", "dev"],
@@ -14,10 +20,16 @@
       "port": 5175
     },
     {
-      "name": "wallet",
+      "name": "rentals",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@vgw/wallet", "dev"],
-      "port": 5173
+      "runtimeArgs": ["--filter", "@vgw/rentals", "dev"],
+      "port": 5176
+    },
+    {
+      "name": "landing",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@vgw/landing", "dev"],
+      "port": 5177
     }
   ]
 }
