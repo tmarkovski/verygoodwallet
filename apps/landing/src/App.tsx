@@ -63,66 +63,64 @@ function GuidedDemoBanner({ startHref }: { startHref: string | null }) {
   return (
     <section
       aria-labelledby="guided-demo-title"
-      className="passport-page flex flex-col"
+      className="passport-page foil-frame tour-promo flex flex-col bg-accent text-accent-contrast"
     >
-      <div className="mx-auto flex w-full max-w-5xl flex-1 items-center px-5 py-10">
-        <div className="tour-promo w-full overflow-hidden rounded-3xl border border-foil/35 bg-accent text-accent-contrast">
-          <div className="tour-promo-art" aria-hidden="true">
-            <img
-              src="/guided-demo-banner.webp"
-              alt=""
-              width="2172"
-              height="724"
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="tour-promo-scrim" />
-          </div>
+      <div className="tour-promo-art" aria-hidden="true">
+        <img
+          src="/guided-demo-banner.webp"
+          alt=""
+          width="2172"
+          height="724"
+          loading="lazy"
+          decoding="async"
+        />
+        <div className="tour-promo-scrim" />
+      </div>
 
-          <div className="tour-promo-copy">
-            <p className="font-label text-[10px] font-semibold uppercase tracking-[0.24em] text-foil">
-              Guided demo · about 3 minutes
-            </p>
-            <h2
-              id="guided-demo-title"
-              className="mt-3 text-balance font-display text-3xl font-bold leading-tight tracking-tight"
-            >
-              Follow one credential from the DMV to both verifiers.
-            </h2>
-            <p className="mt-4 text-[14px] leading-relaxed text-accent-contrast/80">
-              Create a passkey wallet, pick up a real BBS-signed license, use it
-              to prove your age without sharing your birthday, and see exactly
-              what each verifier learns.
-            </p>
-            <div className="mt-6 flex flex-wrap items-center gap-3">
-              {startHref !== null ? (
-                <a
-                  href={startHref}
-                  className="rounded-xl bg-canvas px-5 py-3 font-label text-[12px] font-bold uppercase tracking-[0.09em] text-accent transition-opacity hover:opacity-90"
-                >
-                  Start the guided demo
-                </a>
-              ) : (
-                <p className="rounded-xl bg-danger-soft px-4 py-3 text-sm text-accent-contrast">
-                  The wallet is unavailable in this build.
-                </p>
-              )}
-              <p className="font-label text-[10px] uppercase tracking-[0.14em] text-accent-contrast/60">
-                12 guided stops · runs in your browser
+      <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-1 items-center px-6 py-20 sm:px-10">
+        <div className="tour-promo-copy">
+          <p className="font-label text-[10px] font-semibold uppercase tracking-[0.24em] text-foil">
+            Guided demo · about 3 minutes
+          </p>
+          <h2
+            id="guided-demo-title"
+            className="mt-3 text-balance font-display text-4xl font-bold leading-[1.12] tracking-tight sm:text-5xl"
+          >
+            Follow one credential from the DMV to both verifiers.
+          </h2>
+          <p className="mt-5 text-[15px] leading-relaxed text-accent-contrast/80">
+            Create a passkey wallet, pick up a real BBS-signed license, use it
+            to prove your age without sharing your birthday, and see exactly
+            what each verifier learns.
+          </p>
+          <div className="mt-7 flex flex-wrap items-center gap-3">
+            {startHref !== null ? (
+              <a
+                href={startHref}
+                className="rounded-xl bg-canvas px-6 py-3.5 font-label text-[12px] font-bold uppercase tracking-[0.09em] text-accent transition-opacity hover:opacity-90"
+              >
+                Start the guided demo
+              </a>
+            ) : (
+              <p className="rounded-xl bg-danger-soft px-4 py-3 text-sm text-accent-contrast">
+                The wallet is unavailable in this build.
               </p>
-            </div>
+            )}
+            <p className="font-label text-[10px] uppercase tracking-[0.14em] text-accent-contrast/60">
+              12 guided stops · runs in your browser
+            </p>
           </div>
         </div>
       </div>
 
-      <footer className="border-t border-line py-8">
-        <p className="mx-auto max-w-3xl px-5 text-center text-[11.5px] leading-relaxed text-muted">
+      <footer className="relative z-10 border-t border-foil/25 py-8">
+        <p className="mx-auto max-w-3xl px-5 text-center text-[11.5px] leading-relaxed text-accent-contrast/70">
           VeryGoodWallet is a portfolio demonstration by Tomislav Markovski.
           The State of Utopia, its DMV, The Nightcap, and Utopia Wheels are
           fictional; the cryptography is not. Source on{" "}
           <a
             href="https://github.com/tmarkovski/verygoodwallet"
-            className="text-ink-dim underline decoration-stamp/60 underline-offset-2 hover:decoration-stamp"
+            className="text-foil underline decoration-foil/60 underline-offset-2 hover:decoration-foil"
           >
             GitHub
           </a>.
