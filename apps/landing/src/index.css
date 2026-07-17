@@ -119,6 +119,35 @@ body {
   min-height: 100dvh;
 }
 
+/*
+ * The landing reads like a passport: one full-height page settles into view
+ * at a time. The dedicated scroller keeps this behavior off the long-form
+ * writeup and the stamped finale. `min-height` lets content-heavy pages grow
+ * on short screens instead of clipping or trapping their content.
+ */
+.passport-scroll {
+  height: 100svh;
+  height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scroll-snap-type: y mandatory;
+}
+
+.passport-page {
+  min-height: 100svh;
+  min-height: 100dvh;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+.passport-content-page {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-block: clamp(3rem, 8vh, 5rem);
+}
+
 ::selection {
   background-color: var(--pp-accent);
   color: var(--pp-accent-contrast);

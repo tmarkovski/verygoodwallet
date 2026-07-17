@@ -63,55 +63,71 @@ function GuidedDemoBanner({ startHref }: { startHref: string | null }) {
   return (
     <section
       aria-labelledby="guided-demo-title"
-      className="mx-auto max-w-5xl px-5 pb-16 pt-10"
+      className="passport-page flex flex-col"
     >
-      <div className="tour-promo overflow-hidden rounded-3xl border border-foil/35 bg-accent text-accent-contrast">
-        <div className="tour-promo-art" aria-hidden="true">
-          <img
-            src="/guided-demo-banner.webp"
-            alt=""
-            width="2172"
-            height="724"
-            loading="lazy"
-            decoding="async"
-          />
-          <div className="tour-promo-scrim" />
-        </div>
+      <div className="mx-auto flex w-full max-w-5xl flex-1 items-center px-5 py-10">
+        <div className="tour-promo w-full overflow-hidden rounded-3xl border border-foil/35 bg-accent text-accent-contrast">
+          <div className="tour-promo-art" aria-hidden="true">
+            <img
+              src="/guided-demo-banner.webp"
+              alt=""
+              width="2172"
+              height="724"
+              loading="lazy"
+              decoding="async"
+            />
+            <div className="tour-promo-scrim" />
+          </div>
 
-        <div className="tour-promo-copy">
-          <p className="font-label text-[10px] font-semibold uppercase tracking-[0.24em] text-foil">
-            Guided demo · about 3 minutes
-          </p>
-          <h2
-            id="guided-demo-title"
-            className="mt-3 text-balance font-display text-3xl font-bold leading-tight tracking-tight"
-          >
-            Follow one credential from the DMV to both verifiers.
-          </h2>
-          <p className="mt-4 text-[14px] leading-relaxed text-accent-contrast/80">
-            Create a passkey wallet, pick up a real BBS-signed license, use it
-            to prove your age without sharing your birthday, and see exactly
-            what each verifier learns.
-          </p>
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            {startHref !== null ? (
-              <a
-                href={startHref}
-                className="rounded-xl bg-canvas px-5 py-3 font-label text-[12px] font-bold uppercase tracking-[0.09em] text-accent transition-opacity hover:opacity-90"
-              >
-                Start the guided demo
-              </a>
-            ) : (
-              <p className="rounded-xl bg-danger-soft px-4 py-3 text-sm text-accent-contrast">
-                The wallet is unavailable in this build.
-              </p>
-            )}
-            <p className="font-label text-[10px] uppercase tracking-[0.14em] text-accent-contrast/60">
-              12 guided stops · runs in your browser
+          <div className="tour-promo-copy">
+            <p className="font-label text-[10px] font-semibold uppercase tracking-[0.24em] text-foil">
+              Guided demo · about 3 minutes
             </p>
+            <h2
+              id="guided-demo-title"
+              className="mt-3 text-balance font-display text-3xl font-bold leading-tight tracking-tight"
+            >
+              Follow one credential from the DMV to both verifiers.
+            </h2>
+            <p className="mt-4 text-[14px] leading-relaxed text-accent-contrast/80">
+              Create a passkey wallet, pick up a real BBS-signed license, use it
+              to prove your age without sharing your birthday, and see exactly
+              what each verifier learns.
+            </p>
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              {startHref !== null ? (
+                <a
+                  href={startHref}
+                  className="rounded-xl bg-canvas px-5 py-3 font-label text-[12px] font-bold uppercase tracking-[0.09em] text-accent transition-opacity hover:opacity-90"
+                >
+                  Start the guided demo
+                </a>
+              ) : (
+                <p className="rounded-xl bg-danger-soft px-4 py-3 text-sm text-accent-contrast">
+                  The wallet is unavailable in this build.
+                </p>
+              )}
+              <p className="font-label text-[10px] uppercase tracking-[0.14em] text-accent-contrast/60">
+                12 guided stops · runs in your browser
+              </p>
+            </div>
           </div>
         </div>
       </div>
+
+      <footer className="border-t border-line py-8">
+        <p className="mx-auto max-w-3xl px-5 text-center text-[11.5px] leading-relaxed text-muted">
+          VeryGoodWallet is a portfolio demonstration by Tomislav Markovski.
+          The State of Utopia, its DMV, The Nightcap, and Utopia Wheels are
+          fictional; the cryptography is not. Source on{" "}
+          <a
+            href="https://github.com/tmarkovski/verygoodwallet"
+            className="text-ink-dim underline decoration-stamp/60 underline-offset-2 hover:decoration-stamp"
+          >
+            GitHub
+          </a>.
+        </p>
+      </footer>
     </section>
   );
 }
@@ -280,9 +296,9 @@ export default function App() {
   const startHref = tourStartHref();
 
   return (
-    <>
+    <div className="passport-scroll">
       {/* ——— The cover ——— */}
-      <header className="foil-frame relative flex min-h-[92dvh] flex-col items-center justify-center bg-accent px-6 py-20 text-center text-accent-contrast">
+      <header className="passport-page foil-frame relative flex flex-col items-center justify-center bg-accent px-6 py-20 text-center text-accent-contrast">
         <p className="font-label text-[11px] font-semibold uppercase tracking-[0.3em] text-foil">
           State of Utopia · demonstration passport
         </p>
@@ -325,9 +341,9 @@ export default function App() {
         </p>
       </header>
 
-      <main className="mx-auto max-w-3xl px-5 pb-20">
+      <main className="mx-auto w-full max-w-3xl px-5">
         {/* ——— Page 01 · the idea ——— */}
-        <section className="relative pt-16">
+        <section className="passport-page passport-content-page relative">
           <div
             aria-hidden="true"
             className="guilloche pointer-events-none absolute -right-40 top-8 -z-10 size-[26rem] text-stamp opacity-[0.07]"
@@ -365,7 +381,7 @@ export default function App() {
         </section>
 
         {/* ——— Page 02 · the cast ——— */}
-        <section className="pt-16">
+        <section className="passport-page passport-content-page">
           <SectionTitle no="02">The cast</SectionTitle>
           <div className="mt-7 grid gap-5 sm:grid-cols-2">
             {CAST.map((site) => (
@@ -402,7 +418,7 @@ export default function App() {
         </section>
 
         {/* ——— Page 03 · the tour ——— */}
-        <section className="pt-16">
+        <section className="passport-page passport-content-page">
           <SectionTitle no="03">The tour</SectionTitle>
           <div className="mt-7 rounded-3xl border border-line bg-surface p-7">
             <p className="text-[15px] leading-relaxed text-ink-dim">
@@ -443,7 +459,7 @@ export default function App() {
         </section>
 
         {/* ——— Page 04 · the writeup ——— */}
-        <section className="pt-16">
+        <section className="passport-page passport-content-page">
           <SectionTitle no="04">The writeup</SectionTitle>
           <a
             href="/writeup/"
@@ -481,20 +497,6 @@ export default function App() {
       </main>
 
       <GuidedDemoBanner startHref={startHref} />
-
-      <footer className="border-t border-line py-8">
-        <p className="mx-auto max-w-3xl px-5 text-center text-[11.5px] leading-relaxed text-muted">
-          VeryGoodWallet is a portfolio demonstration by Tomislav Markovski.
-          The State of Utopia, its DMV, The Nightcap, and Utopia Wheels are
-          fictional; the cryptography is not. Source on{" "}
-          <a
-            href="https://github.com/tmarkovski/verygoodwallet"
-            className="text-ink-dim underline decoration-stamp/60 underline-offset-2 hover:decoration-stamp"
-          >
-            GitHub
-          </a>.
-        </p>
-      </footer>
-    </>
+    </div>
   );
 }
