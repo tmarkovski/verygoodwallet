@@ -4,7 +4,8 @@
 
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
-import { useSession } from "../session";
+import { WalletCreatedError, useSession } from "../session";
+import type { AccountRecord } from "../services/db";
 import { passkeysAvailable } from "../services/webauthn";
 import { Button, ErrorNote, describeError } from "../components/ui";
 
@@ -31,11 +32,15 @@ function Step({
 }
 
 export function Welcome() {
-  const { accounts, createWallet } = useSession();
+  const { accounts, createWallet, login } = useSession();
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when the passkey/account were created but the automatic sign-in was
+  // rejected (macOS can refuse a `get()` fired while the creation sheet is
+  // still dismissing). The click on "Sign in" retries with fresh activation.
+  const [created, setCreated] = useState<AccountRecord | null>(null);
 
   const available = passkeysAvailable();
   const hasAccounts = accounts !== null && accounts.length > 0;
@@ -48,6 +53,24 @@ export function Welcome() {
     setError(null);
     try {
       await createWallet(trimmed);
+      await navigate("/");
+    } catch (err) {
+      if (err instanceof WalletCreatedError) {
+        setCreated(err.account);
+      } else {
+        setError(describeError(err));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onSignIn = async () => {
+    if (created === null || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await login(created);
       await navigate("/");
     } catch (err) {
       setError(describeError(err));
@@ -96,6 +119,26 @@ export function Welcome() {
       </section>
 
       <section className="mx-auto max-w-sm">
+        {created !== null ? (
+          <div className="rounded-3xl border border-line bg-surface p-6 shadow-lg">
+            <h2 className="text-center text-sm font-semibold">
+              Your wallet was created
+            </h2>
+            <p className="mt-2 text-center text-[13px] leading-relaxed text-ink-dim">
+              The passkey for <span className="font-medium text-ink">{created.name}</span>{" "}
+              is saved. Sign in with it to unlock your wallet.
+            </p>
+            <Button
+              type="button"
+              busy={busy}
+              onClick={() => void onSignIn()}
+              className="mt-4 w-full"
+            >
+              {busy ? "Waiting for your passkey…" : "Sign in"}
+            </Button>
+            {error !== null && <div className="mt-3"><ErrorNote>{error}</ErrorNote></div>}
+          </div>
+        ) : (
         <form
           onSubmit={(e) => void onSubmit(e)}
           className="rounded-3xl border border-line bg-surface p-6 shadow-lg"
@@ -133,6 +176,7 @@ export function Welcome() {
             PRF output is only released during authentication.
           </p>
         </form>
+        )}
 
         {hasAccounts && (
           <p className="mt-4 text-center text-sm text-ink-dim">

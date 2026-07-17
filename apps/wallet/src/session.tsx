@@ -81,6 +81,26 @@ export interface SessionValue {
 
 const SessionContext = createContext<SessionValue | null>(null);
 
+/**
+ * Thrown by `createWallet` when the passkey and account were created but the
+ * follow-up authentication failed. This happens when the browser rejects a
+ * `credentials.get()` fired while the creation sheet is still tearing down
+ * (seen on macOS without Touch ID), or because the `create()` call consumed
+ * the transient user activation. The wallet exists and is usable — callers
+ * should offer a click-driven `login(account)` instead of reporting failure.
+ */
+export class WalletCreatedError extends Error {
+  readonly account: AccountRecord;
+
+  constructor(account: AccountRecord, cause: unknown) {
+    super("The wallet was created, but automatic sign-in was interrupted.", {
+      cause,
+    });
+    this.name = "WalletCreatedError";
+    this.account = account;
+  }
+}
+
 interface UnlockedState {
   account: AccountRecord;
   masterSecret: Uint8Array;
@@ -160,7 +180,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       });
       await refreshAccounts();
       // PRF is only evaluated during `get()`, so unlocking prompts once more.
-      await unlock(account);
+      try {
+        await unlock(account);
+      } catch (err) {
+        inspect.emit({
+          label: "Auto sign-in after creation failed",
+          data: {
+            account: account.name,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
+        throw new WalletCreatedError(account, err);
+      }
     },
     [refreshAccounts, unlock],
   );
