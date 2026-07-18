@@ -424,9 +424,24 @@ export function AgeGate({
               <div className="text-center text-[13px] text-muted sm:px-2">or</div>
               <a
                 href={link}
-                className="rounded-2xl bg-accent px-6 py-3 text-[15px] font-semibold text-accent-contrast transition-opacity hover:opacity-90"
+                className="inline-flex items-center gap-2 rounded-2xl bg-accent px-6 py-3 text-[15px] font-semibold text-accent-contrast transition-opacity hover:opacity-90"
               >
-                Open VeryGoodWallet here
+                Continue in VeryGoodWallet
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M7 17L17 7M9 7h8v8"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
               </a>
             </>
           )}

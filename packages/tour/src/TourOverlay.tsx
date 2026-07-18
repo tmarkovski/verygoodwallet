@@ -428,6 +428,7 @@ function TourCard({ stop, origins }: { stop: TourStop; origins: TourOrigins }) {
       ref={cardRef}
       role="complementary"
       aria-label="Guided tour"
+      className={href !== null ? "vgw-tour-card-actionable" : undefined}
       style={cardStyle}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

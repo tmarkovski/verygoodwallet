@@ -21,3 +21,88 @@
   src: url("@fontsource-variable/source-serif-4/files/source-serif-4-latin-opsz-italic.woff2")
     format("woff2-variations");
 }
+
+/*
+ * When the narrator offers a cross-site CTA, make the whole pane the visual
+ * prompt. A bright foil highlight travels around its perimeter while the
+ * outer glow breathes; the button itself stays quiet and readable.
+ */
+@property --vgw-tour-foil-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.vgw-tour-card-actionable {
+  animation: vgw-tour-card-glow 2.4s ease-in-out infinite;
+}
+
+.vgw-tour-card-actionable::before {
+  position: absolute;
+  inset: -2px;
+  border-radius: 16px;
+  padding: 3px;
+  pointer-events: none;
+  content: "";
+  background: conic-gradient(
+    from var(--vgw-tour-foil-angle),
+    rgba(201, 168, 106, 0.55) 0deg,
+    #ffe9a6 38deg,
+    #fff8dc 62deg,
+    #c9a86a 92deg,
+    rgba(141, 118, 196, 0.65) 145deg,
+    rgba(201, 168, 106, 0.45) 210deg,
+    #f6d77d 282deg,
+    rgba(141, 118, 196, 0.7) 330deg,
+    rgba(201, 168, 106, 0.55) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: vgw-tour-card-foil 3s linear infinite;
+}
+
+@keyframes vgw-tour-card-foil {
+  to {
+    --vgw-tour-foil-angle: 1turn;
+  }
+}
+
+@keyframes vgw-tour-card-glow {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 3px #1c2742,
+      inset 0 0 0 4px rgba(201, 168, 106, 0.72),
+      0 12px 40px rgba(0, 0, 0, 0.45),
+      0 0 0 1px rgba(255, 233, 166, 0.7),
+      0 0 18px 3px rgba(201, 168, 106, 0.42);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 3px #1c2742,
+      inset 0 0 0 4px rgba(255, 233, 166, 0.95),
+      0 14px 44px rgba(0, 0, 0, 0.5),
+      0 0 0 2px rgba(255, 248, 220, 0.92),
+      0 0 30px 8px rgba(201, 168, 106, 0.68),
+      0 0 48px 12px rgba(141, 118, 196, 0.28);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vgw-tour-card-actionable {
+    box-shadow:
+      inset 0 0 0 3px #1c2742,
+      inset 0 0 0 4px rgba(255, 233, 166, 0.9),
+      0 12px 40px rgba(0, 0, 0, 0.45),
+      0 0 0 2px rgba(255, 248, 220, 0.82),
+      0 0 24px 6px rgba(201, 168, 106, 0.52) !important;
+    animation: none;
+  }
+
+  .vgw-tour-card-actionable::before {
+    animation: none;
+  }
+}

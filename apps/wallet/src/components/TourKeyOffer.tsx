@@ -39,20 +39,22 @@ export function TourKeyOffer() {
           Tour convenience
         </p>
         <h2 id="tour-key-title" className="mt-2 text-base font-semibold">
-          Skip the repeat passkey prompts?
+          Skip repeated passkey prompts?
         </h2>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-dim">
-          Every stop on the tour reloads the wallet, which locks it and asks
-          for your passkey again. For the next {minutes} minutes, this demo
-          can keep your key in this tab so the tour flows uninterrupted.
+          Each tour stop reloads and locks the wallet. For the next {minutes}
+          minutes, this tab can retain the key so you can continue without
+          unlocking at every stop.
         </p>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-dim">
-          To be honest: a production wallet would never store key material
-          this way — it lives in memory only. The stashed key is dropped when
-          the tour ends, when you lock the wallet, or when the timer runs
-          out.
+          Demo only: a production wallet shouldn’t retain key material this
+          way. The key is cleared when the tour ends, you lock the wallet, or
+          the timer expires.
         </p>
-        <div className="mt-4 flex gap-2">
+        <p className="mt-4 text-center text-[11px] text-ink-dim">
+          Expires in {minutes} min · Passkey required afterward
+        </p>
+        <div className="mt-2 flex gap-2">
           <Button className="flex-1" onClick={keepUnlockedForTour}>
             Keep me unlocked
           </Button>
