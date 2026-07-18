@@ -4,7 +4,13 @@
  * stamped visa page instead — the only place the whole journey exists.
  */
 
-import { useEffect, useMemo, type CSSProperties } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  type AnimationEvent,
+  type CSSProperties,
+} from "react";
 import { TOUR_STOPS, exitTour, tourCtaHref } from "@vgw/tour";
 import { SITE_ORIGINS, TOUR_ORIGINS } from "./origins";
 
@@ -201,9 +207,33 @@ const STAMPS: { name: string; line: string; ink: string; tilt: string }[] = [
 
 function StampedPage() {
   const startHref = tourStartHref();
+  const page = useRef<HTMLDivElement>(null);
+
+  // Each stamp-slam's end is the moment of impact (the settle animation takes
+  // over from there) — shudder the whole page under it, iMessage-slam style.
+  // Animation events bubble, so one listener on the card hears all four.
+  const shudder = (event: AnimationEvent<HTMLDivElement>) => {
+    if (event.animationName !== "stamp-slam" || page.current === null) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    page.current.animate(
+      [
+        { transform: "translate(0, 0)" },
+        { transform: "translate(1px, 3px)" },
+        { transform: "translate(-1.5px, -1.5px)" },
+        { transform: "translate(1px, 1.5px)" },
+        { transform: "translate(0, 0)" },
+      ],
+      { duration: 220, easing: "ease-out" },
+    );
+  };
+
   return (
     <main className="mx-auto max-w-3xl px-5 py-14 animate-rise">
-      <div className="relative overflow-hidden rounded-3xl border border-line-strong bg-surface p-8 sm:p-12">
+      <div
+        ref={page}
+        onAnimationEnd={shudder}
+        className="relative overflow-hidden rounded-3xl border border-line-strong bg-surface p-8 sm:p-12"
+      >
         <div
           aria-hidden="true"
           className="guilloche pointer-events-none absolute -right-24 -top-24 size-96 text-stamp opacity-[0.1]"
