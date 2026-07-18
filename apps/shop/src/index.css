@@ -35,6 +35,11 @@
   /* OPEN-sign neon green — reserved for the verified moment. */
   --nc-ok: #46d69a;
   --nc-ok-soft: rgb(70 214 154 / 0.12);
+  --json-code-key: var(--nc-ink);
+  --json-code-string: var(--nc-ok);
+  --json-code-literal: var(--nc-accent);
+  --json-code-null: var(--nc-muted);
+  --json-code-punctuation: var(--nc-ink-dim);
 }
 
 @theme {

@@ -119,7 +119,7 @@ export function OfferResult({
       )}
 
       {/* Same collapsible-inspector idiom as the verifiers' raw-JSON exhibits. */}
-      <details className="group mt-5 rounded-xl border border-line bg-canvas text-left">
+      <details className="vgw-json-frame group mt-5 rounded-xl border border-line bg-canvas text-left">
         <summary className="cursor-pointer px-3 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-muted group-open:border-b group-open:border-line">
           Raw credential offer
         </summary>

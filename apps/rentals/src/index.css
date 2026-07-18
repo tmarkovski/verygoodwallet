@@ -41,6 +41,11 @@
   /* Lane-stripe yellow: chips and rules only. Ink on it clears 8:1. */
   --uw-stripe: #f2b705;
   --uw-stripe-soft: rgb(242 183 5 / 0.18);
+  --json-code-key: var(--uw-ink);
+  --json-code-string: var(--uw-accent);
+  --json-code-literal: var(--uw-danger);
+  --json-code-null: var(--uw-muted);
+  --json-code-punctuation: var(--uw-ink-dim);
 }
 
 @theme {

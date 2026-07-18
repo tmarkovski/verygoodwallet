@@ -36,6 +36,11 @@
   --dmv-authority-soft: rgb(49 88 107 / 0.11);
   --dmv-ok: #2d6b55;
   --dmv-ok-soft: rgb(45 107 85 / 0.1);
+  --json-code-key: var(--dmv-ink);
+  --json-code-string: var(--dmv-ok);
+  --json-code-literal: var(--dmv-accent);
+  --json-code-null: var(--dmv-muted);
+  --json-code-punctuation: var(--dmv-ink-dim);
 }
 
 @theme {

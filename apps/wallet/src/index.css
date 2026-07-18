@@ -44,6 +44,11 @@
   /* Engraver's gold — authority marks only. */
   --vgw-gold: #c9a86a;
   --vgw-gold-soft: rgb(201 168 106 / 0.14);
+  --json-code-key: var(--vgw-ink);
+  --json-code-string: var(--vgw-ok);
+  --json-code-literal: var(--vgw-accent);
+  --json-code-null: var(--vgw-muted);
+  --json-code-punctuation: var(--vgw-ink-dim);
 }
 
 /*

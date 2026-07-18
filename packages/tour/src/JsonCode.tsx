@@ -26,26 +26,32 @@ function highlightedJson(value: unknown): ReactNode[] {
     const [, quoted, colon, number, literal] = match;
     if (quoted !== undefined) {
       nodes.push(
-        <span key={key++} className={colon === undefined ? "text-ok" : "text-ink"}>
+        <span
+          key={key++}
+          className={colon === undefined ? "vgw-json-string" : "vgw-json-key"}
+        >
           {quoted}
         </span>,
       );
       if (colon !== undefined) {
         nodes.push(
-          <span key={key++} className="text-muted">
+          <span key={key++} className="vgw-json-punctuation">
             {colon}
           </span>,
         );
       }
     } else if (number !== undefined) {
       nodes.push(
-        <span key={key++} className="text-accent">
+        <span key={key++} className="vgw-json-literal">
           {number}
         </span>,
       );
     } else {
       nodes.push(
-        <span key={key++} className={literal === "null" ? "text-muted" : "text-accent"}>
+        <span
+          key={key++}
+          className={literal === "null" ? "vgw-json-null" : "vgw-json-literal"}
+        >
           {literal}
         </span>,
       );
@@ -67,9 +73,7 @@ export function JsonCode({
   className?: string;
 }) {
   return (
-    <pre
-      className={`overflow-auto whitespace-pre font-mono text-[11px] leading-relaxed text-ink-dim ${className}`}
-    >
+    <pre className={`vgw-json-code ${className}`}>
       {highlightedJson(value)}
     </pre>
   );

@@ -65,7 +65,7 @@ export function EventLog() {
               <span className="text-xs text-ink">{event.label}</span>
             </div>
             {event.data !== undefined && (
-              <details className="mt-1">
+              <details className="vgw-json-frame mt-1">
                 <summary className="cursor-pointer select-none text-[11px] text-muted hover:text-ink-dim">
                   data
                 </summary>

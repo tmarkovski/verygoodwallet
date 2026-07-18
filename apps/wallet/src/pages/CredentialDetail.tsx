@@ -336,7 +336,7 @@ export function CredentialDetail() {
       {vc !== null && showRaw && (
         <section className="mt-8 animate-fade">
           <SectionTitle>Credential JSON</SectionTitle>
-          <div className="mt-3 rounded-3xl border border-line bg-surface p-5">
+          <div className="vgw-json-frame mt-3 rounded-3xl border border-line bg-surface p-5">
             <p className="text-[11px] leading-relaxed text-muted">
               Decrypted verifiable credential (base proof — holder-only material).
             </p>
