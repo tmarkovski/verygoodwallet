@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { decryptJson, deriveLinkSecret, scalarFromBase64Url } from "@vgw/keys";
+import { JsonCode } from "@vgw/tour";
 import { verifyIssuedCredkitCredential, type VerifiableCredential } from "@vgw/vc-kit";
 import { useSession } from "../session";
 import {
@@ -21,7 +22,6 @@ import { inspect } from "../inspector/events";
 import { cardFace } from "../services/meta";
 import { CredentialCard } from "../components/CredentialCard";
 import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
-import { JsonTree } from "../inspector/JsonTree";
 
 const DL_CLAIM_LABELS: [key: string, label: string][] = [
   ["given_name", "Given name"],
@@ -330,16 +330,18 @@ export function CredentialDetail() {
             </div>
           )}
 
-          {showRaw && (
-            <div className="mt-4 animate-fade rounded-2xl border border-line bg-surface p-4">
-              <p className="mb-2 text-[11px] text-muted">
-                Decrypted verifiable credential (base proof — holder-only material).
-              </p>
-              <div className="max-h-96 overflow-y-auto rounded-xl bg-canvas p-3">
-                <JsonTree value={vc} defaultOpen={false} />
-              </div>
-            </div>
-          )}
+        </section>
+      )}
+
+      {vc !== null && showRaw && (
+        <section className="mt-8 animate-fade">
+          <SectionTitle>Credential JSON</SectionTitle>
+          <div className="mt-3 rounded-3xl border border-line bg-surface p-5">
+            <p className="text-[11px] leading-relaxed text-muted">
+              Decrypted verifiable credential (base proof — holder-only material).
+            </p>
+            <JsonCode value={vc} className="mt-3 max-h-96" />
+          </div>
         </section>
       )}
     </div>

@@ -23,3 +23,4 @@ export {
 } from "./state";
 export { TourOverlay, useTourStop } from "./TourOverlay";
 export { useAutoReveal } from "./useAutoReveal";
+export { JsonCode } from "./JsonCode";

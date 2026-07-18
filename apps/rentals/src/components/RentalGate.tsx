@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { walletPresentLinkByReference, type PresentationRequest } from "@vgw/protocols";
-import { nextTourStop, useAutoReveal, useTourStop, withTourParam } from "@vgw/tour";
+import { JsonCode, nextTourStop, useAutoReveal, useTourStop, withTourParam } from "@vgw/tour";
 import { clientWalletOrigin } from "../walletOrigin";
 
 /** Mirrors the Worker's VerificationFlow (wire contract, not import). */
@@ -171,9 +171,7 @@ function Inspector({ title, data }: { title: string; data: unknown }) {
       <summary className="cursor-pointer px-3 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-muted group-open:border-b group-open:border-line">
         {title}
       </summary>
-      <pre className="max-h-72 overflow-auto p-3 font-mono text-[11px] leading-relaxed text-ink-dim">
-        {JSON.stringify(data, null, 2)}
-      </pre>
+      <JsonCode value={data} className="max-h-72 p-3" />
     </details>
   );
 }

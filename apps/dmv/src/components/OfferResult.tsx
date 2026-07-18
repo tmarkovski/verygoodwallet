@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import type { CredentialOffer } from "@vgw/protocols";
-import { useAutoReveal } from "@vgw/tour";
+import { JsonCode, useAutoReveal } from "@vgw/tour";
 
 export interface OfferResultProps {
   credentialOffer: CredentialOffer;
@@ -133,9 +133,7 @@ export function OfferResult({
           <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
             credential_offer
           </p>
-          <pre className="mt-1 overflow-x-auto font-mono text-[11px] leading-relaxed text-ink-dim">
-            {JSON.stringify(credentialOffer, null, 2)}
-          </pre>
+          <JsonCode value={credentialOffer} className="mt-1" />
         </div>
       </details>
     </section>

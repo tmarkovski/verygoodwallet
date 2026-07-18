@@ -4,8 +4,8 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { JsonCode } from "@vgw/tour";
 import { inspect } from "./events";
-import { JsonTree } from "./JsonTree";
 
 /**
  * Proof operations get a restrained gold tick — key derivation, sealing,
@@ -70,7 +70,7 @@ export function EventLog() {
                   data
                 </summary>
                 <div className="mt-1">
-                  <JsonTree value={event.data} />
+                  <JsonCode value={event.data} className="max-h-72" />
                 </div>
               </details>
             )}
