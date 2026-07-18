@@ -329,7 +329,20 @@ disclosed: nothing`}</code>
           <a href="https://tmarkovski.github.io/credkit/">
             draft specification
           </a>{" "}
-          documents the construction. It is research work, not a standard.
+          documents the construction. It is research work, not a standard —
+          though it is written to line up with where the CFRG is heading: the
+          proofs use the same commit/challenge/response phases and the same
+          disciplined transcript that the research group's emerging{" "}
+          <a href="https://datatracker.ietf.org/doc/draft-irtf-cfrg-sigma-protocols/">
+            sigma-protocols
+          </a>{" "}
+          and{" "}
+          <a href="https://datatracker.ietf.org/doc/draft-irtf-cfrg-fiat-shamir/">
+            Fiat–Shamir
+          </a>{" "}
+          drafts standardize. What those drafts don't yet cover — composing
+          several statements under one challenge — is exactly the gap the
+          credkit draft documents.
         </p>
 
         <h2>What this demo doesn't claim</h2>
