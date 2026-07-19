@@ -6,7 +6,7 @@
  * key. Pure module — no DOM, unit-tested in Node.
  */
 
-import type { VerifiableCredential } from "@vgw/vc-kit";
+import { credentialRevocationStatus, type VerifiableCredential } from "@vgw/vc-kit";
 
 export interface CredentialMeta {
   /** Display name, e.g. "Utopia Driver's License". */
@@ -75,6 +75,11 @@ export interface CardFaceField {
 export interface CardFace {
   holder?: string;
   fields: CardFaceField[];
+  /**
+   * Whether the credential is enrolled in its issuer's revocation registry
+   * — shown as security microprint on the card face.
+   */
+  revocable: boolean;
 }
 
 const asString = (value: unknown): string | undefined =>
@@ -97,6 +102,7 @@ export function cardFace(vc: VerifiableCredential): CardFace | null {
   const subject = vc.credentialSubject;
   if (subject === undefined || Array.isArray(subject)) return null;
   const bag = subject as Record<string, unknown>;
+  const revocable = credentialRevocationStatus(vc) !== undefined;
 
   // Utopia DL: the claims live under the driversLicense node (snake_case).
   const dl = bag["driversLicense"];
@@ -108,7 +114,9 @@ export function cardFace(vc: VerifiableCredential): CardFace | null {
     const expires = monthYear(claims["expiry_date"]);
     if (expires !== undefined) fields.push({ label: "Expires", value: expires });
     const holder = holderLine(claims["given_name"], claims["family_name"]);
-    return holder !== undefined || fields.length > 0 ? { holder, fields } : null;
+    return holder !== undefined || fields.length > 0
+      ? { holder, fields, revocable }
+      : null;
   }
 
   // Utopia Resident Registration: flat subject typed ['Person','UtopiaResident'].
@@ -120,7 +128,9 @@ export function cardFace(vc: VerifiableCredential): CardFace | null {
     const postal = asString(bag["postalCode"]);
     if (postal !== undefined) fields.push({ label: "Postal", value: postal });
     const holder = holderLine(bag["givenName"], bag["familyName"]);
-    return holder !== undefined || fields.length > 0 ? { holder, fields } : null;
+    return holder !== undefined || fields.length > 0
+      ? { holder, fields, revocable }
+      : null;
   }
 
   return null;

@@ -13,6 +13,10 @@ export default defineConfig({
       "@credkit/range",
       "@credkit/proofs",
       "@credkit/cryptosuite",
+      // Missing an entry here is not a perf detail: a prebundled @credkit
+      // package gets its own inlined @noble/curves, and cross-instance
+      // point ops throw — every pairing check quietly returns false in dev.
+      "@credkit/accumulator",
     ],
     // CJS deps under the excluded packages still need prebundling — served
     // raw, `import jsonld from "jsonld"` has no default export and module

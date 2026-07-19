@@ -94,7 +94,7 @@ function formatClaim(key: string, value: unknown): string {
 
 /** What the live revocation check learned (absent for pre-revocation credentials). */
 type RevocationOutcome =
-  | { status: "active"; epoch: number; ms: number }
+  | { status: "active"; epoch: number; ms: number; witnessUpdated: boolean }
   | { status: "revoked"; epoch: number }
   | { status: "unavailable"; detail: string };
 
@@ -267,7 +267,7 @@ export function CredentialDetail() {
           ms,
         },
       });
-      return { status: "active", epoch: state.epoch, ms };
+      return { status: "active", epoch: state.epoch, ms, witnessUpdated: refreshed.changed };
     } catch (err) {
       return { status: "unavailable", detail: describeError(err) };
     }
@@ -352,6 +352,54 @@ export function CredentialDetail() {
           meta={record.meta}
           face={payload !== null ? cardFace(payload.vc) : undefined}
         />
+
+        {/* At-a-glance properties: binding is structural (every credential
+            here is blind-issued onto this wallet's link secret); the
+            revocation chip tracks the stored witness epoch, which Verify
+            and presentations fast-forward from the registry's records. */}
+        {payload !== null && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1 text-[11px] text-ink-dim"
+              title="Blind-issued onto this wallet's link secret — no other wallet can present it, and Verify below proves it."
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M10 13.5a4.5 4.5 0 0 0 6.75.45l2-2a4.5 4.5 0 0 0-6.36-6.36l-1.14 1.13"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M14 10.5a4.5 4.5 0 0 0-6.75-.45l-2 2a4.5 4.5 0 0 0 6.36 6.36l1.13-1.13"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Bound to this wallet
+            </span>
+            {revocable && payload.revocation !== undefined && (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1 text-[11px] text-ink-dim"
+                title="Enrolled in the issuer's revocation registry. The wallet holds a membership witness and syncs it with the registry's published updates before every presentation and on Verify."
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="2.2" fill="currentColor" />
+                  <path
+                    d="M7.05 7.05a7 7 0 0 0 0 9.9M16.95 7.05a7 7 0 0 1 0 9.9"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                Revocable · witness at epoch {payload.revocation.epoch}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {decryptError !== null && (
@@ -478,7 +526,11 @@ export function CredentialDetail() {
                   }`}
                 >
                   {outcome.revocation.status === "active" &&
-                    `Not revoked — the membership witness verifies against the registry's current accumulator (epoch ${outcome.revocation.epoch}, checked live in ${outcome.revocation.ms} ms). The registry never learned which credential asked.`}
+                    `Not revoked — the membership witness verifies against the registry's current accumulator (epoch ${outcome.revocation.epoch}, checked live in ${outcome.revocation.ms} ms). ${
+                      outcome.revocation.witnessUpdated
+                        ? "The stored witness was behind, so it was fast-forwarded through the registry's published update records and saved."
+                        : "The stored witness was already current with the registry."
+                    } The registry never learned which credential asked.`}
                   {outcome.revocation.status === "revoked" &&
                     `The issuer's registry revoked this credential at epoch ${outcome.revocation.epoch}: its hidden id was removed from the accumulator, so no valid witness exists and every presentation demanding a non-revocation proof will fail. The signature above is still authentic — the credential is real, just no longer honored.`}
                   {outcome.revocation.status === "unavailable" &&

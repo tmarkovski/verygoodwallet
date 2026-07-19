@@ -21,7 +21,7 @@ export default defineConfig({
     // @credkit/* is TS source (.js specifiers); dev prebundling runs its own
     // esbuild without the resolver plugin, so serve it through the plugin
     // pipeline instead.
-    exclude: ["@credkit/bbs", "@credkit/range", "@credkit/proofs", "@credkit/cryptosuite"],
+    exclude: ["@credkit/bbs", "@credkit/range", "@credkit/proofs", "@credkit/cryptosuite", "@credkit/accumulator"],
   },
   server: {
     port: 5174,

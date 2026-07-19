@@ -21,7 +21,7 @@ export default defineConfig({
   optimizeDeps: {
     // @credkit/* is TS source (.js specifiers) served through the resolver
     // plugin pipeline, which dev prebundling would bypass.
-    exclude: ["@credkit/bbs", "@credkit/range", "@credkit/proofs", "@credkit/cryptosuite"],
+    exclude: ["@credkit/bbs", "@credkit/range", "@credkit/proofs", "@credkit/cryptosuite", "@credkit/accumulator"],
   },
   server: {
     port: 5175,

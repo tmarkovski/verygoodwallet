@@ -113,7 +113,21 @@ describe("cardFace", () => {
         { label: "No.", value: "UDL-3F7K-9Q2M" },
         { label: "Expires", value: "07/2031" },
       ],
+      revocable: false,
     });
+  });
+
+  it("marks the face revocable when the VC carries a revocation status entry", () => {
+    const vc: VerifiableCredential = {
+      ...BASE_VC,
+      credentialStatus: {
+        type: "VgwRevocationRegistryEntry",
+        revocationRegistry: "https://dmv.example/api/registry",
+        revocationId: "12345",
+      },
+      credentialSubject: { driversLicense: { given_name: "Avery" } },
+    } as VerifiableCredential;
+    expect(cardFace(vc)?.revocable).toBe(true);
   });
 
   it("builds the resident face: holder, district, postal code", () => {
@@ -135,6 +149,7 @@ describe("cardFace", () => {
         { label: "District", value: "Port Azure" },
         { label: "Postal", value: "40125" },
       ],
+      revocable: false,
     });
   });
 
@@ -143,7 +158,7 @@ describe("cardFace", () => {
       ...BASE_VC,
       credentialSubject: { driversLicense: { given_name: "Avery" } },
     };
-    expect(cardFace(vc)).toEqual({ holder: "AVERY", fields: [] });
+    expect(cardFace(vc)).toEqual({ holder: "AVERY", fields: [], revocable: false });
   });
 
   it("returns null for unknown subject shapes", () => {

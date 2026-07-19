@@ -75,13 +75,22 @@ export function CredentialCard({
             </>
           )}
         </div>
-        <div className="mt-3 flex items-end justify-between">
-          <span className="rounded-full bg-[#ece7d3]/10 px-2.5 py-1 text-[11px] font-medium text-[#ece7d3]/85 backdrop-blur-sm">
+        <div className="mt-3 flex items-end justify-between gap-3">
+          <span className="shrink-0 rounded-full bg-[#ece7d3]/10 px-2.5 py-1 text-[11px] font-medium text-[#ece7d3]/85 backdrop-blur-sm">
             {kindLabel(meta.kind)}
           </span>
-          <span className="font-mono text-[10px] tracking-[0.2em] text-[#ece7d3]/45">
-            credkit-bbs
-          </span>
+          <div className="flex min-w-0 flex-col items-end gap-0.5 text-right">
+            {/* Security microprint — like the fine print on a physical card,
+                readable only once the wallet is unlocked (face data). */}
+            {face != null && (
+              <p className="truncate font-mono text-[9px] tracking-[0.18em] text-[#c9a86a]/75">
+                HOLDER-BOUND{face.revocable ? " · REVOCABLE" : ""}
+              </p>
+            )}
+            <span className="font-mono text-[10px] tracking-[0.2em] text-[#ece7d3]/45">
+              credkit-bbs
+            </span>
+          </div>
         </div>
       </div>
     </div>
