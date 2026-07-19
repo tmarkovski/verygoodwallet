@@ -146,3 +146,18 @@ body {
     animation: none;
   }
 }
+
+/*
+ * iOS Safari zooms the whole page when a focused form control's font-size
+ * is under 16px. Bump controls to 16px on iOS only — -webkit-touch-callout
+ * exists solely in iOS WebKit, so this never touches desktop or Android —
+ * instead of capping the viewport's maximum-scale, which would disable
+ * pinch-zoom for Android users.
+ */
+@supports (-webkit-touch-callout: none) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
