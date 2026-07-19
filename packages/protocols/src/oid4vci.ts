@@ -75,6 +75,13 @@ export interface IssuerMetadata {
    * would formalize (planned follow-up; this field is its stand-in).
    */
   vgw_issuer_did?: string;
+  /**
+   * VGW extension: the URL of this issuer's revocation registry — the public
+   * accumulator state document verifiers fetch to restate non-revocation
+   * claims and wallets fetch to keep witnesses current. Discovered over the
+   * same TLS origin (and with the same trust level) as `vgw_issuer_did`.
+   */
+  vgw_revocation_registry?: string;
 }
 
 /**
@@ -125,6 +132,21 @@ export interface CredentialRequest {
  */
 export interface CredentialResponse {
   credentials: { credential: Record<string, unknown> }[];
+  /**
+   * VGW extension: the credential's revocation sidecar. The WITNESS is
+   * holder state, not credential state — it mutates every revocation epoch
+   * and is deliberately not part of the signed document, so it travels
+   * beside the credential and lives in the wallet's vault next to it.
+   * `registry`/`params`/`accumulator`/`epoch` echo the registry state the
+   * witness was issued against (base64url points; decimal-free strings).
+   */
+  vgw_revocation?: {
+    registry: string;
+    params: string;
+    accumulator: string;
+    epoch: number;
+    witness: string;
+  };
 }
 
 /** OAuth-style error body returned by the token and credential endpoints. */

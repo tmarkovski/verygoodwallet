@@ -39,7 +39,9 @@ import {
 } from "@vgw/protocols";
 import {
   createHolderBinding,
+  credentialRevocationStatus,
   verifyIssuedCredkitCredential,
+  verifyRevocationWitness,
   type HolderBinding,
   type VerifiableCredential,
 } from "@vgw/vc-kit";
@@ -48,6 +50,7 @@ import {
   addCredential,
   type CredentialPayload,
   type CredentialRecord,
+  type CredentialRevocationState,
 } from "./db";
 import { issuerDid, metaFromCredential } from "./meta";
 
@@ -62,6 +65,7 @@ export const ISSUANCE_STEPS = [
   { id: "creating-proof", label: "Committing to the link secret & proving possession" },
   { id: "requesting-credential", label: "Requesting the blind-signed credential" },
   { id: "verifying", label: "Verifying the issuer's blind signature" },
+  { id: "checking-status", label: "Checking the revocation witness" },
   { id: "storing", label: "Encrypting into the vault" },
 ] as const;
 
@@ -329,15 +333,24 @@ async function runAcceptCredentialOffer(
   step("verifying");
   await verifyReceivedCredential(vc, holder.did, binding);
 
-  // 7. Store the versioned v3 envelope. The blind goes INSIDE the encrypted
+  // 6b. The revocation sidecar: a revocable credential (one carrying a
+  // credentialStatus) MUST arrive with a witness that verifies against the
+  // registry state it names — a credential whose witness can't be
+  // maintained would fail every future presentation, so it never enters
+  // the vault. Non-revocable credentials skip through.
+  step("checking-status");
+  const revocation = extractRevocationState(vc, response);
+
+  // 7. Store the versioned v4 envelope. The blind goes INSIDE the encrypted
   // envelope, scalar-encoded (it is a bigint; JSON.stringify would throw) —
   // it is random per issuance and NOT re-derivable: losing it bricks the
   // credential. The link secret is deliberately not stored (PRF-derived).
   step("storing");
   const envelope: CredentialPayload = {
-    version: 3,
+    version: 4,
     vc,
     secretProverBlind: scalarToBase64Url(binding.secretProverBlind),
+    ...(revocation !== undefined ? { revocation } : {}),
   };
   const payload = await encryptJson(opts.vaultKey, envelope);
   inspect.emit({
@@ -562,6 +575,75 @@ async function verifyReceivedCredential(
       "The issuer's blind signature did not verify against this wallet's link secret — refusing to store the credential",
     );
   }
+}
+
+/**
+ * The witness sidecar for a revocable credential, validated fail-closed:
+ * the sidecar must exist when the credential carries a credentialStatus,
+ * name the SAME registry the signed credential names, and its witness must
+ * pass the pairing check against the registry state it claims. Returns
+ * undefined only for a genuinely non-revocable credential.
+ */
+function extractRevocationState(
+  vc: VerifiableCredential,
+  response: CredentialResponse,
+): CredentialRevocationState | undefined {
+  const status = credentialRevocationStatus(vc);
+  const sidecar = response.vgw_revocation;
+  if (status === undefined) {
+    if (sidecar !== undefined) {
+      throw new Error(
+        "The issuer sent a revocation witness for a credential that declares no credentialStatus — refusing to store it",
+      );
+    }
+    return undefined;
+  }
+  if (
+    sidecar === undefined ||
+    typeof sidecar.registry !== "string" ||
+    typeof sidecar.params !== "string" ||
+    typeof sidecar.accumulator !== "string" ||
+    typeof sidecar.witness !== "string" ||
+    typeof sidecar.epoch !== "number" ||
+    !Number.isSafeInteger(sidecar.epoch) ||
+    sidecar.epoch < 0
+  ) {
+    throw new Error(
+      "The credential is revocable but the issuer sent no usable vgw_revocation witness sidecar — without one every future presentation would fail",
+    );
+  }
+  if (sidecar.registry !== status.registry) {
+    throw new Error(
+      `The witness sidecar names registry "${sidecar.registry}" but the signed credential names "${status.registry}" — refusing to store it`,
+    );
+  }
+  const witnessOk = verifyRevocationWitness({
+    params: sidecar.params,
+    accumulator: sidecar.accumulator,
+    revocationId: status.revocationId,
+    witness: sidecar.witness,
+  });
+  inspect.emit({
+    label: "Revocation witness verified",
+    data: {
+      verified: witnessOk,
+      registry: sidecar.registry,
+      epoch: sidecar.epoch,
+      scheme: "VB accumulator membership (pairing check)",
+    },
+  });
+  if (!witnessOk) {
+    throw new Error(
+      "The issuer's revocation witness did not verify against the registry state it claims — refusing to store the credential",
+    );
+  }
+  return {
+    registry: sidecar.registry,
+    params: sidecar.params,
+    witness: sidecar.witness,
+    accumulator: sidecar.accumulator,
+    epoch: sidecar.epoch,
+  };
 }
 
 // ---------------------------------------------------------------------------

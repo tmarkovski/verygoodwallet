@@ -16,6 +16,7 @@ import {
   UTOPIA_DISTRICTS,
   UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
   UTOPIA_RESIDENT_V1_CONTEXT_URL,
+  VGW_CONTEXT_URL,
   buildUtopiaResidentRegistration,
   createCredkitPresentation,
   createHolderBinding,
@@ -123,11 +124,12 @@ beforeAll(async () => {
 describe('buildUtopiaResidentRegistration', () => {
   const credential = unsignedResident();
 
-  it('produces a VC 2.0 credential over v2 + citizenship v3 + resident v1', () => {
+  it('produces a VC 2.0 credential over v2 + citizenship v3 + resident v1 + vgw', () => {
     expect(credential['@context']).toEqual([
       CREDENTIALS_V2_CONTEXT_URL,
       CITIZENSHIP_V3_CONTEXT_URL,
       UTOPIA_RESIDENT_V1_CONTEXT_URL,
+      VGW_CONTEXT_URL,
     ]);
     expect(credential.type).toEqual([
       'VerifiableCredential',
@@ -283,6 +285,7 @@ describe('showcase B at the facade level: stateFips set membership', () => {
     expect(summarizeCredkitPresentation(vp)).toEqual({
       rangeClaims: 0,
       membershipClaims: 1,
+      nonRevocationClaims: 0,
       equalities: 0,
     });
 
@@ -384,6 +387,7 @@ describe('two-sided postalCode range (ZIP-in-block, two claims over one pointer)
     expect(summarizeCredkitPresentation(vp)).toEqual({
       rangeClaims: 2,
       membershipClaims: 0,
+      nonRevocationClaims: 0,
       equalities: 0,
     });
 

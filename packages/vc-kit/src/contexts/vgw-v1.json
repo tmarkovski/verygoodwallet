@@ -1,5 +1,14 @@
 {
   "@context": {
-    "@protected": true
+    "@protected": true,
+    "VgwRevocationRegistryEntry": "https://verygoodwallet.com/vocab#VgwRevocationRegistryEntry",
+    "revocationRegistry": {
+      "@id": "https://verygoodwallet.com/vocab#revocationRegistry",
+      "@type": "@id"
+    },
+    "revocationId": {
+      "@id": "https://verygoodwallet.com/vocab#revocationId",
+      "@type": "http://www.w3.org/2001/XMLSchema#integer"
+    }
   }
 }

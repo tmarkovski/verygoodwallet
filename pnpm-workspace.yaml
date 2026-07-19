@@ -9,7 +9,8 @@ packages:
 # use internally, which pnpm leaves unconverted in git-dep tarballs — to the
 # pinned git spec before resolution. Bump the sha here and nowhere else.
 overrides:
-  "@credkit/bbs": "github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/bbs"
-  "@credkit/range": "github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/range"
-  "@credkit/proofs": "github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/proofs"
-  "@credkit/cryptosuite": "github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/cryptosuite"
+  "@credkit/bbs": "github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/bbs"
+  "@credkit/accumulator": "github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/accumulator"
+  "@credkit/range": "github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/range"
+  "@credkit/proofs": "github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/proofs"
+  "@credkit/cryptosuite": "github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/cryptosuite"

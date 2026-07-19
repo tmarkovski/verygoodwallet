@@ -42,13 +42,19 @@ import {
   type TokenResponse,
 } from "@vgw/protocols";
 import {
+  REVOCATION_CLAIM_POINTER,
   createCredkitPresentation,
   createHolderBinding,
+  credentialRevocationStatus,
+  parseRevocationRegistryState,
   rangeParamsFromBase64Url,
   rangeParamsHashBase64Url,
+  refreshRevocationWitness,
   setParamsFromBase64Url,
   setParamsHashBase64Url,
   verifyIssuedCredkitCredential,
+  verifyRevocationWitness,
+  type CredkitNonRevocationProveInput,
   type GraphEquality,
   type MembershipClaimRequest,
   type RangeClaimRequest,
@@ -185,6 +191,38 @@ interface IssuedCredential {
   vc: VerifiableCredential;
   /** scalar-encoded blind, exactly as the vault stores it. */
   secretProverBlind: string;
+  /** The revocation coordinates + witness sidecar, as the vault stores them. */
+  revocationId: string;
+  registry: string;
+  witness: string;
+  epoch: number;
+}
+
+/**
+ * The wallet's witness upkeep over real HTTP: fetch the LIVE registry the
+ * credential names, refresh the witness from the published records, and
+ * build the prove input. Throws on a revoked credential.
+ */
+async function freshClaim(issued: IssuedCredential): Promise<CredkitNonRevocationProveInput> {
+  const state = parseRevocationRegistryState(await json(await fetch(issued.registry)));
+  const refreshed = refreshRevocationWitness({
+    revocationId: issued.revocationId,
+    witness: issued.witness,
+    epoch: issued.epoch,
+    state,
+  });
+  if (refreshed.revoked) {
+    throw new Error(`credential revoked at registry epoch ${state.epoch}`);
+  }
+  issued.witness = refreshed.witness;
+  issued.epoch = refreshed.epoch;
+  return {
+    pointer: REVOCATION_CLAIM_POINTER,
+    params: state.params,
+    accumulator: state.accumulator,
+    epoch: state.epoch,
+    witness: refreshed.witness,
+  };
 }
 
 /**
@@ -251,7 +289,30 @@ async function issueCredential(offerInput: Record<string, unknown>): Promise<Iss
     }),
   ).toBe(true);
 
-  return { vc, secretProverBlind: scalarToBase64Url(binding.secretProverBlind) };
+  // The revocation sidecar rides beside the LIVE credential (both kinds) and
+  // its witness must verify against the registry state it claims.
+  const status = credentialRevocationStatus(vc);
+  expect(status).toBeDefined();
+  const sidecar = credentialResponse.vgw_revocation;
+  expect(sidecar).toBeDefined();
+  expect(sidecar!.registry).toBe(status!.registry);
+  expect(
+    verifyRevocationWitness({
+      params: sidecar!.params,
+      accumulator: sidecar!.accumulator,
+      revocationId: status!.revocationId,
+      witness: sidecar!.witness,
+    }),
+  ).toBe(true);
+
+  return {
+    vc,
+    secretProverBlind: scalarToBase64Url(binding.secretProverBlind),
+    revocationId: status!.revocationId,
+    registry: status!.registry,
+    witness: sidecar!.witness,
+    epoch: sidecar!.epoch,
+  };
 }
 
 /** The wallet's params pinning: fetch, validate, hash-check, decode. */
@@ -337,6 +398,7 @@ async function presentResidentRate(options: {
         verifiableCredential: options.dl.vc,
         selectivePointers: [],
         rangeClaims: options.rangeClaims,
+        nonRevocationClaims: [await freshClaim(options.dl)],
         holderBinding: {
           linkSecret: await deriveLinkSecret(MASTER_SECRET),
           secretProverBlind: scalarFromBase64Url(options.dl.secretProverBlind),
@@ -346,6 +408,7 @@ async function presentResidentRate(options: {
         verifiableCredential: options.resident.vc,
         selectivePointers: [],
         membershipClaims: options.membershipClaims,
+        nonRevocationClaims: [await freshClaim(options.resident)],
         holderBinding: {
           linkSecret: await deriveLinkSecret(MASTER_SECRET),
           secretProverBlind: scalarFromBase64Url(options.resident.secretProverBlind),
@@ -380,6 +443,7 @@ async function present(
         verifiableCredential: issued.vc,
         selectivePointers: options.pointers ?? [],
         ...(options.rangeClaims !== undefined ? { rangeClaims: options.rangeClaims } : {}),
+        nonRevocationClaims: [await freshClaim(issued)],
         holderBinding: {
           linkSecret: await deriveLinkSecret(MASTER_SECRET),
           secretProverBlind: scalarFromBase64Url(issued.secretProverBlind),
@@ -600,9 +664,13 @@ describe.skipIf(!E2E)("live end-to-end (built DMV + rentals Workers under worker
     const status = await json<SessionStatus>(await fetch(session.status_url));
     expect(status).toMatchObject({ status: "verified", verdict: "allowed" });
     const outcome = status as SessionOutcome;
-    // "Same person, no name": the counter learned NOTHING beyond three proofs.
-    expect(outcome.disclosed).toEqual({});
+    // "Same person, no name": the counter learned NOTHING beyond the proofs
+    // — the only disclosed entry is the revocation narration (bits, not
+    // claim values).
+    expect(Object.keys(outcome.disclosed)).toEqual(["revocation_status"]);
+    expect(outcome.disclosed["revocation_status"]).toMatch(/not revoked/);
     expect(outcome.reason).toMatch(/Three facts, zero disclosures/);
+    expect(outcome.reason).toMatch(/NOT REVOKED/);
     expect(outcome.composite?.statements).toBe(2);
     expect(outcome.composite?.membership?.[0]?.members).toEqual(["11", "12", "13"]);
     expect(outcome.composite?.equalities).toEqual([

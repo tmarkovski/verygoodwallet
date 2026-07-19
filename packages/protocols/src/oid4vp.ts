@@ -142,6 +142,16 @@ export interface DcqlCredentialQuery {
   claim_sets?: string[][];
   /** See {@link DcqlPredicates}. */
   vgw_predicates?: DcqlPredicates;
+  /**
+   * VGW extension: demand a NON-REVOCATION proof for this query's
+   * credential — the wallet refreshes its accumulator witness against the
+   * issuer's registry and folds a membership claim into the presentation;
+   * the verifier restates the same registry state from its own fetch. The
+   * verifier learns one bit ("not revoked as of the current epoch"), never
+   * the credential's revocation id. A credential without a witness (issued
+   * before revocation support) cannot answer and must be reissued.
+   */
+  vgw_non_revocation?: true;
 }
 
 export interface DcqlQuery {
@@ -459,6 +469,12 @@ export function assertDcqlQuery(value: unknown): DcqlQuery {
     const predicates = entry["vgw_predicates"];
     if (predicates !== undefined) {
       assertDcqlPredicates(predicates, id, claimIds);
+    }
+    const nonRevocation = entry["vgw_non_revocation"];
+    if (nonRevocation !== undefined && nonRevocation !== true) {
+      throw new Error(
+        `Credential query "${id}" has a malformed vgw_non_revocation (only \`true\` is valid)`,
+      );
     }
     const claimSets = entry["claim_sets"];
     if (claimSets !== undefined) {

@@ -126,6 +126,10 @@ export function buildAgeDcqlQuery(options: {
           // mandatory pointers — the shop needs one bit, not a name.
           claim_set: [],
         },
+        // Every route must also prove the license is NOT REVOKED — checked
+        // against the DMV registry's state at verification time. One more
+        // bit; still no correlation handle (the registry entry stays hidden).
+        vgw_non_revocation: true,
       },
     ],
   };

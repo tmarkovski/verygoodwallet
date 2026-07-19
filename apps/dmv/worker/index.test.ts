@@ -29,12 +29,18 @@ import {
 } from "@vgw/protocols";
 import {
   createHolderBinding,
+  credentialRevocationStatus,
+  parseRevocationRegistryState,
+  refreshRevocationWitness,
   verifyIssuedCredkitCredential,
+  verifyRevocationWitness,
   type HolderBinding,
+  type RevocationRegistryState,
   type VerifiableCredential,
 } from "@vgw/vc-kit";
 import app, { type OfferResponseBody } from "./index.js";
-import type { DmvBindings } from "./env.js";
+import type { DmvBindings, DurableObjectNamespaceLike } from "./env.js";
+import { RevocationRegistry, type RegistryCredentialRow } from "./registry.js";
 import type { OfferCodePayload } from "./tokens.js";
 
 async function readOfferPayload(offer: CredentialOffer): Promise<OfferCodePayload> {
@@ -44,9 +50,48 @@ async function readOfferPayload(offer: CredentialOffer): Promise<OfferCodePayloa
   });
 }
 
+/** In-memory namespace running the REAL RevocationRegistry class. */
+function memoryRegistryNamespace(): DurableObjectNamespaceLike {
+  const instances = new Map<string, RevocationRegistry>();
+  return {
+    idFromName: (name: string) => ({ name }),
+    get: (id) => {
+      const name = (id as { name: string }).name;
+      let instance = instances.get(name);
+      if (instance === undefined) {
+        const data = new Map<string, unknown>();
+        instance = new RevocationRegistry({
+          storage: {
+            get: <T>(key: string) => Promise.resolve(data.get(key) as T | undefined),
+            put: (key: string, value: unknown) => {
+              data.set(key, value);
+              return Promise.resolve();
+            },
+            // Real DO storage lists in key order — the registry's zero-padded
+            // update keys depend on it, so the stub must sort too.
+            list: <T>(options: { prefix: string }) => {
+              const entries = [...data.entries()]
+                .filter(([key]) => key.startsWith(options.prefix))
+                .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+              return Promise.resolve(new Map(entries) as Map<string, T>);
+            },
+          },
+        });
+        instances.set(name, instance);
+      }
+      const bound = instance;
+      return {
+        fetch: (input: string | Request, init?: RequestInit) =>
+          bound.fetch(new Request(input, init)),
+      };
+    },
+  };
+}
+
 const TEST_ENV: DmvBindings = {
   ISSUER_SEED: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   TOKEN_SECRET: "test-token-secret",
+  REGISTRY: memoryRegistryNamespace(),
 };
 
 /** `app.request` resolves bare paths against http://localhost. */
@@ -774,6 +819,176 @@ describe("POST /oid4vci/credential", () => {
       authorization: `Bearer ${token.access_token}`,
     });
     await expectOauthError(res, 400, "invalid_proof");
+  });
+});
+
+describe("revocation registry", () => {
+  // Isolated registry so epoch arithmetic is deterministic regardless of
+  // what the other suites issued against the shared TEST_ENV instance.
+  const env: DmvBindings = { ...TEST_ENV, REGISTRY: memoryRegistryNamespace() };
+
+  interface Issued {
+    vc: VerifiableCredential;
+    revocationId: string;
+    sidecar: NonNullable<CredentialResponse["vgw_revocation"]>;
+  }
+
+  async function issueLicense(givenName: string): Promise<Issued> {
+    const { credential_offer } = await createOffer({ ...SUBJECT, givenName });
+    const token = await exchangeForToken(preAuthorizedCode(credential_offer));
+    const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const res = await postJson(
+      "/oid4vci/credential",
+      {
+        credential_configuration_id: CREDENTIAL_CONFIGURATION_ID,
+        proof: {
+          proof_type: "jwt",
+          jwt: createProofJwt({
+            seed: HOLDER_SEED,
+            audience: TEST_ISSUER_ORIGIN,
+            nonce: token.c_nonce,
+            commitmentDigest: await commitmentDigest(binding.commitmentWithProof),
+          }),
+        },
+        vgw_holder_commitment: toBase64Url(binding.commitmentWithProof),
+      },
+      { authorization: `Bearer ${token.access_token}` },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CredentialResponse;
+    const vc = body.credentials[0]?.credential as unknown as VerifiableCredential;
+    const sidecar = body.vgw_revocation;
+    if (sidecar === undefined) throw new Error("expected a vgw_revocation sidecar");
+    const status = credentialRevocationStatus(vc);
+    if (status === undefined) throw new Error("expected a credentialStatus");
+    return { vc, revocationId: status.revocationId, sidecar };
+  }
+
+  async function registryState(): Promise<RevocationRegistryState> {
+    const res = await app.request("/api/registry", {}, env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    return parseRevocationRegistryState(await res.json());
+  }
+
+  let alice: Issued;
+  let bob: Issued;
+
+  it("issues revocable credentials: hidden-id status + a witness sidecar that verifies", async () => {
+    alice = await issueLicense("Alice");
+    bob = await issueLicense("Bob");
+
+    // The credential names the registry and carries the id lexical; the
+    // sidecar echoes the registry state the witness was issued against.
+    expect(credentialRevocationStatus(alice.vc)?.registry).toBe(
+      `${TEST_ISSUER_ORIGIN}/api/registry`,
+    );
+    expect(alice.sidecar.registry).toBe(`${TEST_ISSUER_ORIGIN}/api/registry`);
+    expect(alice.sidecar.epoch).toBe(0);
+    expect(alice.revocationId).not.toBe(bob.revocationId);
+
+    for (const issued of [alice, bob]) {
+      expect(
+        verifyRevocationWitness({
+          params: issued.sidecar.params,
+          accumulator: issued.sidecar.accumulator,
+          revocationId: issued.revocationId,
+          witness: issued.sidecar.witness,
+        }),
+      ).toBe(true);
+    }
+  }, 60_000);
+
+  it("serves the public state document and advertises it in issuer metadata", async () => {
+    const state = await registryState();
+    expect(state.epoch).toBe(0);
+    expect(state.updates).toEqual([]);
+    expect(state.params).toBe(alice.sidecar.params);
+    expect(state.accumulator).toBe(alice.sidecar.accumulator);
+
+    const res = await app.request("/.well-known/openid-credential-issuer", {}, env);
+    const metadata = (await res.json()) as IssuerMetadata;
+    expect(metadata.vgw_revocation_registry).toBe(`${TEST_ISSUER_ORIGIN}/api/registry`);
+  });
+
+  it("lists issued credentials for the admin page", async () => {
+    const res = await app.request("/api/registry/credentials", {}, env);
+    expect(res.status).toBe(200);
+    const { credentials } = (await res.json()) as { credentials: RegistryCredentialRow[] };
+    expect(credentials).toHaveLength(2);
+    expect(credentials.map((row) => row.kind)).toEqual(["license", "license"]);
+    expect(credentials.every((row) => row.revokedAtEpoch === undefined)).toBe(true);
+    expect(credentials.some((row) => row.label.startsWith("Alice"))).toBe(true);
+  });
+
+  it("revokes Bob: epoch bumps, Alice's refreshed witness survives, Bob's is terminal", async () => {
+    const res = await postJson(
+      "/api/registry/revoke",
+      { revocationIds: [bob.revocationId] },
+      {},
+      env,
+    );
+    expect(res.status).toBe(200);
+    const applied = (await res.json()) as { epoch: number };
+    expect(applied.epoch).toBe(1);
+
+    const state = await registryState();
+    expect(state.epoch).toBe(1);
+    expect(state.updates).toHaveLength(1);
+    expect(state.accumulator).not.toBe(alice.sidecar.accumulator);
+
+    // Alice syncs from PUBLISHED data only and keeps verifying.
+    const refreshed = refreshRevocationWitness({
+      revocationId: alice.revocationId,
+      witness: alice.sidecar.witness,
+      epoch: 0,
+      state,
+    });
+    if (refreshed.revoked) throw new Error("Alice must not be revoked");
+    expect(refreshed.changed).toBe(true);
+    expect(
+      verifyRevocationWitness({
+        params: state.params,
+        accumulator: state.accumulator,
+        revocationId: alice.revocationId,
+        witness: refreshed.witness,
+      }),
+    ).toBe(true);
+
+    // Bob's refresh IS the revocation discovery.
+    expect(
+      refreshRevocationWitness({
+        revocationId: bob.revocationId,
+        witness: bob.sidecar.witness,
+        epoch: 0,
+        state,
+      }),
+    ).toEqual({ revoked: true });
+
+    // The admin list reflects it.
+    const listRes = await app.request("/api/registry/credentials", {}, env);
+    const { credentials } = (await listRes.json()) as { credentials: RegistryCredentialRow[] };
+    const bobRow = credentials.find((row) => row.revocationId === bob.revocationId);
+    expect(bobRow?.revokedAtEpoch).toBe(1);
+  }, 30_000);
+
+  it("rejects unknown ids and double revocation", async () => {
+    const unknown = await postJson("/api/registry/revoke", { revocationIds: ["12345"] }, {}, env);
+    const unknownError = await expectOauthError(unknown, 400, "invalid_request");
+    expect(unknownError.error_description).toContain("unknown revocation id");
+
+    const again = await postJson(
+      "/api/registry/revoke",
+      { revocationIds: [bob.revocationId] },
+      {},
+      env,
+    );
+    const againError = await expectOauthError(again, 400, "invalid_request");
+    expect(againError.error_description).toContain("already revoked at epoch 1");
+
+    const empty = await postJson("/api/registry/revoke", { revocationIds: [] }, {}, env);
+    await expectOauthError(empty, 400, "invalid_request");
   });
 });
 

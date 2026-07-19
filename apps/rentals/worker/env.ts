@@ -12,6 +12,8 @@
  * app compiles against. Only the surface actually used is declared.
  */
 
+import { parseRevocationRegistryState, type RevocationRegistryState } from "@vgw/vc-kit";
+
 /** Opaque Durable Object id (never inspected, only passed back to get()). */
 export type DurableObjectIdLike = object;
 
@@ -41,6 +43,8 @@ export interface RentalsBindings {
   DMV_ORIGIN?: string;
   /** Pin the trusted issuer DID directly (skips metadata discovery). */
   TRUSTED_ISSUER_DID?: string;
+  /** Pin the DMV revocation registry URL (defaults to the DMV origin's /api/registry). */
+  REVOCATION_REGISTRY_URL?: string;
   SESSIONS: DurableObjectNamespaceLike;
 }
 
@@ -191,4 +195,58 @@ async function discoverIssuerDid(
 /** Test hook: clear the discovery cache between cases. */
 export function clearIssuerDidCache(): void {
   issuerDidByOrigin.clear();
+}
+
+/**
+ * Where the DMV publishes its revocation registry state. `/api/registry` on
+ * the DMV origin by convention (also advertised as `vgw_revocation_registry`
+ * in the issuer metadata); the var pins it for deployments whose DMV origin
+ * differs from the registry host.
+ */
+export function revocationRegistryUrl(env: RentalsBindings): string {
+  const configured = env.REVOCATION_REGISTRY_URL;
+  if (configured !== undefined && configured !== "") {
+    try {
+      new URL(configured);
+      return configured;
+    } catch {
+      throw new Error(
+        `REVOCATION_REGISTRY_URL must be an absolute URL, got: ${configured}`,
+      );
+    }
+  }
+  return `${resolveDmvOrigin(env)}/api/registry`;
+}
+
+/**
+ * Fetch + validate the registry's CURRENT state — per verification,
+ * deliberately uncached: the whole point of the check is freshness, and the
+ * state the verifier restates into `expectedNonRevocationClaims` is what a
+ * just-revoked credential must fail against. Same trust model as the issuer
+ * DID discovery: the DMV's TLS origin. Throws on anything malformed —
+ * "registry unavailable" is never "not revoked".
+ */
+export async function fetchRevocationRegistryState(
+  env: RentalsBindings,
+  fetchImpl: typeof fetch = fetch,
+): Promise<RevocationRegistryState> {
+  const url = revocationRegistryUrl(env);
+  let response: Response;
+  try {
+    response = await fetchImpl(url, { headers: { accept: "application/json" } });
+  } catch (cause) {
+    throw new Error(`Could not reach the revocation registry at ${url}`, { cause });
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Revocation registry request to ${url} failed with HTTP ${response.status}`,
+    );
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (cause) {
+    throw new Error(`Revocation registry state at ${url} is not valid JSON`, { cause });
+  }
+  return parseRevocationRegistryState(body);
 }

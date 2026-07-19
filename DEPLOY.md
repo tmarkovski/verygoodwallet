@@ -171,7 +171,20 @@ openssl rand -hex 32 | pnpm exec wrangler secret put TOKEN_SECRET
 ```
 
 Note: rotating `ISSUER_SEED` changes the issuer DID, invalidating previously
-issued credentials for verifiers pinned to the old DID.
+issued credentials for verifiers pinned to the old DID — and it also rotates
+the revocation registry's trapdoor and seeded initial accumulator (both
+derive from the same seed under their own DSTs), orphaning every issued
+witness.
+
+The DMV also carries the `RevocationRegistry` **Durable Object**
+(SQLite-backed, Workers Free plan): one instance holding the accumulator
+value, epoch counter, published update log, and the issued-credential rows
+the "Records & revocation" desk lists. The first deploy runs the `v1`
+migration from `wrangler.jsonc` automatically. The registry's public state
+serves at `GET /api/registry` (advertised as `vgw_revocation_registry` in the
+issuer metadata); verifiers fetch it at verification time, so the DMV origin
+must be reachable from the verifier Workers (custom domains — see the
+worker-to-worker caveat below).
 
 ### Wallet origin
 

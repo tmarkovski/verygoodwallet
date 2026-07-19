@@ -5,10 +5,11 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@credkit/bbs': github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/bbs
-  '@credkit/range': github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/range
-  '@credkit/proofs': github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/proofs
-  '@credkit/cryptosuite': github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/cryptosuite
+  '@credkit/bbs': github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/bbs
+  '@credkit/accumulator': github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/accumulator
+  '@credkit/range': github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/range
+  '@credkit/proofs': github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/proofs
+  '@credkit/cryptosuite': github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/cryptosuite
 
 importers:
 
@@ -301,8 +302,8 @@ importers:
   packages/keys:
     dependencies:
       '@credkit/bbs':
-        specifier: github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/bbs
-        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs
+        specifier: github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/bbs
+        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/bbs
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -357,15 +358,18 @@ importers:
 
   packages/vc-kit:
     dependencies:
+      '@credkit/accumulator':
+        specifier: github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/accumulator
+        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/accumulator
       '@credkit/bbs':
-        specifier: github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/bbs
-        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs
+        specifier: github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/bbs
+        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/bbs
       '@credkit/cryptosuite':
-        specifier: github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/cryptosuite
-        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/cryptosuite
+        specifier: github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/cryptosuite
+        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/cryptosuite
       '@credkit/range':
-        specifier: github:tmarkovski/credkit#8fdb3cfb320f7bafe261a67c7364f3cf142665e2&path:/packages/range
-        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/range
+        specifier: github:tmarkovski/credkit#a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b&path:/packages/range
+        version: https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/range
       '@scure/base':
         specifier: ^2.2.0
         version: 2.2.0
@@ -432,23 +436,28 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@credkit/bbs@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs':
-    resolution: {path: /packages/bbs, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2}
+  '@credkit/accumulator@https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/accumulator':
+    resolution: {path: /packages/accumulator, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b}
     version: 0.1.0
     engines: {node: '>=20'}
 
-  '@credkit/cryptosuite@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/cryptosuite':
-    resolution: {path: /packages/cryptosuite, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2}
+  '@credkit/bbs@https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/bbs':
+    resolution: {path: /packages/bbs, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b}
     version: 0.1.0
     engines: {node: '>=20'}
 
-  '@credkit/proofs@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/proofs':
-    resolution: {path: /packages/proofs, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2}
+  '@credkit/cryptosuite@https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/cryptosuite':
+    resolution: {path: /packages/cryptosuite, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b}
     version: 0.1.0
     engines: {node: '>=20'}
 
-  '@credkit/range@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/range':
-    resolution: {path: /packages/range, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2}
+  '@credkit/proofs@https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/proofs':
+    resolution: {path: /packages/proofs, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b}
+    version: 0.1.0
+    engines: {node: '>=20'}
+
+  '@credkit/range@https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/range':
+    resolution: {path: /packages/range, tarball: https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b}
     version: 0.1.0
     engines: {node: '>=20'}
 
@@ -1667,28 +1676,35 @@ snapshots:
   '@cloudflare/workerd-windows-64@1.20260708.1':
     optional: true
 
-  '@credkit/bbs@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs':
+  '@credkit/accumulator@https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/accumulator':
+    dependencies:
+      '@credkit/bbs': https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/bbs
+      '@noble/curves': 2.2.0
+
+  '@credkit/bbs@https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/bbs':
     dependencies:
       '@noble/curves': 2.2.0
       '@noble/hashes': 2.2.0
 
-  '@credkit/cryptosuite@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/cryptosuite':
+  '@credkit/cryptosuite@https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/cryptosuite':
     dependencies:
-      '@credkit/bbs': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs
-      '@credkit/proofs': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/proofs
-      '@credkit/range': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/range
+      '@credkit/accumulator': https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/accumulator
+      '@credkit/bbs': https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/bbs
+      '@credkit/proofs': https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/proofs
+      '@credkit/range': https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/range
       '@digitalbazaar/di-sd-primitives': 3.3.0
       '@noble/hashes': 2.2.0
       jsonld: 9.0.0
 
-  '@credkit/proofs@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/proofs':
+  '@credkit/proofs@https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/proofs':
     dependencies:
-      '@credkit/bbs': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs
-      '@credkit/range': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/range
+      '@credkit/accumulator': https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/accumulator
+      '@credkit/bbs': https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/bbs
+      '@credkit/range': https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/range
 
-  '@credkit/range@https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/range':
+  '@credkit/range@https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/range':
     dependencies:
-      '@credkit/bbs': https://codeload.github.com/tmarkovski/credkit/tar.gz/8fdb3cfb320f7bafe261a67c7364f3cf142665e2#path:/packages/bbs
+      '@credkit/bbs': https://codeload.github.com/tmarkovski/credkit/tar.gz/a7c4f6503f220fed0caf6417b4b3cd51bbd54e1b#path:/packages/bbs
       '@noble/curves': 2.2.0
 
   '@cspotcode/source-map-support@0.8.1':

@@ -316,7 +316,7 @@ describe("acceptCredentialOffer", () => {
     vi.unstubAllGlobals();
   });
 
-  it("runs the full blind-issuance flow and stores the v3 envelope", async () => {
+  it("runs the full blind-issuance flow and stores the v4 envelope", async () => {
     const issuer = makeFakeIssuer({
       origin: "https://dmv.utopia.example",
       seed: new Uint8Array(32).fill(1),
@@ -354,7 +354,7 @@ describe("acceptCredentialOffer", () => {
     // envelope: the credential plus the scalar-encoded blind, nothing else —
     // the link secret is PRF-derived and never stored.
     const envelope = await decryptJson<CredentialPayload>(vaultKey, record.payload);
-    expect(envelope.version).toBe(3);
+    expect(envelope.version).toBe(4);
     expect("commitmentOpening" in envelope).toBe(false);
     expect("linkSecret" in envelope).toBe(false);
     const blind = scalarFromBase64Url(envelope.secretProverBlind);
@@ -421,7 +421,7 @@ describe("acceptCredentialOffer", () => {
     // Same v3 envelope discipline; the receipt check passed en route (the
     // flow throws otherwise) and re-passes from only what survives.
     const envelope = await decryptJson<CredentialPayload>(vaultKey, record.payload);
-    expect(envelope.version).toBe(3);
+    expect(envelope.version).toBe(4);
     const subject = envelope.vc.credentialSubject as Record<string, unknown>;
     expect(subject["id"]).toBeUndefined();
     expect(subject["type"]).toEqual(["Person", "UtopiaResident"]);

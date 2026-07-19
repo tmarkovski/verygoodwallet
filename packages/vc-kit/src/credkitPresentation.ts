@@ -50,6 +50,12 @@ import {
 import { g2FromBytes, type G2Point } from '@credkit/bbs';
 import { credkitDocumentLoader } from './credkit.js';
 import { bbsPublicKeyFromDidKey } from './keys.js';
+import {
+  decodeExpectedNonRevocationClaim,
+  decodeNonRevocationProveInput,
+  type CredkitExpectedNonRevocationClaim,
+  type CredkitNonRevocationProveInput,
+} from './credkitRevocation.js';
 import type { VerifiableCredential, VerifiablePresentation } from './types.js';
 
 /** One credential's share of a presentation (see {@link createCredkitPresentation}). */
@@ -75,6 +81,15 @@ export interface CredkitPresentationCredential {
    * range claims: a non-member value makes the prover THROW.
    */
   membershipClaims?: readonly MembershipClaimRequest[];
+  /**
+   * Non-revocation claims over the credential's declared `frScalar` twin
+   * (its hidden revocation id), in the order the verifier restates them —
+   * VGW credentials carry at most one. The witness must be CURRENT: refresh
+   * it against the registry (`refreshRevocationWitness`) before presenting;
+   * a stale witness makes the proof fail at the verifier, and a revoked id
+   * fails the refresh itself — the prover never emits a false proof.
+   */
+  nonRevocationClaims?: readonly CredkitNonRevocationProveInput[];
   /**
    * The holder's link secret + this credential's `secretProverBlind` —
    * REQUIRED for holder-bound credentials (every VGW v3 credential is).
@@ -110,6 +125,9 @@ export async function createCredkitPresentation(
       ...(input.membershipClaims !== undefined
         ? { membershipClaims: input.membershipClaims }
         : {}),
+      ...(input.nonRevocationClaims !== undefined
+        ? { nonRevocationClaims: input.nonRevocationClaims.map(decodeNonRevocationProveInput) }
+        : {}),
       ...(input.holderBinding !== undefined ? { holderBinding: input.holderBinding } : {}),
     })),
     ...(options.equalities !== undefined ? { equalities: options.equalities } : {}),
@@ -139,6 +157,14 @@ export interface VerifyCredkitPresentationOptions {
    */
   expectedRangeClaims?: readonly ExpectedRangeClaim[];
   expectedMembershipClaims?: readonly ExpectedMembershipClaim[];
+  /**
+   * The non-revocation claims this verifier demanded, restated from its OWN
+   * registry fetch (params, accumulator value, epoch) — matched positionally
+   * per statement. Defaults to [] — an undemanded non-revocation claim
+   * fails, never passes silently; and a demanded one a presentation lacks
+   * fails the same way.
+   */
+  expectedNonRevocationClaims?: readonly CredkitExpectedNonRevocationClaim[];
   /** Defaults to [] — an undemanded equality fails, never passes silently. */
   expectedEqualities?: readonly GraphEquality[];
   /** Verification time for the validity-period check; defaults to now. */
@@ -187,6 +213,21 @@ export async function verifyCredkitPresentation(
     }
   }
 
+  // 1b. The verifier's restated registry state → typed points. Malformed
+  // state is a verifier-side problem (bad fetch, bad config): fail closed
+  // with the decode error rather than verifying against nothing.
+  let expectedNonRevocationClaims;
+  try {
+    expectedNonRevocationClaims = (options.expectedNonRevocationClaims ?? []).map(
+      decodeExpectedNonRevocationClaim,
+    );
+  } catch (error) {
+    return {
+      verified: false,
+      error: `Expected non-revocation claim did not decode: ${toMessage(error)}`,
+    };
+  }
+
   // 2. The cryptography, with the claim lists restated from verifier policy.
   // verifyGraph never throws — failures come back as { verified, reason }.
   const result = await verifyGraph({
@@ -196,6 +237,7 @@ export async function verifyCredkitPresentation(
     ...(options.domain !== undefined ? { domain: options.domain } : {}),
     expectedRangeClaims: options.expectedRangeClaims ?? [],
     expectedMembershipClaims: options.expectedMembershipClaims ?? [],
+    expectedNonRevocationClaims,
     expectedEqualities: options.expectedEqualities ?? [],
     documentLoader: credkitDocumentLoader,
   });
@@ -297,6 +339,7 @@ function checkValidityPeriod(
 export interface CredkitPresentationSummary {
   rangeClaims: number;
   membershipClaims: number;
+  nonRevocationClaims: number;
   equalities: number;
 }
 
@@ -322,6 +365,7 @@ export function summarizeCredkitPresentation(
   return {
     rangeClaims: envelope.rangeClaims.length,
     membershipClaims: envelope.membershipClaims.length,
+    nonRevocationClaims: envelope.accumulatorClaims.length,
     equalities: envelope.equalities.length,
   };
 }

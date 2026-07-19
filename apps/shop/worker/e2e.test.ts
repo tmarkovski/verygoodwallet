@@ -38,11 +38,17 @@ import {
   type TokenResponse,
 } from "@vgw/protocols";
 import {
+  REVOCATION_CLAIM_POINTER,
   createCredkitPresentation,
   createHolderBinding,
+  credentialRevocationStatus,
+  parseRevocationRegistryState,
   rangeParamsFromBase64Url,
   rangeParamsHashBase64Url,
+  refreshRevocationWitness,
   verifyIssuedCredkitCredential,
+  verifyRevocationWitness,
+  type CredkitNonRevocationProveInput,
   type RangeClaimRequest,
   type RangeParams,
   type VerifiableCredential,
@@ -171,6 +177,39 @@ interface IssuedCredential {
   vc: VerifiableCredential;
   /** scalar-encoded blind, exactly as the vault stores it. */
   secretProverBlind: string;
+  /** The revocation coordinates + witness sidecar, as the vault stores them. */
+  revocationId: string;
+  registry: string;
+  witness: string;
+  epoch: number;
+}
+
+/**
+ * The wallet's witness upkeep over real HTTP: fetch the LIVE registry the
+ * credential names, refresh the witness from the published records, and
+ * build the prove input. Throws on a revoked credential — that discovery is
+ * the honest wallet's stop.
+ */
+async function freshClaim(issued: IssuedCredential): Promise<CredkitNonRevocationProveInput> {
+  const state = parseRevocationRegistryState(await json(await fetch(issued.registry)));
+  const refreshed = refreshRevocationWitness({
+    revocationId: issued.revocationId,
+    witness: issued.witness,
+    epoch: issued.epoch,
+    state,
+  });
+  if (refreshed.revoked) {
+    throw new Error(`credential revoked at registry epoch ${state.epoch}`);
+  }
+  issued.witness = refreshed.witness;
+  issued.epoch = refreshed.epoch;
+  return {
+    pointer: REVOCATION_CLAIM_POINTER,
+    params: state.params,
+    accumulator: state.accumulator,
+    epoch: state.epoch,
+    witness: refreshed.witness,
+  };
 }
 
 /** The wallet's N2 issuance flow (binding + digest-PoP + receipt check). */
@@ -238,7 +277,31 @@ async function issueCredential(persona: {
     }),
   ).toBe(true);
 
-  return { vc, secretProverBlind: scalarToBase64Url(binding.secretProverBlind) };
+  // The revocation sidecar rides beside the LIVE credential and its witness
+  // must verify against the registry state it claims — same gate the wallet
+  // runs before storing.
+  const status = credentialRevocationStatus(vc);
+  expect(status).toBeDefined();
+  const sidecar = credentialResponse.vgw_revocation;
+  expect(sidecar).toBeDefined();
+  expect(sidecar!.registry).toBe(status!.registry);
+  expect(
+    verifyRevocationWitness({
+      params: sidecar!.params,
+      accumulator: sidecar!.accumulator,
+      revocationId: status!.revocationId,
+      witness: sidecar!.witness,
+    }),
+  ).toBe(true);
+
+  return {
+    vc,
+    secretProverBlind: scalarToBase64Url(binding.secretProverBlind),
+    revocationId: status!.revocationId,
+    registry: status!.registry,
+    witness: sidecar!.witness,
+    epoch: sidecar!.epoch,
+  };
 }
 
 /** The wallet's params pinning: fetch, validate, hash-check, decode. */
@@ -281,14 +344,21 @@ function rangeClaimsFor(
 async function present(
   issued: IssuedCredential,
   session: VerificationSessionBody,
-  options: { pointers?: string[]; rangeClaims?: RangeClaimRequest[] },
+  options: {
+    pointers?: string[];
+    rangeClaims?: RangeClaimRequest[];
+    /** Default: refresh + attach (the live session demands it). */
+    nonRevocation?: CredkitNonRevocationProveInput;
+  },
 ): Promise<Response> {
+  const nonRevocationClaims = [options.nonRevocation ?? (await freshClaim(issued))];
   const vp = await createCredkitPresentation({
     credentials: [
       {
         verifiableCredential: issued.vc,
         selectivePointers: options.pointers ?? [],
         ...(options.rangeClaims !== undefined ? { rangeClaims: options.rangeClaims } : {}),
+        nonRevocationClaims,
         holderBinding: {
           linkSecret: await deriveLinkSecret(MASTER_SECRET),
           secretProverBlind: scalarFromBase64Url(issued.secretProverBlind),
@@ -417,8 +487,10 @@ describe.skipIf(!E2E)("live end-to-end (built DMV + shop Workers under workerd)"
     // ONE verdict from the server — no zk_pending, no client hand-off.
     expect(status).toMatchObject({ status: "verified", verdict: "allowed" });
     const outcome = status as SessionOutcome;
-    // The live verifier learned one proven bit — nothing else.
-    expect(outcome.disclosed).toEqual({});
+    // The live verifier learned two proven bits — age + not revoked; no
+    // claim values, no registry entry.
+    expect(Object.keys(outcome.disclosed)).toEqual(["revocation_status"]);
+    expect(outcome.disclosed["revocation_status"]).toMatch(/not revoked/);
     expect(outcome.predicate).toMatchObject({
       pointer: BIRTH_DATE_POINTER,
       kind: "lessOrEqual",
@@ -463,5 +535,44 @@ describe.skipIf(!E2E)("live end-to-end (built DMV + shop Workers under workerd)"
     // The session never saw a response.
     const status = await json<SessionStatus>(await fetch(session.status_url));
     expect(status.status).toBe("pending");
+  }, 120_000);
+
+  it("revocation end to end: revoked at the LIVE DMV registry, refused by prover and verifier alike", async () => {
+    const issued = await issueCredential({
+      givenName: "Jamie",
+      familyName: "Voss",
+      birthDate: "1988-04-19",
+    });
+
+    // The stale state a cheating wallet would cling to.
+    const staleClaim = await freshClaim(issued);
+    const epochBefore = issued.epoch;
+
+    // The admin desk's action, over the live registry Durable Object.
+    const revoked = await json<{ epoch: number }>(
+      await fetch(`${DMV}/api/registry/revoke`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ revocationIds: [issued.revocationId] }),
+      }),
+    );
+    expect(revoked.epoch).toBe(epochBefore + 1);
+
+    // The honest wallet: the refresh IS the revocation discovery.
+    await expect(freshClaim(issued)).rejects.toThrow(/revoked at registry epoch/);
+
+    // The dishonest wallet: post the pre-revocation proof anyway. The live
+    // shop restates the registry's CURRENT state and rejects it.
+    const session = await json<VerificationSessionBody>(
+      await fetch(`${SHOP}/api/verification`, { method: "POST" }),
+    );
+    const posted = await present(issued, session, {
+      pointers: [FLAG_POINTER],
+      nonRevocation: staleClaim,
+    });
+    expect(posted.status).toBe(400);
+    const status = await json<SessionStatus>(await fetch(session.status_url));
+    expect(status.status).toBe("failed");
+    expect((status as SessionOutcome).reason).toMatch(/registry sync|epoch/);
   }, 120_000);
 });

@@ -32,12 +32,15 @@ import {
   type PresentationRequest,
 } from "@vgw/protocols";
 import {
+  REVOCATION_CLAIM_POINTER,
   summarizeCredkitPresentation,
   verifyCredkitPresentation,
+  type CredkitExpectedNonRevocationClaim,
   type ExpectedRangeClaim,
   type VerifiablePresentation,
 } from "@vgw/vc-kit";
 import {
+  fetchRevocationRegistryState,
   resolveTokenSecret,
   trustedIssuerDid,
   type ShopBindings,
@@ -83,6 +86,12 @@ interface StateTokenPayload extends Record<string, unknown> {
   sessionId: string;
   nonce: string;
   predicates: OfferedRangeClaim[];
+  /**
+   * This session demanded a non-revocation proof (`vgw_non_revocation` in
+   * the query). Restated at response time against the registry's CURRENT
+   * state — the freshest state wins, never the wire's.
+   */
+  nonRevocation?: true;
 }
 
 /** Loopback origins only — a production verifier must not reflect arbitrary Origins into links. */
@@ -199,6 +208,7 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
         sessionId,
         nonce,
         predicates: offeredRangeClaims,
+        nonRevocation: true,
       } satisfies StateTokenPayload,
       ttlSeconds: SESSION_TTL_SECONDS,
     });
@@ -350,6 +360,24 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
       );
     }
 
+    // 3b. The registry's CURRENT state, fetched fresh for THIS verification
+    // (never cached — a just-revoked license must fail against it). Same
+    // failure policy as issuer discovery: fail the request, not the session.
+    let registryState: Awaited<ReturnType<typeof fetchRevocationRegistryState>> | undefined;
+    if (session.nonRevocation === true) {
+      try {
+        registryState = await fetchRevocationRegistryState(c.env);
+      } catch (error) {
+        return c.json(
+          ...oauthError(
+            500,
+            "server_error",
+            error instanceof Error ? error.message : "revocation registry fetch failed",
+          ),
+        );
+      }
+    }
+
     // 4. Route-select, then verify — the whole check runs on this Worker
     // (MIGRATION §8: credkit's verifier is pure JS, no WASM, no zk_pending).
     // The DCQL query offered ALTERNATIVES (flag / dob / predicate), so peek
@@ -378,19 +406,30 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
       }
 
       const offered = session.predicates;
+      // The demanded non-revocation claim rides on EVERY route this session
+      // offered — a presentation without it was never offered a shape.
+      const expectedNonRevocationCount = session.nonRevocation === true ? 1 : 0;
       const predicateRoute =
         offered.length > 0 &&
         summary.rangeClaims === offered.length &&
         summary.membershipClaims === 0 &&
-        summary.equalities === 0;
+        summary.equalities === 0 &&
+        summary.nonRevocationClaims === expectedNonRevocationCount;
       const disclosureRoute =
-        summary.rangeClaims === 0 && summary.membershipClaims === 0 && summary.equalities === 0;
+        summary.rangeClaims === 0 &&
+        summary.membershipClaims === 0 &&
+        summary.equalities === 0 &&
+        summary.nonRevocationClaims === expectedNonRevocationCount;
       if (!predicateRoute && !disclosureRoute) {
         return {
           status: "failed",
           reason:
             `The presentation carries ${summary.rangeClaims} range, ${summary.membershipClaims} ` +
-            `membership, and ${summary.equalities} equality claims — not a shape this session offered.`,
+            `membership, ${summary.nonRevocationClaims} non-revocation, and ${summary.equalities} ` +
+            `equality claims — not a shape this session offered.` +
+            (session.nonRevocation === true && summary.nonRevocationClaims === 0
+              ? " This session requires a non-revocation proof — a credential issued before revocation support must be reissued at the DMV."
+              : ""),
           disclosed: {},
         };
       }
@@ -412,12 +451,29 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
           }))
         : [];
 
+      // The non-revocation expectation, restated from OUR registry fetch —
+      // params, accumulator value, and epoch are the verifier's own reading
+      // of the DMV's published state, never anything the wire carried.
+      const expectedNonRevocationClaims: CredkitExpectedNonRevocationClaim[] =
+        registryState !== undefined
+          ? [
+              {
+                statement: 0,
+                pointer: REVOCATION_CLAIM_POINTER,
+                params: registryState.params,
+                accumulator: registryState.accumulator,
+                epoch: registryState.epoch,
+              },
+            ]
+          : [];
+
       const result = await verifyCredkitPresentation({
         verifiablePresentation: presentation as VerifiablePresentation,
         expectedIssuerDids: [expectedIssuer],
         challenge: session.nonce,
         domain,
         expectedRangeClaims,
+        expectedNonRevocationClaims,
       });
       if (!result.verified || result.documents === undefined) {
         return {
@@ -426,9 +482,21 @@ export function createApp(): Hono<{ Bindings: ShopBindings }> {
           disclosed: {},
         };
       }
-      return predicateRoute
+      const outcome = predicateRoute
         ? evaluateAgePredicatePolicy(result.documents, offered)
         : evaluateAgePolicy(result.documents);
+      if (registryState !== undefined && outcome.status === "verified") {
+        // Narrate the extra bit honestly, in the "what was learned" exhibit
+        // and the reason line both.
+        outcome.disclosed = {
+          ...outcome.disclosed,
+          revocation_status: `not revoked (proven against registry epoch ${registryState.epoch} — the registry entry itself stays hidden)`,
+        };
+        outcome.reason +=
+          ` The license also proved it is NOT REVOKED against the DMV registry's current` +
+          ` state (epoch ${registryState.epoch}) — one more live bit, still no correlation handle.`;
+      }
+      return outcome;
     };
 
     const outcome: SessionOutcome = {

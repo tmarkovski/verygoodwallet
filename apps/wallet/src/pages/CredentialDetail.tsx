@@ -8,19 +8,29 @@
 
 import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
-import { decryptJson, deriveLinkSecret, scalarFromBase64Url } from "@vgw/keys";
+import { decryptJson, deriveLinkSecret, encryptJson, scalarFromBase64Url } from "@vgw/keys";
 import { JsonCode } from "@vgw/tour";
-import { verifyIssuedCredkitCredential, type VerifiableCredential } from "@vgw/vc-kit";
+import {
+  credentialRevocationStatus,
+  parseRevocationRegistryState,
+  refreshRevocationWitness,
+  verifyIssuedCredkitCredential,
+  verifyRevocationWitness,
+  type VerifiableCredential,
+} from "@vgw/vc-kit";
 import { useSession } from "../session";
 import {
   deleteCredential,
   getCredential,
+  updateCredential,
   type CredentialPayload,
   type CredentialRecord,
 } from "../services/db";
 import { inspect } from "../inspector/events";
 import { cardFace } from "../services/meta";
 import { CredentialCard } from "../components/CredentialCard";
+import { StepList } from "../components/StepList";
+import { createPacedStepper } from "../components/pacedStepper";
 import { Button, ErrorNote, SectionTitle, Spinner, describeError } from "../components/ui";
 
 const DL_CLAIM_LABELS: [key: string, label: string][] = [
@@ -82,10 +92,19 @@ function formatClaim(key: string, value: unknown): string {
   return value;
 }
 
+/** What the live revocation check learned (absent for pre-revocation credentials). */
+type RevocationOutcome =
+  | { status: "active"; epoch: number; ms: number }
+  | { status: "revoked"; epoch: number }
+  | { status: "unavailable"; detail: string };
+
 interface VerifyOutcome {
+  /** The holder receipt check — authenticity + binding to this wallet. */
   verified: boolean;
   error?: string;
   ms: number;
+  /** Present when the credential carries a revocation witness sidecar. */
+  revocation?: RevocationOutcome;
 }
 
 export function CredentialDetail() {
@@ -98,6 +117,7 @@ export function CredentialDetail() {
   const [decryptError, setDecryptError] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [verifyStep, setVerifyStep] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<VerifyOutcome | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -158,17 +178,116 @@ export function CredentialDetail() {
   const vc = payload?.vc ?? null;
   const claimView = vc !== null ? claimsOf(vc) : null;
 
+  /** Whether this credential carries a revocation witness to check live. */
+  const revocable =
+    payload?.revocation !== undefined &&
+    vc !== null &&
+    credentialRevocationStatus(vc) !== undefined;
+
+  const verifySteps = [
+    { id: "receipt", label: "Recomputing the pipeline & checking the blind signature" },
+    ...(revocable
+      ? [{ id: "revocation", label: "Checking revocation against the issuer's registry" }]
+      : []),
+  ];
+
+  // Live revocation check: sync the witness from the registry's PUBLISHED
+  // records (the same bytes every holder reads), then run the pairing check
+  // against the current accumulator value. Discovering `revoked` here is
+  // the same fail-closed discovery a presentation would make. A registry
+  // that can't be reached yields "unavailable" — never "not revoked".
+  const checkRevocation = async (): Promise<RevocationOutcome> => {
+    const sidecar = payload?.revocation;
+    const status = vc !== null ? credentialRevocationStatus(vc) : undefined;
+    if (sidecar === undefined || status === undefined) {
+      // Unreachable behind `revocable`; typed as unavailable for safety.
+      return { status: "unavailable", detail: "no revocation sidecar" };
+    }
+    try {
+      const started = performance.now();
+      const response = await fetch(sidecar.registry, {
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(`the registry answered HTTP ${response.status}`);
+      }
+      const state = parseRevocationRegistryState(await response.json());
+      if (state.params !== sidecar.params) {
+        throw new Error(
+          "the registry announces a different registry key than this credential was issued under",
+        );
+      }
+      const refreshed = refreshRevocationWitness({
+        revocationId: status.revocationId,
+        witness: sidecar.witness,
+        epoch: sidecar.epoch,
+        state,
+      });
+      if (refreshed.revoked) {
+        inspect.emit({
+          label: "Credential is REVOKED (witness update failed closed)",
+          data: { registry: sidecar.registry, epoch: state.epoch },
+        });
+        return { status: "revoked", epoch: state.epoch };
+      }
+      const witnessOk = verifyRevocationWitness({
+        params: sidecar.params,
+        accumulator: state.accumulator,
+        revocationId: status.revocationId,
+        witness: refreshed.witness,
+      });
+      if (!witnessOk) {
+        throw new Error("the refreshed witness failed its pairing check");
+      }
+      // Persist the moved witness so the next presentation starts current.
+      if (refreshed.changed && vaultKey !== null && payload !== null) {
+        const nextPayload: CredentialPayload = {
+          ...payload,
+          version: 4,
+          revocation: {
+            ...sidecar,
+            witness: refreshed.witness,
+            accumulator: state.accumulator,
+            epoch: refreshed.epoch,
+          },
+        };
+        await updateCredential({
+          ...record,
+          payload: await encryptJson(vaultKey, nextPayload),
+        });
+        setPayload(nextPayload);
+      }
+      const ms = Math.round(performance.now() - started);
+      inspect.emit({
+        label: "Revocation status checked",
+        data: {
+          registry: sidecar.registry,
+          epoch: state.epoch,
+          witnessUpdated: refreshed.changed,
+          ms,
+        },
+      });
+      return { status: "active", epoch: state.epoch, ms };
+    } catch (err) {
+      return { status: "unavailable", detail: describeError(err) };
+    }
+  };
+
   // The credkit holder receipt check (MIGRATION §6): recompute the whole
   // issuance pipeline from the stored credential and verify the issuer's
   // blind signature against this wallet's own re-derived link secret and the
   // credential's stored blind. Green means "authentic, and bound to THIS
   // wallet's secret" — a check only the holder can run, because only the
-  // holder has both halves.
+  // holder has both halves. For revocable credentials a SECOND phase checks
+  // status live against the issuer's registry.
   const verify = async () => {
     if (vc === null || payload === null || masterSecret === null || verifying) return;
     setVerifying(true);
     setOutcome(null);
+    setVerifyStep(null);
+    const stepper = createPacedStepper(setVerifyStep);
     try {
+      stepper.step("receipt");
       const start = performance.now();
       const linkSecret = await deriveLinkSecret(masterSecret);
       const secretProverBlind = scalarFromBase64Url(payload.secretProverBlind);
@@ -181,6 +300,12 @@ export function CredentialDetail() {
         label: "Holder receipt check re-run",
         data: { verified, ms },
       });
+      let revocation: RevocationOutcome | undefined;
+      if (revocable) {
+        stepper.step("revocation");
+        revocation = await checkRevocation();
+      }
+      await stepper.settled();
       setOutcome({
         verified,
         ...(verified
@@ -190,6 +315,7 @@ export function CredentialDetail() {
                 "The issuer's blind signature did not verify against this wallet's link secret and this credential's stored blind.",
             }),
         ms,
+        ...(revocation !== undefined ? { revocation } : {}),
       });
     } catch (err) {
       setOutcome({
@@ -199,6 +325,7 @@ export function CredentialDetail() {
       });
     } finally {
       setVerifying(false);
+      setVerifyStep(null);
     }
   };
 
@@ -296,20 +423,31 @@ export function CredentialDetail() {
             )}
           </div>
 
+          {verifying && (
+            <div className="mt-4 animate-fade rounded-2xl border border-line bg-surface px-5 py-4">
+              <StepList title="Verifying" steps={verifySteps} current={verifyStep} />
+            </div>
+          )}
+
           {outcome !== null && (
             <div
               className={`mt-4 animate-fade rounded-2xl border px-5 py-4 ${
-                outcome.verified
+                outcome.verified && outcome.revocation?.status !== "revoked"
                   ? "border-ok/30 bg-ok-soft"
                   : "border-danger/30 bg-danger-soft"
               }`}
             >
               <div className="flex items-center gap-2.5">
-                {/* The proof moment: the authority's seal and a gold wordmark. */}
-                {outcome.verified && (
+                {/* The proof moment: the authority's seal and a gold wordmark —
+                    unless the registry says this credential is no more. */}
+                {outcome.verified && outcome.revocation?.status !== "revoked" && (
                   <span aria-hidden="true" className="seal-authority size-6 shrink-0" />
                 )}
-                {outcome.verified ? (
+                {outcome.revocation?.status === "revoked" ? (
+                  <span className="text-[13px] font-semibold uppercase tracking-[0.22em] text-danger">
+                    Revoked
+                  </span>
+                ) : outcome.verified ? (
                   <span className="text-[13px] font-semibold uppercase tracking-[0.22em] text-gold">
                     Verified
                   </span>
@@ -320,13 +458,33 @@ export function CredentialDetail() {
               </div>
               <p
                 className={`mt-2 text-[13px] leading-relaxed ${
-                  outcome.verified ? "text-ok" : "text-ink-dim"
+                  outcome.verified && outcome.revocation?.status !== "revoked"
+                    ? "text-ok"
+                    : "text-ink-dim"
                 }`}
               >
                 {outcome.verified
                   ? "The whole issuance pipeline was recomputed and the DMV's blind signature verified against this wallet's own link secret and this credential's stored blind — authentic, and bound to this wallet. Only the holder can run this check: no one else has both halves."
                   : outcome.error ?? "Verification failed."}
               </p>
+              {outcome.revocation !== undefined && (
+                <p
+                  className={`mt-2 border-t border-line/60 pt-2 text-[13px] leading-relaxed ${
+                    outcome.revocation.status === "active"
+                      ? "text-ok"
+                      : outcome.revocation.status === "revoked"
+                        ? "text-danger"
+                        : "text-ink-dim"
+                  }`}
+                >
+                  {outcome.revocation.status === "active" &&
+                    `Not revoked — the membership witness verifies against the registry's current accumulator (epoch ${outcome.revocation.epoch}, checked live in ${outcome.revocation.ms} ms). The registry never learned which credential asked.`}
+                  {outcome.revocation.status === "revoked" &&
+                    `The issuer's registry revoked this credential at epoch ${outcome.revocation.epoch}: its hidden id was removed from the accumulator, so no valid witness exists and every presentation demanding a non-revocation proof will fail. The signature above is still authentic — the credential is real, just no longer honored.`}
+                  {outcome.revocation.status === "unavailable" &&
+                    `Revocation status unknown — the issuer's registry could not be checked (${outcome.revocation.detail}). Unknown is not "not revoked": a verifier would make the same live check.`}
+                </p>
+              )}
             </div>
           )}
 

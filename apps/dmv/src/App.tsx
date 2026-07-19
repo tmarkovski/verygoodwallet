@@ -23,6 +23,7 @@ import {
   withTourParam,
 } from "@vgw/tour";
 import { OfferResult } from "./components/OfferResult";
+import { RegistryPanel } from "./components/RegistryPanel";
 import { PERSONAS, type Persona } from "./personas";
 import { clientWalletOrigin } from "./walletOrigin";
 
@@ -59,7 +60,11 @@ function Field({
 /** Which of the DMV's two credential configurations the counter is issuing. */
 type CredentialKind = "license" | "resident";
 
+/** The two desks: issue documents, or manage the revocation registry. */
+type DmvView = "issue" | "records";
+
 export default function App() {
+  const [view, setView] = useState<DmvView>("issue");
   const [kind, setKind] = useState<CredentialKind>("license");
   const [givenName, setGivenName] = useState(PERSONAS[0]?.givenName ?? "");
   const [familyName, setFamilyName] = useState(PERSONAS[0]?.familyName ?? "");
@@ -189,7 +194,37 @@ export default function App() {
       </header>
 
       <main className="mx-auto w-full max-w-xl flex-1 px-5 pb-16 pt-8">
-        <section className="animate-rise">
+        {/* Which desk: the issuing counter or the records/revocation desk. */}
+        <div
+          role="group"
+          aria-label="DMV desk"
+          className="mb-6 inline-flex rounded-full border border-line-strong bg-surface p-1"
+        >
+          {(
+            [
+              ["issue", "Issue documents"],
+              ["records", "Records & revocation"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={view === value}
+              onClick={() => setView(value)}
+              className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                view === value
+                  ? "bg-authority text-white"
+                  : "text-ink-dim hover:text-ink"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {view === "records" && <RegistryPanel />}
+
+        <section className={view === "issue" ? "animate-rise" : "hidden"}>
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
             Citizen record
           </h2>
@@ -374,7 +409,7 @@ export default function App() {
           </form>
         </section>
 
-        {result !== null && (
+        {view === "issue" && result !== null && (
           <OfferResult
             credentialOffer={result.credential_offer}
             credentialOfferUri={result.credential_offer_uri}

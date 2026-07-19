@@ -45,6 +45,7 @@ import {
 import {
   CITIZENSHIP_V3_CONTEXT_URL,
   CREDENTIALS_V2_CONTEXT_URL,
+  REVOCATION_NUMERIC_DECLARATION,
   UTOPIA_DL_NUMERIC_DECLARATIONS,
   UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
   UTOPIA_RESIDENT_V1_CONTEXT_URL,
@@ -55,9 +56,20 @@ import {
   buildUtopiaResidentRegistration,
   districtByFips,
   issueCredkitCredential,
+  issueRevocationWitness,
+  mintRevocationId,
+  revokeRevocationIds,
   type VerifiableCredential,
 } from "@vgw/vc-kit";
-import { getIssuerKeyPair, resolveTokenSecret, type DmvBindings } from "./env.js";
+import {
+  getIssuerKeyPair,
+  getRegistryAuthority,
+  getSeededAccumulator,
+  resolveTokenSecret,
+  type DmvBindings,
+  type DurableObjectStubLike,
+} from "./env.js";
+import type { RegistryCredentialRow, RegistryStateBody } from "./registry.js";
 import { OfferValidationError, parseOfferInput, type OfferInput } from "./offers.js";
 import {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -144,6 +156,21 @@ function stringParam(params: Record<string, unknown>, name: string): string | un
   return typeof value === "string" ? value : undefined;
 }
 
+/** THE registry instance — one accumulator for every DMV credential. */
+function registryStub(env: DmvBindings): DurableObjectStubLike {
+  return env.REGISTRY.get(env.REGISTRY.idFromName("registry"));
+}
+
+/** All stub URLs are internal routing — the DO never sees a public origin. */
+async function registryJson<T>(
+  stub: DurableObjectStubLike,
+  path: string,
+  init?: RequestInit,
+): Promise<{ status: number; body: T }> {
+  const response = await stub.fetch(`https://registry${path}`, init);
+  return { status: response.status, body: (await response.json()) as T };
+}
+
 export function createApp(): Hono<{ Bindings: DmvBindings }> {
   const app = new Hono<{ Bindings: DmvBindings }>();
 
@@ -179,6 +206,7 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
       credential_endpoint: `${origin}/oid4vci/credential`,
       token_endpoint: `${origin}/oid4vci/token`,
       vgw_issuer_did: keyPair.controller,
+      vgw_revocation_registry: `${origin}/api/registry`,
       display: [{ name: ISSUER_DISPLAY_NAME, locale: "en-US" }],
       credential_configurations_supported: {
         [CREDENTIAL_CONFIGURATION_ID]: {
@@ -217,6 +245,118 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
       },
     };
     return c.json(metadata);
+  });
+
+  // The registry's PUBLIC state document: params (a trust anchor, derived —
+  // not stored), the current accumulator value, the epoch, and the full
+  // ordered update log. The same bytes for every reader — per-holder
+  // responses would be a correlation surface, so there are none. `no-store`
+  // because verifiers restate this state into proofs: serving a cached
+  // pre-revocation value would let a just-revoked credential keep verifying.
+  app.get("/api/registry", async (c) => {
+    const { body } = await registryJson<RegistryStateBody>(registryStub(c.env), "/state");
+    return c.json(
+      {
+        params: getRegistryAuthority(c.env).paramsBase64Url,
+        accumulator: body.accumulator ?? getSeededAccumulator(c.env),
+        epoch: body.epoch,
+        updates: body.updates,
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+
+  // The admin page's list. Unauthenticated LIKE EVERYTHING on this issuer —
+  // the whole DMV is an open demo (anyone can mint offers at /api/offers);
+  // gating only the registry list would be security theater.
+  app.get("/api/registry/credentials", async (c) => {
+    const { body } = await registryJson<{ credentials: RegistryCredentialRow[] }>(
+      registryStub(c.env),
+      "/credentials",
+    );
+    return c.json(body, 200, { "cache-control": "no-store" });
+  });
+
+  // Revoke a batch of ids: compute the new accumulator value + the epoch's
+  // published record against the state we read, then apply with an epoch
+  // compare-and-swap — a lost race re-reads and recomputes (the DO never
+  // sees the trapdoor; it only checks the epoch and stores).
+  app.post("/api/registry/revoke", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json(...oauthError(400, "invalid_request", "request body must be JSON"));
+    }
+    const ids = (body as Record<string, unknown>)?.["revocationIds"];
+    if (
+      !Array.isArray(ids) ||
+      ids.length === 0 ||
+      ids.some((id) => typeof id !== "string" || id === "")
+    ) {
+      return c.json(
+        ...oauthError(400, "invalid_request", "revocationIds must be a non-empty string array"),
+      );
+    }
+    const revocationIds = ids as string[];
+    const stub = registryStub(c.env);
+
+    // Only known, not-yet-revoked ids: re-revoking is cryptographically
+    // pointless (the id is already out of the accumulator) and would bloat
+    // the update log every holder replays.
+    const { body: listBody } = await registryJson<{ credentials: RegistryCredentialRow[] }>(
+      stub,
+      "/credentials",
+    );
+    const rows = new Map(listBody.credentials.map((row) => [row.revocationId, row]));
+    for (const id of revocationIds) {
+      const row = rows.get(id);
+      if (row === undefined) {
+        return c.json(...oauthError(400, "invalid_request", `unknown revocation id: ${id}`));
+      }
+      if (row.revokedAtEpoch !== undefined) {
+        return c.json(
+          ...oauthError(400, "invalid_request", `already revoked at epoch ${row.revokedAtEpoch}: ${id}`),
+        );
+      }
+    }
+
+    const authority = getRegistryAuthority(c.env);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { body: state } = await registryJson<RegistryStateBody>(stub, "/state");
+      const accumulator = state.accumulator ?? getSeededAccumulator(c.env);
+      const applied = revokeRevocationIds({
+        authority,
+        accumulator,
+        revocationIds,
+        epoch: state.epoch + 1,
+      });
+      const { status } = await registryJson(stub, "/apply", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          expectedEpoch: state.epoch,
+          epoch: applied.epoch,
+          accumulator: applied.accumulator,
+          update: applied.update,
+          revokedIds: revocationIds,
+        }),
+      });
+      if (status === 409) continue;
+      if (status !== 200) {
+        return c.json({ error: "server_error", error_description: "registry apply failed" }, 500);
+      }
+      return c.json({
+        revoked: revocationIds,
+        epoch: applied.epoch,
+        accumulator: applied.accumulator,
+      });
+    }
+    return c.json(
+      { error: "server_error", error_description: "registry busy — epoch conflict, retry" },
+      503,
+    );
   });
 
   app.post("/api/offers", async (c) => {
@@ -525,6 +665,49 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
     // for the license's birth_date, uint64 for the registration's
     // stateFips/postalCode.
     const keyPair = getIssuerKeyPair(c.env);
+
+    // Every credential is revocable: a fresh uniform-random id, registered
+    // in THE registry (additions-static — registration publishes nothing and
+    // moves neither the value nor the epoch), signed into the credential as
+    // a hidden frScalar twin. The registry URL is issuer-wide and harmless;
+    // the id is the only credential↔registry linkage and never disclosed.
+    const authority = getRegistryAuthority(c.env);
+    const revocation = mintRevocationId();
+    const registryUrl = `${origin}/api/registry`;
+    const label =
+      access.configurationId === RESIDENT_CREDENTIAL_CONFIGURATION_ID
+        ? `${access.givenName} ${access.familyName} — resident registration`
+        : `${access.givenName} ${access.familyName} — license ${access.documentNumber}`;
+    let registered: { accumulator: string; epoch: number };
+    try {
+      const { status, body: regBody } = await registryJson<{
+        accumulator: string;
+        epoch: number;
+      }>(registryStub(c.env), "/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          revocationId: revocation.lexical,
+          kind:
+            access.configurationId === RESIDENT_CREDENTIAL_CONFIGURATION_ID
+              ? "resident"
+              : "license",
+          label,
+          accumulator: getSeededAccumulator(c.env),
+        }),
+      });
+      if (status !== 200) throw new Error(`registry register returned ${status}`);
+      registered = regBody;
+    } catch (error) {
+      // Fail closed: a revocable-credential issuer whose registry is down
+      // must not fall back to minting unrevocable credentials.
+      console.error("vgw-dmv: revocation registry unavailable", error);
+      return c.json(
+        { error: "server_error", error_description: "revocation registry unavailable" },
+        503,
+      );
+    }
+
     let unsigned: VerifiableCredential;
     let numericDeclarations;
     if (access.configurationId === RESIDENT_CREDENTIAL_CONFIGURATION_ID) {
@@ -548,8 +731,12 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
         stateFips: district.fips,
         postalCode: access.postalCode,
         issuer: { id: keyPair.controller, name: ISSUER_DISPLAY_NAME },
+        revocation: { registry: registryUrl, revocationId: revocation.lexical },
       });
-      numericDeclarations = UTOPIA_RESIDENT_NUMERIC_DECLARATIONS;
+      numericDeclarations = [
+        ...UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
+        REVOCATION_NUMERIC_DECLARATION,
+      ];
     } else {
       unsigned = buildUtopiaDriversLicense({
         givenName: access.givenName,
@@ -557,8 +744,9 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
         birthDate: access.birthDate,
         documentNumber: access.documentNumber,
         issuer: { id: keyPair.controller, name: ISSUER_DISPLAY_NAME },
+        revocation: { registry: registryUrl, revocationId: revocation.lexical },
       });
-      numericDeclarations = UTOPIA_DL_NUMERIC_DECLARATIONS;
+      numericDeclarations = [...UTOPIA_DL_NUMERIC_DECLARATIONS, REVOCATION_NUMERIC_DECLARATION];
     }
     let signed;
     try {
@@ -586,9 +774,22 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
 
     // No vgw_commitment_opening anymore: nothing to open — the committed
     // link secret is the holder's, and the wallet validates the credential
-    // with the credkit receipt check instead.
+    // with the credkit receipt check instead. The revocation sidecar rides
+    // beside the credential: the witness is HOLDER state (it mutates every
+    // revocation epoch), deliberately not part of the signed document.
     const response: CredentialResponse = {
       credentials: [{ credential: signed as Record<string, unknown> }],
+      vgw_revocation: {
+        registry: registryUrl,
+        params: authority.paramsBase64Url,
+        accumulator: registered.accumulator,
+        epoch: registered.epoch,
+        witness: issueRevocationWitness({
+          authority,
+          accumulator: registered.accumulator,
+          revocationId: revocation.lexical,
+        }),
+      },
     };
     return c.json(response);
   });
@@ -599,3 +800,4 @@ export function createApp(): Hono<{ Bindings: DmvBindings }> {
 const app = createApp();
 
 export default app;
+export { RevocationRegistry } from "./registry.js";

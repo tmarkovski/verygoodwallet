@@ -10,20 +10,30 @@
  * and direct_post the vp_token — so what these tests accept is exactly what
  * the wallet produces.
  */
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  REVOCATION_CLAIM_POINTER,
+  REVOCATION_NUMERIC_DECLARATION,
   UTOPIA_DL_NUMERIC_DECLARATIONS,
   buildUtopiaDriversLicense,
   createCredkitPresentation,
   createHolderBinding,
+  createSeededRevocationAccumulator,
+  deriveRevocationRegistryAuthority,
   generateCredkitBbsKeyPair,
   issueCredkitCredential,
+  issueRevocationWitness,
+  mintRevocationId,
   rangeParamsFromBase64Url,
   rangeParamsHashBase64Url,
+  refreshRevocationWitness,
+  revokeRevocationIds,
   type CredkitBbsKeyPair,
+  type CredkitNonRevocationProveInput,
   type HolderBinding,
   type RangeClaimRequest,
   type RangeParams,
+  type RevocationRegistryState,
   type VerifiableCredential,
   type VerifiablePresentation,
 } from "@vgw/vc-kit";
@@ -60,6 +70,10 @@ const MINOR_BIRTH_DATE = "2009-11-02";
 interface IssuedFixture {
   vc: VerifiableCredential;
   binding: Pick<HolderBinding, "linkSecret" | "secretProverBlind">;
+  /** The credential's registry coordinates + the holder's witness sidecar. */
+  revocationId: string;
+  witness: string;
+  witnessEpoch: number;
 }
 
 let issuer: CredkitBbsKeyPair;
@@ -67,9 +81,98 @@ let rogueIssuer: CredkitBbsKeyPair;
 let adult: IssuedFixture;
 let minor: IssuedFixture;
 let rogueAdult: IssuedFixture;
+/** Dedicated fixture the revocation suite revokes (nobody else presents it). */
+let doomedAdult: IssuedFixture;
 
 const FLAG = "/credentialSubject/driversLicense/age_over_18";
 const DOB = "/credentialSubject/driversLicense/birth_date";
+
+// ---------------------------------------------------------------------------
+// The test registry: a real accumulator run in-process. The Worker fetches
+// its state over global fetch, so a stub serves the CURRENT `registryState`
+// at the pinned REVOCATION_REGISTRY_URL — revocations mutate it exactly the
+// way the DMV's Durable Object would.
+// ---------------------------------------------------------------------------
+
+const REGISTRY_URL = "http://registry.test/api/registry";
+
+const registryAuthority = deriveRevocationRegistryAuthority({
+  seed: "shop-test-registry",
+  dst: "VGW-SHOP-TEST-REVOCATION-KEY-V1",
+});
+
+let registryState: RevocationRegistryState = {
+  params: registryAuthority.paramsBase64Url,
+  accumulator: createSeededRevocationAccumulator({
+    seed: "shop-test-registry",
+    dst: "VGW-SHOP-TEST-REVOCATION-ACC-V1",
+  }),
+  epoch: 0,
+  updates: [],
+};
+
+/** Revoke ids in the test registry, like the DMV's registry would. */
+function revokeInRegistry(revocationIds: string[]): void {
+  const applied = revokeRevocationIds({
+    authority: registryAuthority,
+    accumulator: registryState.accumulator,
+    revocationIds,
+    epoch: registryState.epoch + 1,
+  });
+  registryState = {
+    ...registryState,
+    accumulator: applied.accumulator,
+    epoch: applied.epoch,
+    updates: [...registryState.updates, applied.update],
+  };
+}
+
+/**
+ * The wallet's witness upkeep, in-process: refresh against the current
+ * registry state (throws if the fixture itself was revoked) and build the
+ * prove input.
+ */
+function freshClaimFor(fixture: IssuedFixture): CredkitNonRevocationProveInput {
+  const refreshed = refreshRevocationWitness({
+    revocationId: fixture.revocationId,
+    witness: fixture.witness,
+    epoch: fixture.witnessEpoch,
+    state: registryState,
+  });
+  if (refreshed.revoked) {
+    throw new Error("test fixture was revoked — present a stale claim explicitly instead");
+  }
+  fixture.witness = refreshed.witness;
+  fixture.witnessEpoch = refreshed.epoch;
+  return {
+    pointer: REVOCATION_CLAIM_POINTER,
+    params: registryState.params,
+    accumulator: registryState.accumulator,
+    epoch: registryState.epoch,
+    witness: fixture.witness,
+  };
+}
+
+const realFetch = globalThis.fetch;
+beforeAll(() => {
+  vi.stubGlobal("fetch", ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+    if (url === REGISTRY_URL) return Promise.resolve(Response.json(registryState));
+    if (url.startsWith("http://registry.test/")) {
+      // Any other registry.test path plays "registry down" — hermetic, no DNS.
+      return Promise.resolve(new Response("unavailable", { status: 503 }));
+    }
+    return realFetch(input as RequestInfo, init);
+  }) as typeof fetch);
+});
+afterAll(() => {
+  vi.unstubAllGlobals();
+});
 
 beforeAll(async () => {
   issuer = generateCredkitBbsKeyPair(ISSUER_SEED);
@@ -80,6 +183,10 @@ beforeAll(async () => {
     birthDate: string,
   ): Promise<IssuedFixture> => {
     const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    // Revocable like every DMV credential now: a fresh hidden id enrolled in
+    // the test registry (additions-static — the accumulator doesn't move),
+    // and the witness the wallet would hold as sidecar state.
+    const revocation = mintRevocationId();
     const vc = await issueCredkitCredential({
       credential: buildUtopiaDriversLicense({
         givenName: "TEST",
@@ -89,21 +196,30 @@ beforeAll(async () => {
         issuer: { id: keyPair.controller, name: "Utopia DMV" },
         validFrom: "2026-01-01T00:00:00Z",
         validUntil: "2032-01-01T00:00:00Z",
+        revocation: { registry: REGISTRY_URL, revocationId: revocation.lexical },
       }),
       keyPair,
-      numericDeclarations: UTOPIA_DL_NUMERIC_DECLARATIONS,
+      numericDeclarations: [...UTOPIA_DL_NUMERIC_DECLARATIONS, REVOCATION_NUMERIC_DECLARATION],
       holderCommitment: binding.commitmentWithProof,
     });
     return {
       vc,
       binding: { linkSecret: LINK_SECRET, secretProverBlind: binding.secretProverBlind },
+      revocationId: revocation.lexical,
+      witness: issueRevocationWitness({
+        authority: registryAuthority,
+        accumulator: registryState.accumulator,
+        revocationId: revocation.lexical,
+      }),
+      witnessEpoch: registryState.epoch,
     };
   };
 
-  [adult, minor, rogueAdult] = await Promise.all([
+  [adult, minor, rogueAdult, doomedAdult] = await Promise.all([
     issue(issuer, ADULT_BIRTH_DATE),
     issue(issuer, MINOR_BIRTH_DATE),
     issue(rogueIssuer, ADULT_BIRTH_DATE),
+    issue(issuer, ADULT_BIRTH_DATE),
   ]);
 }, 120_000);
 
@@ -147,6 +263,7 @@ function makeEnv(overrides?: Partial<ShopBindings>): ShopBindings {
     TOKEN_SECRET: "test-secret",
     TRUSTED_ISSUER_DID: issuer.controller,
     WALLET_ORIGIN: "http://localhost:5173",
+    REVOCATION_REGISTRY_URL: REGISTRY_URL,
     SESSIONS: memoryNamespace(),
     ...overrides,
   };
@@ -199,17 +316,28 @@ async function presentAndPost(options: {
   pointers?: string[];
   /** Range claims (the predicate route). */
   rangeClaims?: RangeClaimRequest[];
+  /**
+   * Default: the fixture's refreshed non-revocation claim (every session
+   * demands one now). `"omit"` presents without one; an explicit claim
+   * presents THAT (e.g. a stale pre-revocation state).
+   */
+  nonRevocation?: "omit" | CredkitNonRevocationProveInput;
   challenge?: string;
   domain?: string;
   state?: string;
   mutate?: (vp: VerifiablePresentation) => VerifiablePresentation;
 }): Promise<Response> {
+  const nonRevocationClaims =
+    options.nonRevocation === "omit"
+      ? undefined
+      : [options.nonRevocation ?? freshClaimFor(options.fixture)];
   const vp = await createCredkitPresentation({
     credentials: [
       {
         verifiableCredential: options.fixture.vc,
         selectivePointers: options.pointers ?? [],
         ...(options.rangeClaims !== undefined ? { rangeClaims: options.rangeClaims } : {}),
+        ...(nonRevocationClaims !== undefined ? { nonRevocationClaims } : {}),
         holderBinding: options.fixture.binding,
       },
     ],
@@ -306,6 +434,9 @@ describe("POST /api/verification", () => {
     expect(predicates?.params_uri).toBe(`${SHOP_ORIGIN}${CREDKIT_PARAMS_PATH}`);
     expect(predicates?.claim_set).toEqual([]);
     expect(predicates?.membership).toBeUndefined();
+
+    // Every route of this session also demands a non-revocation proof.
+    expect(request.dcql_query.credentials[0]?.vgw_non_revocation).toBe(true);
 
     const range = predicates?.range?.[0];
     expect(range?.kind).toBe("lessOrEqual");
@@ -448,10 +579,12 @@ describe("POST /oid4vp/response", () => {
       expect(status.verdict).toBe("allowed");
       expect(status.reason).toMatch(/verified entirely on the Worker/);
 
-      // The shop learned one bit: no birthdate, no flag, no commitment.
+      // The shop learned two bits: age satisfied + not revoked. No
+      // birthdate, no flag, no commitment, no registry entry.
       expect(status.disclosed["birth_date"]).toBeUndefined();
       expect(status.disclosed["age_over_18"]).toBeUndefined();
-      expect(Object.keys(status.disclosed)).toEqual([]);
+      expect(Object.keys(status.disclosed)).toEqual(["revocation_status"]);
+      expect(status.disclosed["revocation_status"]).toMatch(/not revoked/);
 
       expect(status.predicate).toBeDefined();
       expect(status.predicate?.pointer).toBe(BIRTH_DATE_POINTER);
@@ -693,6 +826,99 @@ describe("POST /oid4vp/response", () => {
         .status,
     ).toBe(400); // no entry for our query id
   });
+});
+
+describe("revocation", () => {
+  it("rejects a presentation that omits the demanded non-revocation proof", async () => {
+    const env = makeEnv();
+    const session = await createSession(env);
+    const res = await presentAndPost({
+      env,
+      request: session.request,
+      fixture: adult,
+      pointers: [FLAG],
+      nonRevocation: "omit",
+    });
+    expect(res.status).toBe(400);
+    const status = await sessionStatus(env, session.session_id);
+    expect(status.status).toBe("failed");
+    if (status.status !== "failed") return;
+    expect(status.reason).toMatch(/non-revocation proof/);
+    expect(status.reason).toMatch(/reissued at the DMV/);
+  }, 30_000);
+
+  it("revokes a license: honest wallets fail at refresh, stale proofs fail at the verifier", async () => {
+    // The stale state a cheating wallet would cling to: pre-revocation
+    // registry state + a witness valid against it.
+    const staleClaim = freshClaimFor(doomedAdult);
+
+    revokeInRegistry([doomedAdult.revocationId]);
+
+    // The honest path: the wallet's refresh IS the revocation discovery —
+    // no valid witness exists, so nothing can be presented at all.
+    expect(
+      refreshRevocationWitness({
+        revocationId: doomedAdult.revocationId,
+        witness: doomedAdult.witness,
+        epoch: doomedAdult.witnessEpoch,
+        state: registryState,
+      }),
+    ).toEqual({ revoked: true });
+
+    // The dishonest path: post the pre-revocation proof anyway. The verifier
+    // restates the registry's CURRENT state from its own fetch — the stale
+    // epoch fails the wire cross-check (and the merged challenge regardless).
+    const env = makeEnv();
+    const session = await createSession(env);
+    const res = await presentAndPost({
+      env,
+      request: session.request,
+      fixture: doomedAdult,
+      pointers: [FLAG],
+      nonRevocation: staleClaim,
+    });
+    expect(res.status).toBe(400);
+    const status = await sessionStatus(env, session.session_id);
+    expect(status.status).toBe("failed");
+    if (status.status !== "failed") return;
+    expect(status.reason).toMatch(/registry sync|epoch/);
+  }, 30_000);
+
+  it("a survivor keeps verifying after someone else's revocation (refreshed witness)", async () => {
+    // doomedAdult was revoked above; adult refreshes from the PUBLISHED
+    // update record and passes end to end at the new epoch.
+    const env = makeEnv();
+    const session = await createSession(env);
+    const res = await presentAndPost({
+      env,
+      request: session.request,
+      fixture: adult,
+      pointers: [FLAG],
+    });
+    expect(res.status).toBe(200);
+
+    const status = await sessionStatus(env, session.session_id);
+    expect(status.status).toBe("verified");
+    if (status.status !== "verified") return;
+    expect(status.verdict).toBe("allowed");
+    expect(status.reason).toMatch(/NOT REVOKED/);
+    expect(status.disclosed["revocation_status"]).toMatch(/not revoked/);
+    expect(status.disclosed["revocation_status"]).toMatch(/epoch 1/);
+  }, 30_000);
+
+  it("fails the request (not the session) when the registry is unreachable", async () => {
+    const env = makeEnv({ REVOCATION_REGISTRY_URL: "http://registry.test/nowhere" });
+    const session = await createSession(env);
+    const res = await presentAndPost({
+      env,
+      request: session.request,
+      fixture: adult,
+      pointers: [FLAG],
+    });
+    expect(res.status).toBe(500);
+    // Not recorded as an outcome — the user's attempt isn't burned.
+    expect((await sessionStatus(env, session.session_id)).status).toBe("pending");
+  }, 30_000);
 });
 
 describe("trustedIssuerDid discovery", () => {

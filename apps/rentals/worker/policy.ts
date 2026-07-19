@@ -152,6 +152,9 @@ export function buildRentalDcqlQuery(options: {
           // identity claims — the privacy ladder applies to the AGE question.
           claim_set: [...IDENTITY_CLAIM_IDS],
         },
+        // Every route must also prove the license is NOT REVOKED — checked
+        // against the DMV registry's state at verification time.
+        vgw_non_revocation: true,
       },
     ],
   };
@@ -195,6 +198,12 @@ export interface OfferedClaims {
    * kind this verifier offers (pointer-twin equality is a later milestone).
    */
   equalities: number[][];
+  /**
+   * Statement indices that must prove NON-REVOCATION — restated at response
+   * time against the DMV registry's current state (fetched fresh, never the
+   * wire's). Every DMV credential is revocable, so every statement is here.
+   */
+  nonRevocation: number[];
 }
 
 /** What `buildResidentRateDcqlQuery` returns: the wire query + the token memory. */
@@ -250,6 +259,7 @@ export function buildResidentRateDcqlQuery(options: {
           ],
           claim_set: [],
         },
+        vgw_non_revocation: true,
       },
       {
         id: RESIDENT_RATE_RESIDENT_QUERY_ID,
@@ -268,6 +278,7 @@ export function buildResidentRateDcqlQuery(options: {
           ],
           claim_set: [],
         },
+        vgw_non_revocation: true,
       },
     ],
     vgw_equalities: [
@@ -287,6 +298,7 @@ export function buildResidentRateDcqlQuery(options: {
       ],
       membership: [{ statement: 1, pointer: STATE_FIPS_POINTER, set_id: COASTAL_SET_ID }],
       equalities: [[0, 1]],
+      nonRevocation: [0, 1],
     },
   };
 }

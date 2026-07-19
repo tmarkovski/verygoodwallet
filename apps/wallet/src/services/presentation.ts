@@ -46,7 +46,7 @@
  * rotating it.
  */
 
-import { deriveLinkSecret, fromBase64Url, scalarFromBase64Url } from "@vgw/keys";
+import { deriveLinkSecret, encryptJson, fromBase64Url, scalarFromBase64Url } from "@vgw/keys";
 import {
   REQUEST_URI_PARAM,
   assertCredkitParamsDocument,
@@ -63,26 +63,32 @@ import {
 } from "@vgw/protocols";
 import {
   CREDKIT_CRYPTOSUITE,
+  REVOCATION_CLAIM_POINTER,
   createCredkitPresentation,
+  credentialRevocationStatus,
   credkitNumericDeclarations,
   credkitProofMode,
+  parseRevocationRegistryState,
   rangeParamsFromBase64Url,
   rangeParamsHashBase64Url,
+  refreshRevocationWitness,
   setParamsFromBase64Url,
   setParamsHashBase64Url,
   verifyRangeParams,
   verifySetParams,
+  type CredkitNonRevocationProveInput,
   type GraphEquality,
   type MembershipClaimRequest,
   type RangeClaimRequest,
   type RangeParams,
+  type RevocationRegistryState,
   type SetMembershipParams,
   type VerifiableCredential,
   type VerifiablePresentation,
 } from "@vgw/vc-kit";
 import { inspect } from "../inspector/events";
 import { kindLabel } from "./meta";
-import type { CredentialPayload, CredentialRecord } from "./db";
+import { updateCredential, type CredentialPayload, type CredentialRecord } from "./db";
 
 /**
  * The protocol phases for a tier, in execution order, with UI labels.
@@ -92,10 +98,19 @@ import type { CredentialPayload, CredentialRecord } from "./db";
  */
 export function presentationSteps(
   tier: DisclosureTier,
+  nonRevocation = false,
 ): { id: PresentationStep; label: string }[] {
   return [
     ...(tier === 2
       ? [{ id: "fetching-params" as const, label: "Fetching the verifier's proof alphabet" }]
+      : []),
+    ...(nonRevocation
+      ? [
+          {
+            id: "refreshing-witness" as const,
+            label: "Syncing revocation status with the registry",
+          },
+        ]
       : []),
     { id: "deriving-presentation", label: "Deriving the presentation proof" },
     { id: "posting", label: "Sending it to the verifier" },
@@ -105,21 +120,35 @@ export function presentationSteps(
 /**
  * The composite ceremony's phases: the params fetch happens whenever any
  * statement proves anything (in practice always — a composite request's
- * point is its proofs), then ONE graph proof covers every statement.
+ * point is its proofs), the witness sync whenever any statement must prove
+ * non-revocation, then ONE graph proof covers every statement.
  */
 export function compositePresentationSteps(
   fetchesParams: boolean,
+  refreshesWitness = false,
 ): { id: PresentationStep; label: string }[] {
   return [
     ...(fetchesParams
       ? [{ id: "fetching-params" as const, label: "Fetching the verifier's proof alphabets" }]
+      : []),
+    ...(refreshesWitness
+      ? [
+          {
+            id: "refreshing-witness" as const,
+            label: "Syncing revocation status with the registry",
+          },
+        ]
       : []),
     { id: "deriving-presentation", label: "Deriving the linked presentation proof" },
     { id: "posting", label: "Sending it to the verifier" },
   ];
 }
 
-export type PresentationStep = "fetching-params" | "deriving-presentation" | "posting";
+export type PresentationStep =
+  | "fetching-params"
+  | "refreshing-witness"
+  | "deriving-presentation"
+  | "posting";
 
 /** Result of {@link parsePresentParams} — a tiny state machine for /present. */
 export type PresentParams =
@@ -251,16 +280,33 @@ export interface MatchedRequest {
   composite: boolean;
 }
 
-/** Only the versioned credkit envelope can be presented. */
+/** Only the versioned credkit envelope can be presented (v3, or v4 with the witness sidecar). */
 function isPresentableEnvelope(payload: CredentialPayload): boolean {
   return (
     typeof payload === "object" &&
     payload !== null &&
-    payload.version === 3 &&
+    (payload.version === 3 || payload.version === 4) &&
     typeof payload.secretProverBlind === "string" &&
     payload.secretProverBlind !== ""
   );
 }
+
+/**
+ * Whether a credential query demands a non-revocation proof. Exposed for
+ * the consent screen — the wallet states the check before running it.
+ */
+export function queryDemandsNonRevocation(query: DcqlCredentialQuery): boolean {
+  return query.vgw_non_revocation === true;
+}
+
+/**
+ * The consent line for a demanded non-revocation proof: what will be proven
+ * (one bit), what will not be shown (the id), and what the sync touches
+ * (published registry records only).
+ */
+export const NON_REVOCATION_PROVEN_LINE =
+  "this credential is not revoked — checked live against the issuer's registry; " +
+  "the registry entry itself stays hidden";
 
 /** Human label for what a credential query asks for, e.g. "Resident registration". */
 function queryKindLabel(query: DcqlCredentialQuery): string {
@@ -645,6 +691,7 @@ export function disclosurePreview(
   vc: VerifiableCredential,
   match: DcqlCredentialMatch,
   predicate?: PredicateOption,
+  nonRevocation = false,
 ): Record<string, unknown> {
   const subject = vc.credentialSubject;
   const disclosed: Record<string, unknown> = {};
@@ -652,6 +699,11 @@ export function disclosurePreview(
   // node-id disclosure) — list it truthfully regardless of tier.
   if (subject !== undefined && !Array.isArray(subject) && typeof subject["id"] === "string") {
     disclosed["subject id"] = subject["id"];
+  }
+  // A demanded non-revocation proof applies at every tier — one live bit,
+  // stated truthfully alongside whatever the tier discloses.
+  if (nonRevocation) {
+    disclosed["revocation status"] = `proven, not shown: ${NON_REVOCATION_PROVEN_LINE}`;
   }
   if (tier === 2) {
     if (predicate !== undefined && predicate.available) {
@@ -698,6 +750,8 @@ export interface CompositeStatement {
   candidate: CandidateCredential;
   /** Present when the query demands proofs; always satisfiable (or we threw). */
   predicate?: AvailablePredicate;
+  /** True when the query demands a non-revocation proof for this statement. */
+  nonRevocation: boolean;
   /** Selective-disclosure pointers — fixed by the request's shape, no tiers. */
   pointers: string[];
   /** Consent lines: everything this statement PROVES about hidden twins. */
@@ -727,12 +781,24 @@ export function compositeStatements(matches: MatchedRequest): CompositeStatement
           `then answer this request again.`,
       );
     }
+    // A demanded non-revocation proof needs the witness sidecar — surface
+    // the re-issue path at consent time, not mid-ceremony.
+    const nonRevocation = queryDemandsNonRevocation(query);
+    if (nonRevocation && candidate.payload.revocation === undefined) {
+      throw new Error(
+        `Credential query "${queryId}" cannot be answered: this verifier demands a ` +
+          `non-revocation proof, but your ${queryKindLabel(query)} predates revocation ` +
+          `support — re-issue it at the Utopia DMV.`,
+      );
+    }
+    const nonRevocationProven = nonRevocation ? [NON_REVOCATION_PROVEN_LINE] : [];
     if (query.vgw_predicates === undefined) {
       return {
         queryId,
         candidate,
+        nonRevocation,
         pointers: candidate.match.claims.map((claim) => claim.pointer),
-        proven: [],
+        proven: nonRevocationProven,
         disclosed: Object.fromEntries(
           candidate.match.claims.map((claim) => [lastSegment(claim.pointer), claim.value]),
         ),
@@ -746,10 +812,12 @@ export function compositeStatements(matches: MatchedRequest): CompositeStatement
       queryId,
       candidate,
       predicate,
+      nonRevocation,
       pointers: predicate.pointers,
       proven: [
         ...predicate.range.map((claim) => claim.description),
         ...predicate.membership.map((claim) => claim.description),
+        ...nonRevocationProven,
       ],
       disclosed: predicate.disclosed,
     };
@@ -1033,6 +1101,147 @@ async function pinSetParams(
 }
 
 // ---------------------------------------------------------------------------
+// Witness refresh (non-revocation) — published registry records only
+// ---------------------------------------------------------------------------
+
+/**
+ * Bring a candidate's revocation witness current and build the prove input.
+ *
+ * The registry URL comes from the SIGNED credential (issuer infrastructure,
+ * pinned at issuance), never from the verifier's request. The sync reads the
+ * same static per-epoch records every other holder reads — no per-holder
+ * request exists to correlate on. Discovering `revoked` here is the
+ * revocation semantics: the ceremony stops with a terminal error and
+ * NOTHING is posted (the prover cannot emit a proof for a revoked id).
+ *
+ * When the witness moved and a vault key is available, the refreshed
+ * sidecar is re-encrypted into the credential's record so the next
+ * presentation starts current.
+ */
+async function refreshNonRevocation(
+  candidate: CandidateCredential,
+  vaultKey: CryptoKey | undefined,
+  stateByRegistry: Map<string, RevocationRegistryState>,
+): Promise<CredkitNonRevocationProveInput> {
+  const sidecar = candidate.payload.revocation;
+  if (sidecar === undefined) {
+    throw new Error(
+      "This verifier demands a non-revocation proof, but this credential predates revocation support — re-issue it at the Utopia DMV.",
+    );
+  }
+  const status = credentialRevocationStatus(candidate.vc);
+  if (status === undefined || status.registry !== sidecar.registry) {
+    throw new Error(
+      "This credential's stored witness does not match its credentialStatus — re-issue it at the Utopia DMV.",
+    );
+  }
+
+  let state = stateByRegistry.get(sidecar.registry);
+  if (state === undefined) {
+    let response: Response;
+    try {
+      response = await fetch(sidecar.registry, { headers: { accept: "application/json" } });
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(
+        `Could not reach the issuer's revocation registry (${sidecar.registry}): ${detail}`,
+        { cause },
+      );
+    }
+    if (!response.ok) {
+      throw new Error(
+        `The issuer's revocation registry (${sidecar.registry}) answered HTTP ${response.status}`,
+      );
+    }
+    // Fail-closed validation: shape, point decodability, epoch continuity,
+    // accumulator↔last-update agreement. A bad document means "registry
+    // unavailable", never "not revoked".
+    state = parseRevocationRegistryState(await response.json());
+    stateByRegistry.set(sidecar.registry, state);
+    inspect.emit({
+      label: "Revocation registry state fetched",
+      data: {
+        registry: sidecar.registry,
+        epoch: state.epoch,
+        updates: state.updates.length,
+        readModel: "published per-epoch records — the same bytes every holder fetches",
+      },
+    });
+  }
+
+  // The registry key is a trust anchor pinned at issuance — a different key
+  // is a different registry, whatever the URL says.
+  if (state.params !== sidecar.params) {
+    throw new Error(
+      "The issuer's revocation registry announces a different registry key than this credential was issued under — re-issue it at the Utopia DMV.",
+    );
+  }
+
+  const refreshed = refreshRevocationWitness({
+    revocationId: status.revocationId,
+    witness: sidecar.witness,
+    epoch: sidecar.epoch,
+    state,
+  });
+  if (refreshed.revoked) {
+    inspect.emit({
+      label: "Credential is REVOKED (witness update failed closed)",
+      data: {
+        registry: sidecar.registry,
+        epoch: state.epoch,
+        meaning:
+          "a published epoch record removed this credential's hidden id — no valid witness exists",
+      },
+    });
+    throw new Error(
+      `This credential has been revoked by its issuer (registry epoch ${state.epoch}). ` +
+        `The proof cannot be generated and nothing was sent — remove the credential or ` +
+        `contact the issuer.`,
+    );
+  }
+
+  inspect.emit({
+    label: "Revocation witness current",
+    data: {
+      registry: sidecar.registry,
+      fromEpoch: sidecar.epoch,
+      epoch: refreshed.epoch,
+      updated: refreshed.changed,
+    },
+  });
+
+  if (refreshed.changed) {
+    const nextPayload: CredentialPayload = {
+      ...candidate.payload,
+      version: 4,
+      revocation: {
+        ...sidecar,
+        witness: refreshed.witness,
+        accumulator: state.accumulator,
+        epoch: refreshed.epoch,
+      },
+    };
+    // Keep the in-memory candidate consistent with what the vault stores —
+    // a second statement over the same credential must see the new epoch.
+    candidate.payload = nextPayload;
+    if (vaultKey !== undefined) {
+      await updateCredential({
+        ...candidate.record,
+        payload: await encryptJson(vaultKey, nextPayload),
+      });
+    }
+  }
+
+  return {
+    pointer: REVOCATION_CLAIM_POINTER,
+    params: sidecar.params,
+    accumulator: state.accumulator,
+    epoch: state.epoch,
+    witness: refreshed.witness,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The ceremonies
 // ---------------------------------------------------------------------------
 
@@ -1042,6 +1251,12 @@ export type PresentCredentialOptions = {
   candidate: CandidateCredential;
   tier: DisclosureTier;
   masterSecret: Uint8Array;
+  /**
+   * Unlocks persisting a refreshed revocation witness back into the vault.
+   * Optional: without it the refresh still happens, it just isn't stored —
+   * the next presentation replays the same published records.
+   */
+  vaultKey?: CryptoKey;
   /** Aborted when the session locks — see AcceptCredentialOfferOptions. */
   signal?: AbortSignal;
   onStep?: (step: PresentationStep) => void;
@@ -1214,6 +1429,20 @@ async function runPresentCredential(
     [claims] = await resolveProofClaims(request, [predicate]);
   }
 
+  // 1b. A demanded non-revocation proof: sync the witness against the
+  // issuer's registry (published records only) and build the claim. Applies
+  // at EVERY tier — revocation is orthogonal to how much is disclosed.
+  let nonRevocationClaim: CredkitNonRevocationProveInput | undefined;
+  const query = request.dcql_query.credentials[0] as DcqlCredentialQuery;
+  if (queryDemandsNonRevocation(query)) {
+    step("refreshing-witness");
+    nonRevocationClaim = await refreshNonRevocation(
+      opts.candidate,
+      opts.vaultKey,
+      new Map<string, RevocationRegistryState>(),
+    );
+  }
+
   // 2. The presentation: one credkit VP folding selective disclosure, the
   // range/membership claims (tier 2), the holder binding, and
   // challenge/domain into a single transcript. There is no presenter key to
@@ -1234,6 +1463,9 @@ async function runPresentCredential(
             ...(claims?.rangeClaims !== undefined ? { rangeClaims: claims.rangeClaims } : {}),
             ...(claims?.membershipClaims !== undefined
               ? { membershipClaims: claims.membershipClaims }
+              : {}),
+            ...(nonRevocationClaim !== undefined
+              ? { nonRevocationClaims: [nonRevocationClaim] }
               : {}),
             holderBinding: { linkSecret, secretProverBlind },
           },
@@ -1266,6 +1498,11 @@ async function runPresentCredential(
               : {}),
           }
         : {}),
+      ...(nonRevocationClaim !== undefined
+        ? {
+            nonRevocationClaim: `not revoked as of registry epoch ${nonRevocationClaim.epoch} — the registry entry stays hidden`,
+          }
+        : {}),
       challenge: request.nonce,
       domain: request.client_id,
       holderIdentifier: "none — the presentation carries no holder key or DID",
@@ -1289,6 +1526,8 @@ export type PresentCompositeOptions = {
   /** From {@link matchCredentials} — must be a composite request. */
   matches: MatchedRequest;
   masterSecret: Uint8Array;
+  /** Unlocks persisting refreshed revocation witnesses (see the single-credential options). */
+  vaultKey?: CryptoKey;
   /** Aborted when the session locks. */
   signal?: AbortSignal;
   onStep?: (step: PresentationStep) => void;
@@ -1362,6 +1601,25 @@ async function runPresentComposite(
     resolved = await resolveProofClaims(request, proving);
   }
 
+  // 1b. Witness sync for every statement whose query demands non-revocation
+  // — one registry fetch per distinct registry URL (both DMV credentials
+  // share one registry), one claim per demanding statement.
+  const nonRevocationClaims: (CredkitNonRevocationProveInput | undefined)[] = statements.map(
+    () => undefined,
+  );
+  if (statements.some((statement) => statement.nonRevocation)) {
+    step("refreshing-witness");
+    const stateByRegistry = new Map<string, RevocationRegistryState>();
+    for (const [i, statement] of statements.entries()) {
+      if (!statement.nonRevocation) continue;
+      nonRevocationClaims[i] = await refreshNonRevocation(
+        statement.candidate,
+        opts.vaultKey,
+        stateByRegistry,
+      );
+    }
+  }
+
   // 2. ONE graph presentation across all statements. Every statement carries
   // the SAME wallet link secret (each with its credential's own blind), so
   // the demanded equalities hold by construction.
@@ -1380,6 +1638,9 @@ async function runPresentComposite(
             : {}),
           ...(resolved[i]?.membershipClaims !== undefined
             ? { membershipClaims: resolved[i]!.membershipClaims }
+            : {}),
+          ...(nonRevocationClaims[i] !== undefined
+            ? { nonRevocationClaims: [nonRevocationClaims[i]!] }
             : {}),
           holderBinding: { linkSecret, secretProverBlind: blinds[i]! },
         })),

@@ -26,6 +26,14 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/oid4vci/*", "/.well-known/*", "/api/*"]
   },
+  // THE revocation registry: one SQLite-backed Durable Object instance
+  // holding the accumulator value, the epoch counter, the published update
+  // log, and the issued-credential rows the admin page lists. The trapdoor
+  // is NOT here — it derives from ISSUER_SEED in the Worker.
+  "durable_objects": {
+    "bindings": [{ "name": "REGISTRY", "class_name": "RevocationRegistry" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RevocationRegistry"] }],
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,

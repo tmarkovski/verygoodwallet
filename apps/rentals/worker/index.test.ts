@@ -9,28 +9,38 @@
  * on EVERY route; only the age question rides the privacy ladder — and the
  * predicate route proves 25+ (not the shop's 18+) from the SAME hidden twin.
  */
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  REVOCATION_CLAIM_POINTER,
+  REVOCATION_NUMERIC_DECLARATION,
   UTOPIA_DL_NUMERIC_DECLARATIONS,
   UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
   buildUtopiaDriversLicense,
   buildUtopiaResidentRegistration,
   createCredkitPresentation,
   createHolderBinding,
+  createSeededRevocationAccumulator,
+  deriveRevocationRegistryAuthority,
   districtByFips,
   generateCredkitBbsKeyPair,
   issueCredkitCredential,
+  issueRevocationWitness,
+  mintRevocationId,
   rangeParamsFromBase64Url,
   rangeParamsHashBase64Url,
+  refreshRevocationWitness,
+  revokeRevocationIds,
   setParamsFromBase64Url,
   setParamsHashBase64Url,
   verifySetParams,
   type CredkitBbsKeyPair,
+  type CredkitNonRevocationProveInput,
   type GraphEquality,
   type HolderBinding,
   type MembershipClaimRequest,
   type RangeClaimRequest,
   type RangeParams,
+  type RevocationRegistryState,
   type SetMembershipParams,
   type VerifiableCredential,
   type VerifiablePresentation,
@@ -84,10 +94,96 @@ const DOB = `${LICENSE}/birth_date`;
 interface IssuedFixture {
   vc: VerifiableCredential;
   binding: Pick<HolderBinding, "linkSecret" | "secretProverBlind">;
+  /** The credential's registry coordinates + the holder's witness sidecar. */
+  revocationId: string;
+  witness: string;
+  witnessEpoch: number;
 }
 
 /** Marisol's district for the resident fixtures: Port Azure (coastal, fips 11). */
 const PORT_AZURE = districtByFips(11)!;
+
+// ---------------------------------------------------------------------------
+// The test registry: a real accumulator run in-process (one registry for
+// both credential kinds, like the DMV's). The Worker fetches its state over
+// global fetch, so a stub serves the CURRENT `registryState` at the pinned
+// REVOCATION_REGISTRY_URL.
+// ---------------------------------------------------------------------------
+
+const REGISTRY_URL = "http://registry.test/api/registry";
+
+const registryAuthority = deriveRevocationRegistryAuthority({
+  seed: "rentals-test-registry",
+  dst: "VGW-RENTALS-TEST-REVOCATION-KEY-V1",
+});
+
+let registryState: RevocationRegistryState = {
+  params: registryAuthority.paramsBase64Url,
+  accumulator: createSeededRevocationAccumulator({
+    seed: "rentals-test-registry",
+    dst: "VGW-RENTALS-TEST-REVOCATION-ACC-V1",
+  }),
+  epoch: 0,
+  updates: [],
+};
+
+/** Revoke ids in the test registry, like the DMV's registry would. */
+function revokeInRegistry(revocationIds: string[]): void {
+  const applied = revokeRevocationIds({
+    authority: registryAuthority,
+    accumulator: registryState.accumulator,
+    revocationIds,
+    epoch: registryState.epoch + 1,
+  });
+  registryState = {
+    ...registryState,
+    accumulator: applied.accumulator,
+    epoch: applied.epoch,
+    updates: [...registryState.updates, applied.update],
+  };
+}
+
+/** The wallet's witness upkeep, in-process: refresh + build the prove input. */
+function freshClaimFor(fixture: IssuedFixture): CredkitNonRevocationProveInput {
+  const refreshed = refreshRevocationWitness({
+    revocationId: fixture.revocationId,
+    witness: fixture.witness,
+    epoch: fixture.witnessEpoch,
+    state: registryState,
+  });
+  if (refreshed.revoked) {
+    throw new Error("test fixture was revoked — present a stale claim explicitly instead");
+  }
+  fixture.witness = refreshed.witness;
+  fixture.witnessEpoch = refreshed.epoch;
+  return {
+    pointer: REVOCATION_CLAIM_POINTER,
+    params: registryState.params,
+    accumulator: registryState.accumulator,
+    epoch: registryState.epoch,
+    witness: fixture.witness,
+  };
+}
+
+const realFetch = globalThis.fetch;
+beforeAll(() => {
+  vi.stubGlobal("fetch", ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+    if (url === REGISTRY_URL) return Promise.resolve(Response.json(registryState));
+    if (url.startsWith("http://registry.test/")) {
+      return Promise.resolve(new Response("unavailable", { status: 503 }));
+    }
+    return realFetch(input as RequestInfo, init);
+  }) as typeof fetch);
+});
+afterAll(() => {
+  vi.unstubAllGlobals();
+});
 
 let issuer: CredkitBbsKeyPair;
 let rogueIssuer: CredkitBbsKeyPair;
@@ -103,11 +199,26 @@ beforeAll(async () => {
   issuer = generateCredkitBbsKeyPair(ISSUER_SEED);
   rogueIssuer = generateCredkitBbsKeyPair(ROGUE_ISSUER_SEED);
 
+  /** Witness sidecar for a freshly enrolled id, as issuance would mint it. */
+  const enroll = (): { revocationId: string; witness: string; witnessEpoch: number } => {
+    const revocation = mintRevocationId();
+    return {
+      revocationId: revocation.lexical,
+      witness: issueRevocationWitness({
+        authority: registryAuthority,
+        accumulator: registryState.accumulator,
+        revocationId: revocation.lexical,
+      }),
+      witnessEpoch: registryState.epoch,
+    };
+  };
+
   const issue = async (
     keyPair: CredkitBbsKeyPair,
     birthDate: string,
   ): Promise<IssuedFixture> => {
     const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const enrolled = enroll();
     const vc = await issueCredkitCredential({
       credential: buildUtopiaDriversLicense({
         givenName: "MARISOL",
@@ -117,19 +228,22 @@ beforeAll(async () => {
         issuer: { id: keyPair.controller, name: "Utopia DMV" },
         validFrom: "2026-01-01T00:00:00Z",
         validUntil: "2032-01-01T00:00:00Z",
+        revocation: { registry: REGISTRY_URL, revocationId: enrolled.revocationId },
       }),
       keyPair,
-      numericDeclarations: UTOPIA_DL_NUMERIC_DECLARATIONS,
+      numericDeclarations: [...UTOPIA_DL_NUMERIC_DECLARATIONS, REVOCATION_NUMERIC_DECLARATION],
       holderCommitment: binding.commitmentWithProof,
     });
     return {
       vc,
       binding: { linkSecret: LINK_SECRET, secretProverBlind: binding.secretProverBlind },
+      ...enrolled,
     };
   };
 
   const issueResident = async (keyPair: CredkitBbsKeyPair): Promise<IssuedFixture> => {
     const binding = createHolderBinding({ linkSecret: LINK_SECRET });
+    const enrolled = enroll();
     const vc = await issueCredkitCredential({
       credential: buildUtopiaResidentRegistration({
         givenName: "Marisol",
@@ -140,14 +254,19 @@ beforeAll(async () => {
         issuer: { id: keyPair.controller, name: "Utopia DMV" },
         validFrom: "2026-01-01T00:00:00Z",
         validUntil: "2028-01-01T00:00:00Z",
+        revocation: { registry: REGISTRY_URL, revocationId: enrolled.revocationId },
       }),
       keyPair,
-      numericDeclarations: UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
+      numericDeclarations: [
+        ...UTOPIA_RESIDENT_NUMERIC_DECLARATIONS,
+        REVOCATION_NUMERIC_DECLARATION,
+      ],
       holderCommitment: binding.commitmentWithProof,
     });
     return {
       vc,
       binding: { linkSecret: LINK_SECRET, secretProverBlind: binding.secretProverBlind },
+      ...enrolled,
     };
   };
 
@@ -200,6 +319,7 @@ function makeEnv(overrides?: Partial<RentalsBindings>): RentalsBindings {
     TOKEN_SECRET: "test-secret",
     TRUSTED_ISSUER_DID: issuer.controller,
     WALLET_ORIGIN: "http://localhost:5173",
+    REVOCATION_REGISTRY_URL: REGISTRY_URL,
     SESSIONS: memoryNamespace(),
     ...overrides,
   };
@@ -275,17 +395,27 @@ async function presentAndPost(options: {
   fixture: IssuedFixture;
   pointers?: string[];
   rangeClaims?: RangeClaimRequest[];
+  /**
+   * Default: the fixture's refreshed non-revocation claim (every session
+   * demands one now). `"omit"` presents without one.
+   */
+  nonRevocation?: "omit" | CredkitNonRevocationProveInput;
   challenge?: string;
   domain?: string;
   state?: string;
   mutate?: (vp: VerifiablePresentation) => VerifiablePresentation;
 }): Promise<Response> {
+  const nonRevocationClaims =
+    options.nonRevocation === "omit"
+      ? undefined
+      : [options.nonRevocation ?? freshClaimFor(options.fixture)];
   const vp = await createCredkitPresentation({
     credentials: [
       {
         verifiableCredential: options.fixture.vc,
         selectivePointers: options.pointers ?? [],
         ...(options.rangeClaims !== undefined ? { rangeClaims: options.rangeClaims } : {}),
+        ...(nonRevocationClaims !== undefined ? { nonRevocationClaims } : {}),
         holderBinding: options.fixture.binding,
       },
     ],
@@ -330,13 +460,17 @@ async function compositeVp(options: {
   rangeClaims?: RangeClaimRequest[];
   membershipClaims?: MembershipClaimRequest[];
   equalities?: GraphEquality[];
+  /** Default: both statements carry refreshed non-revocation claims. */
+  nonRevocation?: "omit";
 }): Promise<VerifiablePresentation> {
+  const withClaims = options.nonRevocation !== "omit";
   return createCredkitPresentation({
     credentials: [
       {
         verifiableCredential: options.dl.vc,
         selectivePointers: [],
         ...(options.rangeClaims !== undefined ? { rangeClaims: options.rangeClaims } : {}),
+        ...(withClaims ? { nonRevocationClaims: [freshClaimFor(options.dl)] } : {}),
         holderBinding: options.dl.binding,
       },
       {
@@ -345,6 +479,7 @@ async function compositeVp(options: {
         ...(options.membershipClaims !== undefined
           ? { membershipClaims: options.membershipClaims }
           : {}),
+        ...(withClaims ? { nonRevocationClaims: [freshClaimFor(options.resident)] } : {}),
         holderBinding: options.resident.binding,
       },
     ],
@@ -804,10 +939,13 @@ describe("resident-rate composite flow (N5b, showcases B + C)", () => {
     expect(status.status).toBe("verified");
     if (status.status !== "verified") return;
     expect(status.verdict).toBe("allowed");
-    // THE exhibit: an allowed verdict whose disclosed set is EMPTY.
-    expect(status.disclosed).toEqual({});
+    // THE exhibit: an allowed verdict disclosing NO personal data — the
+    // only entry is the revocation narration (a bit, not a claim value).
+    expect(Object.keys(status.disclosed)).toEqual(["revocation_status"]);
+    expect(status.disclosed["revocation_status"]).toMatch(/not revoked/);
     expect(status.reason).toMatch(/Three facts, zero disclosures/);
     expect(status.reason).toMatch(/verified entirely on the Worker/i);
+    expect(status.reason).toMatch(/NOT REVOKED/);
 
     // The composite exhibit narrates all three proofs for the UI.
     expect(status.composite?.statements).toBe(2);
@@ -839,7 +977,7 @@ describe("resident-rate composite flow (N5b, showcases B + C)", () => {
     const status = await sessionStatus(env, session.session_id);
     expect(status.status).toBe("failed");
     if (status.status !== "failed") return;
-    expect(status.reason).toMatch(/offered 1\/1\/1, not that shape/);
+    expect(status.reason).toMatch(/offered 1\/1\/2\/1, not that shape/);
   }, 30_000);
 
   it("fails a membership-only presentation", async () => {
@@ -859,7 +997,7 @@ describe("resident-rate composite flow (N5b, showcases B + C)", () => {
     const status = await sessionStatus(env, session.session_id);
     expect(status.status).toBe("failed");
     if (status.status !== "failed") return;
-    expect(status.reason).toMatch(/1 membership, and 0 equality/);
+    expect(status.reason).toMatch(/1 membership, 2 non-revocation, and 0 equality/);
   }, 30_000);
 
   it("fails an equality-carrying presentation against a STANDARD session (vice versa)", async () => {
@@ -885,7 +1023,7 @@ describe("resident-rate composite flow (N5b, showcases B + C)", () => {
     const status = await sessionStatus(env, session.session_id);
     expect(status.status).toBe("failed");
     if (status.status !== "failed") return;
-    expect(status.reason).toMatch(/1 equality claims.*offered 1\/0\/0/s);
+    expect(status.reason).toMatch(/1 equality claims.*offered 1\/0\/1\/0/s);
   }, 30_000);
 
   it("fails when the DL statement's issuer is not the trusted DMV", async () => {

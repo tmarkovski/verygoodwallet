@@ -35,14 +35,17 @@ import {
   type PresentationRequest,
 } from "@vgw/protocols";
 import {
+  REVOCATION_CLAIM_POINTER,
   summarizeCredkitPresentation,
   verifyCredkitPresentation,
+  type CredkitExpectedNonRevocationClaim,
   type ExpectedMembershipClaim,
   type ExpectedRangeClaim,
   type GraphEquality,
   type VerifiablePresentation,
 } from "@vgw/vc-kit";
 import {
+  fetchRevocationRegistryState,
   resolveTokenSecret,
   trustedIssuerDid,
   type RentalsBindings,
@@ -153,6 +156,12 @@ function assertOfferedClaims(value: unknown): OfferedClaims {
     if (!Array.isArray(group) || group.length < 2 || !group.every(inRange)) {
       throw new Error("offer memory carries a malformed equality group");
     }
+  }
+  const nonRevocation = value["nonRevocation"];
+  if (!Array.isArray(nonRevocation) || !nonRevocation.every(inRange)) {
+    // A token minted before revocation support has no non-revocation memory
+    // — same fail-closed semantics as the pre-N5b `predicates` shape.
+    throw new Error("offer memory has no non-revocation list");
   }
   return value as unknown as OfferedClaims;
 }
@@ -308,6 +317,7 @@ export function createApp(): Hono<{ Bindings: RentalsBindings }> {
         range: built.offeredRangeClaims.map((claim) => ({ statement: 0, ...claim })),
         membership: [],
         equalities: [],
+        nonRevocation: [0],
       };
     }
     const state = await mintSignedToken({
@@ -480,6 +490,24 @@ export function createApp(): Hono<{ Bindings: RentalsBindings }> {
       );
     }
 
+    // 3b. The registry's CURRENT state, fetched fresh for THIS verification
+    // (never cached — a just-revoked credential must fail against it). Same
+    // failure policy as issuer discovery: fail the request, not the session.
+    let registryState: Awaited<ReturnType<typeof fetchRevocationRegistryState>> | undefined;
+    if (offer.nonRevocation.length > 0) {
+      try {
+        registryState = await fetchRevocationRegistryState(c.env);
+      } catch (error) {
+        return c.json(
+          ...oauthError(
+            500,
+            "server_error",
+            error instanceof Error ? error.message : "revocation registry fetch failed",
+          ),
+        );
+      }
+    }
+
     // 4. Route-select, then verify — the whole check runs on this Worker
     // (MIGRATION §8: credkit's verifier is pure JS, no WASM, no zk_pending).
     // The route peek compares ALL THREE envelope counts (range, membership,
@@ -512,24 +540,32 @@ export function createApp(): Hono<{ Bindings: RentalsBindings }> {
         };
       }
 
+      // The demanded non-revocation claims ride on EVERY route this session
+      // offered — a presentation without them was never offered a shape.
       const offeredRoute =
         (offer.range.length > 0 || offer.membership.length > 0 || offer.equalities.length > 0) &&
         summary.rangeClaims === offer.range.length &&
         summary.membershipClaims === offer.membership.length &&
-        summary.equalities === offer.equalities.length;
+        summary.equalities === offer.equalities.length &&
+        summary.nonRevocationClaims === offer.nonRevocation.length;
       const disclosureRoute =
         session.flow === "standard" &&
         summary.rangeClaims === 0 &&
         summary.membershipClaims === 0 &&
-        summary.equalities === 0;
+        summary.equalities === 0 &&
+        summary.nonRevocationClaims === offer.nonRevocation.length;
       if (!offeredRoute && !disclosureRoute) {
         return {
           status: "failed",
           reason:
             `The presentation carries ${summary.rangeClaims} range, ${summary.membershipClaims} ` +
-            `membership, and ${summary.equalities} equality claims — this session offered ` +
-            `${offer.range.length}/${offer.membership.length}/${offer.equalities.length}` +
-            `${session.flow === "standard" ? " (or plain disclosure)" : ""}, not that shape.`,
+            `membership, ${summary.nonRevocationClaims} non-revocation, and ${summary.equalities} ` +
+            `equality claims — this session offered ` +
+            `${offer.range.length}/${offer.membership.length}/${offer.nonRevocation.length}/${offer.equalities.length}` +
+            `${session.flow === "standard" ? " (or plain disclosure with the non-revocation proof)" : ""}, not that shape.` +
+            (offer.nonRevocation.length > 0 && summary.nonRevocationClaims === 0
+              ? " This session requires non-revocation proofs — credentials issued before revocation support must be reissued at the DMV."
+              : ""),
           disclosed: {},
         };
       }
@@ -579,6 +615,23 @@ export function createApp(): Hono<{ Bindings: RentalsBindings }> {
         () => expectedIssuer,
       );
 
+      // The non-revocation expectations, restated from OUR registry fetch —
+      // params, accumulator value, and epoch are the verifier's own reading
+      // of the DMV's published state, never anything the wire carried.
+      const expectedNonRevocationClaims: CredkitExpectedNonRevocationClaim[] = [];
+      if (registryState !== undefined) {
+        const state = registryState;
+        for (const statement of offer.nonRevocation) {
+          expectedNonRevocationClaims.push({
+            statement,
+            pointer: REVOCATION_CLAIM_POINTER,
+            params: state.params,
+            accumulator: state.accumulator,
+            epoch: state.epoch,
+          });
+        }
+      }
+
       const result = await verifyCredkitPresentation({
         verifiablePresentation: presentation as VerifiablePresentation,
         expectedIssuerDids,
@@ -586,6 +639,7 @@ export function createApp(): Hono<{ Bindings: RentalsBindings }> {
         domain,
         expectedRangeClaims,
         expectedMembershipClaims,
+        expectedNonRevocationClaims,
         expectedEqualities,
       });
       if (!result.verified || result.documents === undefined) {
@@ -595,17 +649,30 @@ export function createApp(): Hono<{ Bindings: RentalsBindings }> {
           disclosed: {},
         };
       }
-      if (session.flow === "resident-rate") {
-        return evaluateResidentRatePolicy(result.documents, offer);
+      const outcome =
+        session.flow === "resident-rate"
+          ? evaluateResidentRatePolicy(result.documents, offer)
+          : offeredRoute
+            ? evaluateRentalPredicatePolicy(
+                result.documents,
+                // The standard evaluator (and its stored exhibit) predates the
+                // statement-indexed memory — strip the index it never carried.
+                offer.range.map(({ statement: _statement, ...claim }) => claim),
+              )
+            : evaluateRentalPolicy(result.documents);
+      if (registryState !== undefined && outcome.status === "verified") {
+        // Narrate the extra bit(s) honestly, in the "what was learned"
+        // exhibit and the reason line both.
+        const what = offer.nonRevocation.length > 1 ? "Both credentials" : "The credential";
+        outcome.disclosed = {
+          ...outcome.disclosed,
+          revocation_status: `not revoked (proven against registry epoch ${registryState.epoch} — the registry entries stay hidden)`,
+        };
+        outcome.reason +=
+          ` ${what} also proved NOT REVOKED against the DMV registry's current state` +
+          ` (epoch ${registryState.epoch}) — live bits, still no correlation handle.`;
       }
-      return offeredRoute
-        ? evaluateRentalPredicatePolicy(
-            result.documents,
-            // The standard evaluator (and its stored exhibit) predates the
-            // statement-indexed memory — strip the index it never carried.
-            offer.range.map(({ statement: _statement, ...claim }) => claim),
-          )
-        : evaluateRentalPolicy(result.documents);
+      return outcome;
     };
 
     const outcome: SessionOutcome = {

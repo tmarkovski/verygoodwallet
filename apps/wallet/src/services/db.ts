@@ -6,9 +6,9 @@
  *                    accounts whose authenticator lacks PRF support.
  * - `credentials`  — stored credentials. `payload` is the `encryptJson`
  *                    output of the versioned `CredentialPayload` envelope
- *                    (`{ version: 3, vc, secretProverBlind }`) under the
- *                    vault key; only `meta` is plaintext, for list rendering
- *                    while the wallet is locked.
+ *                    (`{ version: 4, vc, secretProverBlind, revocation? }`)
+ *                    under the vault key; only `meta` is plaintext, for list
+ *                    rendering while the wallet is locked.
  * - `presentations`— the presentation log (added at DB_VERSION 2, for the
  *                    cross-verifier exhibit): who was shown what, at which
  *                    tier. Fully encrypted — the log names verifiers and
@@ -40,10 +40,33 @@ export interface AccountRecord {
 export type NewAccountRecord = Omit<AccountRecord, "id">;
 
 /**
+ * A revocable credential's witness sidecar — HOLDER state, not credential
+ * state: the membership witness mutates on every registry revocation epoch
+ * and is refreshed from the registry's published update records before
+ * presenting. The revocation id itself is NOT here — it lives inside the
+ * credential's `credentialStatus` (hidden frScalar twin, never disclosed).
+ */
+export interface CredentialRevocationState {
+  /** The registry state URL (from the credential + issuance sidecar). */
+  registry: string;
+  /** The registry public key (base64url) — pinned at issuance. */
+  params: string;
+  /** The current membership witness (base64url) — mutates on refresh. */
+  witness: string;
+  /** The accumulator value the witness is valid against (base64url). */
+  accumulator: string;
+  /** The registry epoch that value belongs to. */
+  epoch: number;
+}
+
+/**
  * The JSON envelope encrypted into `CredentialRecord.payload` — the
- * versioned v3 shape written since N2 (credkit blind issuance).
+ * versioned shape: v3 since N2 (credkit blind issuance), v4 adds the
+ * OPTIONAL `revocation` witness sidecar (read code treats a v3 envelope as
+ * a v4 without one — no migration pass; v3 credentials simply cannot answer
+ * a non-revocation demand and must be reissued).
  *
- * `version: 3` is the ENVELOPE schema version (a payload field), distinct
+ * The envelope `version` is a payload field naming its schema, distinct
  * from the IndexedDB `DB_VERSION` below. The link secret is deliberately
  * absent: it is re-derived from the passkey PRF, never stored. The
  * per-credential `secretProverBlind` IS stored — it is random at each
@@ -53,10 +76,12 @@ export type NewAccountRecord = Omit<AccountRecord, "id">;
  * export (unspecified N2 design point, MIGRATION §13).
  */
 export interface CredentialPayload {
-  version: 3;
+  version: 3 | 4;
   vc: VerifiableCredential;
   /** base64url of the 32-byte blind scalar (`scalarToBase64Url` in @vgw/keys). */
   secretProverBlind: string;
+  /** v4: the revocation witness sidecar (absent for v3 envelopes). */
+  revocation?: CredentialRevocationState;
 }
 
 export interface CredentialRecord {
@@ -210,6 +235,17 @@ export async function listCredentials(accountId: number): Promise<CredentialReco
 export async function getCredential(id: number): Promise<CredentialRecord | undefined> {
   const db = await getDb();
   return db.get("credentials", id);
+}
+
+/**
+ * Rewrite a credential record in place — the witness-refresh path: after a
+ * registry sync the re-encrypted payload (new witness, new epoch) replaces
+ * the old one under the same id.
+ */
+export async function updateCredential(record: CredentialRecord): Promise<CredentialRecord> {
+  const db = await getDb();
+  await db.put("credentials", record);
+  return record;
 }
 
 export async function deleteCredential(id: number): Promise<void> {

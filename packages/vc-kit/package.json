@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@credkit/accumulator": "0.1.0",
     "@credkit/bbs": "0.1.0",
     "@credkit/cryptosuite": "0.1.0",
     "@credkit/range": "0.1.0",

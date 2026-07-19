@@ -139,6 +139,7 @@ describe('predicate route (range claim over the hidden birth_date twin)', () => 
     expect(summarizeCredkitPresentation(vp)).toEqual({
       rangeClaims: 1,
       membershipClaims: 0,
+      nonRevocationClaims: 0,
       equalities: 0,
     });
 
@@ -261,6 +262,7 @@ describe('disclosure route (selective pointers, no claims)', () => {
     expect(summarizeCredkitPresentation(vp)).toEqual({
       rangeClaims: 0,
       membershipClaims: 0,
+      nonRevocationClaims: 0,
       equalities: 0,
     });
 

@@ -35,6 +35,7 @@ import {
   CITIZENSHIP_V3_CONTEXT_URL,
   CREDENTIALS_V2_CONTEXT_URL,
   UTOPIA_RESIDENT_V1_CONTEXT_URL,
+  VGW_CONTEXT_URL,
 } from '../contexts/index.js';
 import type { VerifiableCredential } from '../types.js';
 
@@ -75,6 +76,15 @@ export interface UtopiaResidentRegistrationInput {
   validFrom?: string;
   /** ISO 8601 date-time; defaults to validFrom + 2 years. */
   validUntil?: string;
+  /**
+   * Revocation coordinates: the DMV registry URL (issuer-wide, harmless)
+   * and this credential's fresh revocation id lexical (`mintRevocationId`).
+   * Stamps a `credentialStatus` whose node stays BLANK — an `id` IRI there
+   * would be a per-credential correlation handle in the open. Remember to
+   * append `REVOCATION_NUMERIC_DECLARATION` to the issuance declarations so
+   * the id becomes a hidden frScalar twin.
+   */
+  revocation?: { registry: string; revocationId: string };
 }
 
 /** Registrations renew on a shorter cycle than the 6-year license. */
@@ -144,6 +154,9 @@ export function buildUtopiaResidentRegistration(
       CREDENTIALS_V2_CONTEXT_URL,
       CITIZENSHIP_V3_CONTEXT_URL,
       UTOPIA_RESIDENT_V1_CONTEXT_URL,
+      // The VGW context carries the revocation vocabulary; harmless when
+      // the credential is issued without a credentialStatus.
+      VGW_CONTEXT_URL,
     ],
     type: ['VerifiableCredential', 'UtopiaResidentRegistrationCredential'],
     name: 'Utopia Resident Registration',
@@ -155,5 +168,14 @@ export function buildUtopiaResidentRegistration(
     validFrom,
     validUntil,
     credentialSubject,
+    ...(input.revocation !== undefined
+      ? {
+          credentialStatus: {
+            type: 'VgwRevocationRegistryEntry',
+            revocationRegistry: input.revocation.registry,
+            revocationId: input.revocation.revocationId,
+          },
+        }
+      : {}),
   };
 }

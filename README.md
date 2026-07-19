@@ -122,7 +122,11 @@ pnpm --filter @vgw/dmv smoke             # boot the built Worker under workerd
 
 ## What this demo doesn't claim
 
-No revocation, no audit, issuer trust bootstrapped over TLS, and losing every
-copy of the passkey loses the wallet — the
+No audit, issuer trust bootstrapped over TLS, and losing every copy of the
+passkey loses the wallet — the
 [writeup](https://verygoodwallet.com/writeup/) spells out each limitation.
-It's a demonstration of an architecture, not a product.
+It's a demonstration of an architecture, not a product. (Revocation, once on
+this list, is now in: every DMV credential enrolls in an accumulator-backed
+registry, wallets keep membership witnesses current from published update
+records, and verifiers demand a non-revocation proof that reveals one bit —
+never which registry entry it was.)

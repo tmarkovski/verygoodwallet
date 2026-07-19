@@ -34,6 +34,7 @@ import {
   presentCredential,
   presentationSteps,
   previewPresentationRequest,
+  queryDemandsNonRevocation,
   type CandidateCredential,
   type CompositeStatement,
   type DisclosureTier,
@@ -453,6 +454,10 @@ export function Present() {
   const compositeFetchesParams =
     compositeStatementsResolved?.some((statement) => statement.predicate !== undefined) ??
     false;
+  const compositeRefreshesWitness =
+    compositeStatementsResolved?.some((statement) => statement.nonRevocation) ?? false;
+  /** Whether the single-credential request demands a non-revocation proof. */
+  const singleNonRevocation = single !== null && queryDemandsNonRevocation(single.query);
 
   const share = async () => {
     if (
@@ -476,6 +481,7 @@ export function Present() {
             request: params.request,
             matches,
             masterSecret,
+            ...(vaultKey !== null ? { vaultKey } : {}),
             signal: lockSignal ?? undefined,
             onStep: stepper.step,
           })
@@ -485,6 +491,7 @@ export function Present() {
             candidate: selected!,
             tier,
             masterSecret,
+            ...(vaultKey !== null ? { vaultKey } : {}),
             signal: lockSignal ?? undefined,
             onStep: stepper.step,
           });
@@ -494,7 +501,7 @@ export function Present() {
       if (preview !== null && account !== null && vaultKey !== null) {
         const disclosed = composite
           ? compositeDisclosurePreview(compositeStatementsResolved!)
-          : disclosurePreview(tier, selected!.vc, selected!.match, predicate ?? undefined);
+          : disclosurePreview(tier, selected!.vc, selected!.match, predicate ?? undefined, singleNonRevocation);
         const predicateYears = composite
           ? compositeStatementsResolved!
               .flatMap((statement) => statement.predicate?.range ?? [])
@@ -621,7 +628,7 @@ export function Present() {
               </p>
               <div className="mt-2">
                 <DisclosureList
-                  entries={disclosurePreview(tier, selected.vc, selected.match, predicate ?? undefined)}
+                  entries={disclosurePreview(tier, selected.vc, selected.match, predicate ?? undefined, singleNonRevocation)}
                 />
               </div>
             </div>
@@ -719,8 +726,8 @@ export function Present() {
           title="Presenting"
           steps={
             composite
-              ? compositePresentationSteps(compositeFetchesParams)
-              : presentationSteps(tier)
+              ? compositePresentationSteps(compositeFetchesParams, compositeRefreshesWitness)
+              : presentationSteps(tier, singleNonRevocation)
           }
           current={step}
         />
@@ -861,7 +868,7 @@ export function Present() {
               <SectionTitle>This will reveal</SectionTitle>
               <div className="mt-3">
                 <DisclosureList
-                  entries={disclosurePreview(tier, selected.vc, selected.match, predicate ?? undefined)}
+                  entries={disclosurePreview(tier, selected.vc, selected.match, predicate ?? undefined, singleNonRevocation)}
                 />
               </div>
               {hasEmbeddedSubjectId(selected.vc) && (

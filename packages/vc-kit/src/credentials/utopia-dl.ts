@@ -57,6 +57,15 @@ export interface UtopiaDriversLicenseInput {
   validFrom?: string;
   /** ISO 8601 date-time; defaults to validFrom + 6 years. */
   validUntil?: string;
+  /**
+   * Revocation coordinates: the DMV registry URL (issuer-wide, harmless)
+   * and this credential's fresh revocation id lexical (`mintRevocationId`).
+   * Stamps a `credentialStatus` whose node stays BLANK — an `id` IRI there
+   * would be a per-credential correlation handle in the open. Remember to
+   * append `REVOCATION_NUMERIC_DECLARATION` to the issuance declarations so
+   * the id becomes a hidden frScalar twin.
+   */
+  revocation?: { registry: string; revocationId: string };
 }
 
 const VALIDITY_YEARS = 6;
@@ -162,5 +171,14 @@ export function buildUtopiaDriversLicense(
     validFrom,
     validUntil,
     credentialSubject,
+    ...(input.revocation !== undefined
+      ? {
+          credentialStatus: {
+            type: 'VgwRevocationRegistryEntry',
+            revocationRegistry: input.revocation.registry,
+            revocationId: input.revocation.revocationId,
+          },
+        }
+      : {}),
   };
 }

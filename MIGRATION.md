@@ -567,9 +567,15 @@ risk. Spike harness kept under the session scratchpad (`credkit-spike/`), not co
   IndexedDB. A real cross-device story needs an explicit **encrypted export/backup/sync of the
   credential store** (the blind travels inside it, scalar-encoded per §7). Mechanism, cadence, and its
   correlation surface are unspecified here — an N2 design point.
-- Credential status / revocation — unaddressed, and out of scope for the showcase as written. If it
-  becomes needed, a status-list entry is an ordinary disclosable claim and can ride along as
-  mandatory-disclosed content, but the mechanism (and its own correlation surface) is unspecified here.
+- Credential status / revocation — **settled since this section was written**, and NOT via the
+  status-list-as-disclosable-claim sketch below (which would disclose the entry — a correlation
+  handle). The live mechanism: credkit's VB accumulator (credkit FINDINGS §18/§19) — the credential
+  carries a hidden `frScalar` revocation id under `/credentialStatus/revocationId` (never
+  disclosable, structurally), the DMV Worker runs the registry state in a Durable Object with the
+  trapdoor seed-derived like the BBS key, wallets hold the membership witness as sidecar state in
+  the v4 vault envelope and refresh it from published per-epoch records before presenting, and
+  verifiers demand `vgw_non_revocation` in DCQL, restating the registry state from their own fetch
+  as `expectedNonRevocationClaims`. The verifier learns one bit per credential.
 
 ---
 

@@ -888,6 +888,7 @@ describe("presentCredential", () => {
       expect(summarizeCredkitPresentation(vp)).toEqual({
         rangeClaims: 0,
         membershipClaims: 0,
+        nonRevocationClaims: 0,
         equalities: 0,
       });
 
@@ -980,6 +981,7 @@ describe("presentCredential", () => {
       expect(summarizeCredkitPresentation(vp)).toEqual({
         rangeClaims: 1,
         membershipClaims: 0,
+        nonRevocationClaims: 0,
         equalities: 0,
       });
 
@@ -1320,6 +1322,7 @@ describe("presentComposite (showcases B + C: coastal resident rate)", () => {
       expect(summarizeCredkitPresentation(vp)).toEqual({
         rangeClaims: 1,
         membershipClaims: 1,
+        nonRevocationClaims: 0,
         equalities: 1,
       });
 

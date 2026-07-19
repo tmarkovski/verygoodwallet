@@ -358,10 +358,14 @@ disclosed: nothing`}</code>
             need <code>did:web</code> or a trust registry.
           </li>
           <li>
-            <strong>There is no revocation.</strong> Credentials carry
-            validity windows but no status lists. The validity window is also
-            always disclosed, so it is one small piece of information that
-            verifiers could compare.
+            <strong>Revocation is privacy-preserving — but the registry is
+            one URL.</strong> Every credential enrolls in the DMV's
+            accumulator-backed registry; verifiers check a non-revocation
+            proof against the registry's current state and learn one bit,
+            never which entry. What remains a limitation: the validity window
+            is always disclosed (a small comparable surface), and fetching
+            registry state at presentation time has a timing surface a
+            production deployment would blunt with CDN-cached update records.
           </li>
           <li>
             <strong>Losing every copy of the passkey means losing the wallet.</strong>{" "}
