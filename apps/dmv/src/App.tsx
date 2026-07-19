@@ -1,12 +1,12 @@
 /**
- * The DMV counter: one page, two documents. A clerk (you) confirms a
- * citizen record and issues either a Utopia Driver's License or (since N5)
- * a Utopia Resident Registration as an OID4VCI credential offer for
- * VeryGoodWallet to collect — same flow, separate offers, one credential
- * configuration each.
+ * The DMV: two desks reached from header-level navigation. The issuing
+ * counter confirms a citizen record and issues either a Utopia Driver's
+ * License or (since N5) a Utopia Resident Registration as an OID4VCI
+ * credential offer for VeryGoodWallet to collect; the records desk lists
+ * every enrolled credential and revokes them from the accumulator registry.
  */
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   CREDENTIAL_CONFIGURATION_ID,
   RESIDENT_CREDENTIAL_CONFIGURATION_ID,
@@ -63,6 +63,132 @@ type CredentialKind = "license" | "resident";
 /** The two desks: issue documents, or manage the revocation registry. */
 type DmvView = "issue" | "records";
 
+/** Header navigation — the desks are site-level sections, not a form control. */
+const DESKS: { view: DmvView; label: string; icon: ReactNode }[] = [
+  {
+    view: "issue",
+    label: "Issue documents",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M6.5 3.75h7.75L18.5 8v12.25h-12Z"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M14 4v4.25h4.25"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M9.25 13h6.5M9.25 16.25h6.5"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
+  {
+    view: "records",
+    label: "Records & revocation",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect
+          x="3.75"
+          y="4"
+          width="16.5"
+          height="4.5"
+          rx="1"
+          stroke="currentColor"
+          strokeWidth="1.7"
+        />
+        <path
+          d="M5.75 8.5v9.75A1.75 1.75 0 0 0 7.5 20h9a1.75 1.75 0 0 0 1.75-1.75V8.5"
+          stroke="currentColor"
+          strokeWidth="1.7"
+        />
+        <path
+          d="M10 12.5h4"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
+];
+
+/** The two documents the counter issues, as pickable cards. */
+const DOCUMENTS: {
+  kind: CredentialKind;
+  title: string;
+  blurb: string;
+  icon: ReactNode;
+}[] = [
+  {
+    kind: "license",
+    title: "Driver's license",
+    blurb: "Birth date sealed as a hidden numeric twin for age proofs.",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect
+          x="2.75"
+          y="5"
+          width="18.5"
+          height="14"
+          rx="2.5"
+          stroke="currentColor"
+          strokeWidth="1.6"
+        />
+        <circle cx="8.4" cy="10.6" r="1.9" stroke="currentColor" strokeWidth="1.5" />
+        <path
+          d="M5.9 16.2c.55-1.4 1.45-2.1 2.5-2.1s1.95.7 2.5 2.1"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+        <path
+          d="M13.8 9.6h4.4M13.8 12.8h4.4"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
+  {
+    kind: "resident",
+    title: "Resident registration",
+    blurb: "District and postal code sealed for residency proofs.",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M4 10.5 12 4l8 6.5"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M5.8 9.5V19a1 1 0 0 0 1 1h10.4a1 1 0 0 0 1-1V9.5"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+        <path
+          d="M10 20v-4.5h4V20"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+  },
+];
+
 export default function App() {
   const [view, setView] = useState<DmvView>("issue");
   const [kind, setKind] = useState<CredentialKind>("license");
@@ -84,6 +210,7 @@ export default function App() {
   // the visitor should issue, not type. (Idempotent under StrictMode.)
   useEffect(() => {
     if (adoptTourFromUrl() === "issue") {
+      setView("issue");
       setKind("license");
       setGivenName(TOUR_PERSONA.givenName);
       setFamilyName(TOUR_PERSONA.familyName);
@@ -166,7 +293,7 @@ export default function App() {
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="border-b border-line bg-surface">
-        <div className="mx-auto flex w-full max-w-xl items-center gap-4 px-5 py-5">
+        <div className="mx-auto flex w-full max-w-xl items-center gap-4 px-5 pb-4 pt-5">
           <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-authority-soft text-authority">
             {/* Utopia crest — shield with star */}
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -191,91 +318,86 @@ export default function App() {
             </h1>
           </div>
         </div>
+
+        {/* Desk navigation — the active tab's ink overlaps the header rule. */}
+        <nav
+          aria-label="DMV desks"
+          className="mx-auto -mb-px flex w-full max-w-xl gap-6 px-5"
+        >
+          {DESKS.map((desk) => (
+            <button
+              key={desk.view}
+              type="button"
+              aria-current={view === desk.view ? "page" : undefined}
+              onClick={() => setView(desk.view)}
+              className={`flex items-center gap-2 border-b-2 pb-2.5 pt-1 text-[13px] font-medium transition-colors ${
+                view === desk.view
+                  ? "border-accent text-ink"
+                  : "border-transparent text-muted hover:text-ink"
+              }`}
+            >
+              {desk.icon}
+              {desk.label}
+            </button>
+          ))}
+        </nav>
       </header>
 
       <main className="mx-auto w-full max-w-xl flex-1 px-5 pb-16 pt-8">
-        {/* Which desk: the issuing counter or the records/revocation desk. */}
-        <div
-          role="group"
-          aria-label="DMV desk"
-          className="mb-6 inline-flex rounded-full border border-line-strong bg-surface p-1"
-        >
-          {(
-            [
-              ["issue", "Issue documents"],
-              ["records", "Records & revocation"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={view === value}
-              onClick={() => setView(value)}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
-                view === value
-                  ? "bg-authority text-white"
-                  : "text-ink-dim hover:text-ink"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
         {view === "records" && <RegistryPanel />}
 
         <section className={view === "issue" ? "animate-rise" : "hidden"}>
-          <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
-            Citizen record
-          </h2>
-
           {/* Which document this counter visit issues (two OID4VCI configurations). */}
           <div
             role="group"
             aria-label="Document to issue"
-            className="mt-3 inline-flex rounded-full border border-line-strong bg-surface p-1"
+            className="grid gap-3 sm:grid-cols-2"
           >
-            {(
-              [
-                ["license", "Driver's license"],
-                ["resident", "Resident registration"],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={kind === value}
-                onClick={() => switchKind(value)}
-                className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
-                  kind === value
-                    ? "bg-accent text-accent-contrast"
-                    : "text-ink-dim hover:text-ink"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            {PERSONAS.map((persona) => (
-              <button
-                key={`${persona.givenName}-${persona.familyName}`}
-                type="button"
-                onClick={() => applyPersona(persona)}
-                className="rounded-full border border-line-strong bg-surface px-3 py-1.5 text-xs text-ink transition-colors hover:border-accent/50 hover:bg-accent-soft active:scale-[0.98]"
-              >
-                {persona.givenName} {persona.familyName}
-                <span className="ml-1.5 text-muted">{persona.note}</span>
-              </button>
-            ))}
+            {DOCUMENTS.map((doc) => {
+              const selected = kind === doc.kind;
+              return (
+                <button
+                  key={doc.kind}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => switchKind(doc.kind)}
+                  className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition-colors ${
+                    selected
+                      ? "border-accent bg-accent-soft"
+                      : "border-line-strong bg-surface hover:border-accent/50"
+                  }`}
+                >
+                  <span
+                    className={`flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                      selected
+                        ? "bg-accent text-accent-contrast"
+                        : "bg-accent-soft text-accent"
+                    }`}
+                  >
+                    {doc.icon}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-ink">
+                      {doc.title}
+                    </span>
+                    <span className="mt-0.5 block text-[11px] leading-snug text-muted">
+                      {doc.blurb}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           <form
             onSubmit={(e) => void onSubmit(e)}
             className="mt-4 rounded-3xl border border-line bg-surface p-6"
           >
-            <div className="grid gap-4 sm:grid-cols-2">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+              Citizen record
+            </h2>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <Field id="given-name" label="Given name">
                 <input
                   id="given-name"
@@ -406,6 +528,26 @@ export default function App() {
                 {error}
               </p>
             )}
+
+            {/* Demo shortcuts live below the form: fill first-class, cheat second. */}
+            <div className="mt-6 border-t border-line pt-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+                Quick fill
+              </p>
+              <div className="mt-2.5 flex flex-wrap gap-2">
+                {PERSONAS.map((persona) => (
+                  <button
+                    key={`${persona.givenName}-${persona.familyName}`}
+                    type="button"
+                    onClick={() => applyPersona(persona)}
+                    className="rounded-full border border-line-strong bg-raised px-3 py-1.5 text-xs text-ink transition-colors hover:border-accent/50 hover:bg-accent-soft active:scale-[0.98]"
+                  >
+                    {persona.givenName} {persona.familyName}
+                    <span className="ml-1.5 text-muted">{persona.note}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </form>
         </section>
 
