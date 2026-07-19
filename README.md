@@ -10,6 +10,18 @@ free-tier infrastructure.
 
 [![See credkit in action: blind issuance, selective disclosure, and private age proofs.](assets/credkit-demo-banner.webp)](https://verygoodwallet.com)
 
+## Core cryptography: [credkit](https://github.com/tmarkovski/credkit)
+
+The cryptographic engine behind VeryGoodWallet lives in the separate
+**[credkit repository](https://github.com/tmarkovski/credkit)**. It provides the
+TypeScript implementations of BBS signatures, blind issuance, selective
+disclosure, composite zero-knowledge proofs, hidden-value predicates, and
+privacy-preserving revocation used throughout this demo. This repository adds
+the wallet, issuer, verifier, and protocol integration around that core.
+
+credkit is experimental research software and has not been independently
+audited.
+
 ## The thesis
 
 Digital identity wallets keep re-inventing enrollment: install an app, write down

@@ -15,6 +15,7 @@ import { TOUR_STOPS, exitTour, tourCtaHref } from "@vgw/tour";
 import { SITE_ORIGINS, TOUR_ORIGINS } from "./origins";
 
 const START_STOP = TOUR_STOPS[0]!;
+const REPOSITORY_URL = "https://github.com/tmarkovski/verygoodwallet";
 
 function tourStartHref(): string | null {
   return tourCtaHref(START_STOP, TOUR_ORIGINS);
@@ -50,6 +51,30 @@ function Crest({ size = 88 }: { size?: number }) {
         strokeLinecap="round"
       />
     </svg>
+  );
+}
+
+/** A quiet maker's mark for developers who recognize the GitHub silhouette. */
+function RepositoryMark({ className = "" }: { className?: string }) {
+  return (
+    <a
+      href={REPOSITORY_URL}
+      target="_blank"
+      rel="noreferrer"
+      aria-label="View tmarkovski/verygoodwallet on GitHub"
+      className={`inline-flex items-center gap-2 font-mono text-[10px] tracking-[0.04em] text-foil/65 transition-colors hover:text-foil ${className}`}
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d="M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.11.79-.25.79-.56v-2.23c-3.23.7-3.91-1.37-3.91-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.58-.29-5.29-1.29-5.29-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.47.11-3.05 0 0 .97-.31 3.16 1.18A10.93 10.93 0 0 1 12 6.11c.98 0 1.95.13 2.86.39 2.2-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.72 5.39-5.3 5.68.42.36.79 1.07.79 2.16v3.25c0 .31.21.68.8.56A11.5 11.5 0 0 0 12 .7Z" />
+      </svg>
+      <span>tmarkovski/verygoodwallet</span>
+    </a>
   );
 }
 
@@ -123,14 +148,11 @@ function GuidedDemoBanner({ startHref }: { startHref: string | null }) {
         <p className="mx-auto max-w-3xl px-5 text-center text-[11.5px] leading-relaxed text-accent-contrast/70">
           VeryGoodWallet is a portfolio demonstration by Tomislav Markovski.
           The State of Utopia, its DMV, The Nightcap, and Utopia Wheels are
-          fictional; the cryptography is not. Source on{" "}
-          <a
-            href="https://github.com/tmarkovski/verygoodwallet"
-            className="text-foil underline decoration-foil/60 underline-offset-2 hover:decoration-foil"
-          >
-            GitHub
-          </a>.
+          fictional; the cryptography is not.
         </p>
+        <div className="mt-3 flex justify-center px-5">
+          <RepositoryMark />
+        </div>
       </footer>
     </section>
   );
@@ -327,6 +349,7 @@ export default function App() {
     <div className="passport-scroll">
       {/* ——— The cover ——— */}
       <header className="passport-page passport-cover foil-frame relative flex flex-col items-center justify-center bg-accent px-6 py-20 text-center text-accent-contrast">
+        <RepositoryMark className="absolute right-6 top-6" />
         <p className="font-label text-[11px] font-semibold uppercase tracking-[0.3em] text-foil">
           State of Utopia · demonstration passport
         </p>
