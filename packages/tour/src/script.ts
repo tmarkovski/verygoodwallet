@@ -113,7 +113,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
     body: [
       "The Nightcap needs to know exactly one thing: 18 or over. Watch its request — it will accept an age flag, or a birth date, or, best of all, a live range proof that discloses nothing at all.",
     ],
-    action: "Press “Verify with VeryGoodWallet”, then follow the link to your wallet.",
+    action: "Press “Verify you're over 18”, then follow the link to your wallet.",
   },
   {
     id: "present-shop",
@@ -144,7 +144,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
       "A rental counter can't serve anonymous customers. Utopia Wheels asks for your name, your license number, and over-25.",
       "Same license, same hidden birth date — only the cutoff changed. One sealed date can answer any age policy, live, forever.",
     ],
-    action: "Press “Verify with VeryGoodWallet”, then follow the link to your wallet.",
+    action: "Press “Verify your driver details”, then follow the link to your wallet.",
   },
   {
     id: "present-rentals",

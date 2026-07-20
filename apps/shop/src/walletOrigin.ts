@@ -1,5 +1,5 @@
 /**
- * Which wallet the "Verify with VeryGoodWallet" link targets.
+ * Which wallet the "Verify you're over 18" link targets.
  *
  * Precedence: `?wallet=<origin>` query param → `VITE_WALLET_ORIGIN` →
  * localhost in dev → nothing (null) in production. Same policy as the DMV:

@@ -330,7 +330,7 @@ export function AgeGate({
           onClick={() => void start()}
           className="mt-5 rounded-2xl bg-accent px-6 py-3 text-[15px] font-semibold text-accent-contrast transition-opacity hover:opacity-90"
         >
-          Verify with VeryGoodWallet
+          Verify you're over 18
         </button>
         {walletOrigin === null && (
           <p className="mx-auto mt-4 max-w-md rounded-xl bg-danger-soft px-4 py-3 text-[12px] leading-relaxed text-danger">
