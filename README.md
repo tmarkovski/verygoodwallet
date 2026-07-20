@@ -47,7 +47,7 @@ identifier of any kind, so there is no per-verifier branch.
 Passkey sync (iCloud Keychain, Google Password Manager) is the recovery story.
 The wallet is a static page; locking it is forgetting the derived keys.
 
-## The story: age verification as a privacy ladder
+## The story: a privacy ladder
 
 The Utopia DMV blind-issues a driver's license as a W3C Verifiable Credential
 on the `credkit-bbs-sha-2026` Data Integrity suite — bound to the wallet's
@@ -69,6 +69,26 @@ birthdate commitment) no longer exists. "Same person" across credentials is
 something the holder can *elect* to prove with the link secret, never
 something verifiers discover.
 
+Utopia Wheels' resident rate cashes that election in. The DMV also issues a
+resident registration — district and postal code sealed as hidden numeric
+twins — and the discounted rate needs three facts: over 25, coastal resident,
+same person holding both documents. The wallet answers with two credentials
+in one presentation envelope, proving all three with **zero disclosures**: a
+range proof that the license's hidden birth date beats this request's 25+
+cutoff, a set-membership proof that the registration's hidden district code
+is one of the published coastal districts (which one stays hidden), and an
+equality proof that both credentials are bound to the same hidden link
+secret. Same person, no name — verified entirely in the Worker.
+
+The license can also stop being true. Every credential the DMV signs is
+enrolled in an accumulator-backed revocation registry — the records desk
+revokes with two clicks and the registry publishes a new epoch. The wallet
+fast-forwards its membership witness from the published update records
+(it downloads the registry state whole, so the registry never learns which
+credential is asking), and verifiers demand a non-revocation proof in the
+same presentation envelope. What they learn is exactly one bit — still
+valid — never which registry entry proved it.
+
 ## The cast
 
 | Site | Origin | Role |
@@ -77,14 +97,16 @@ something verifiers discover.
 | Wallet | [wallet.verygoodwallet.com](https://wallet.verygoodwallet.com) | Passkey-native wallet (static SPA) |
 | Utopia DMV | [dmv.verygoodwallet.com](https://dmv.verygoodwallet.com) | Issuer — OID4VCI, pre-authorized code flow |
 | The Nightcap | [shop.verygoodwallet.com](https://shop.verygoodwallet.com) | Verifier — age-gated shop, over-18 |
-| Utopia Wheels | [rentals.verygoodwallet.com](https://rentals.verygoodwallet.com) | Verifier — car rental, over-25 + identity |
+| Utopia Wheels | [rentals.verygoodwallet.com](https://rentals.verygoodwallet.com) | Verifier — car rental, over-25 + identity; resident rate: two credentials, zero disclosures |
 
 The State of Utopia issues no real licenses, the shop sells nothing, and the
 rental fleet is six SVGs. The cryptography, the protocols, and the timings are
 real: OID4VCI and OID4VP with DCQL, the `credkit-bbs-sha-2026` Data Integrity
-suite over IETF BBS (blind issuance, selective disclosure, range predicates
-over hidden values), WebAuthn PRF + HKDF — with the whole verification, pure
-JS and no WASM, running inside each verifier's Cloudflare Worker.
+suite over IETF BBS (blind issuance, selective disclosure, range and
+set-membership predicates over hidden values, cross-credential same-holder
+proofs through the link secret, non-revocation proofs against an accumulator
+registry), WebAuthn PRF + HKDF — with the whole verification, pure JS and no
+WASM, running inside each verifier's Cloudflare Worker.
 
 ## Repository layout
 
