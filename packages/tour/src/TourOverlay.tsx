@@ -199,9 +199,16 @@ const styles: Record<string, CSSProperties> = {
   },
   control: {
     position: "absolute",
-    top: 10,
-    right: 12,
-    padding: 4,
+    top: 2,
+    right: 2,
+    // A finger-sized hit target; the glyph centers where the old small
+    // button sat, so only the tappable area grows, not the visuals.
+    width: 40,
+    height: 40,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
     background: "none",
     border: "none",
     color: "rgba(243, 236, 217, 0.55)",
@@ -210,6 +217,12 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1,
     cursor: "pointer",
   },
+  // Minimized, the glyph centers on the "Guided tour" line: flush to the
+  // padding box, the 40px button's midpoint lands on the eyebrow's line
+  // box (12px padding + half a ~16px line ≈ 20px in).
+  controlMin: {
+    top: 0,
+  },
   endTour: {
     display: "block",
     marginTop: 10,
@@ -217,7 +230,7 @@ const styles: Record<string, CSSProperties> = {
     background: "none",
     border: "none",
     fontFamily: UI_SANS,
-    fontSize: 11,
+    fontSize: 12,
     color: "rgba(243, 236, 217, 0.5)",
     textDecoration: "underline",
     textUnderlineOffset: 2,
@@ -442,14 +455,16 @@ function TourCard({ stop, origins }: { stop: TourStop; origins: TourOrigins }) {
         aria-label={min ? "Expand the tour card" : "Minimize the tour card"}
         aria-expanded={!min}
         title={min ? "Expand" : "Minimize"}
-        style={styles.control}
+        style={{ ...styles.control, ...(min ? styles.controlMin : null) }}
       >
         {min ? "+" : "−"}
       </button>
       <p
         style={{
           ...styles.eyebrow,
-          ...(min ? { marginRight: 28, whiteSpace: "nowrap" } : null),
+          // Full shorthand, not marginRight — mixing the two across
+          // rerenders trips React's conflicting-style warning.
+          ...(min ? { margin: "0 28px 0 0", whiteSpace: "nowrap" } : null),
         }}
       >
         Guided tour{progress !== null ? ` · ${progress.index} of ${progress.total}` : ""}
