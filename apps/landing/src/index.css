@@ -460,3 +460,546 @@ body {
   color: var(--pp-ink-dim);
   font-style: italic;
 }
+
+/*
+ * Wide article shell: prose children hold the 42rem reading measure while
+ * figures break out to up to 54rem. Anchored headings clear the viewport
+ * top when the table of contents jumps to them.
+ */
+.prose-shell > * {
+  max-width: 42rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+.prose-shell > .figure-wide {
+  max-width: min(54rem, 100%);
+}
+.prose h2,
+.prose h3 {
+  scroll-margin-top: 4.5rem;
+}
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/*
+ * .aside — the article's "for the cryptographically inclined" blocks:
+ * deeper detail set off from the main flow without leaving the page.
+ */
+.prose .aside {
+  margin-top: 1.25rem;
+  border: 1px solid var(--pp-line-strong);
+  border-radius: 12px;
+  background: var(--pp-surface);
+  padding: 0.9rem 1.1rem 1rem;
+  font-size: 14.5px;
+}
+.prose .aside-label {
+  font-family: var(--font-label);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--pp-stamp);
+  margin-top: 0;
+}
+.prose .aside p {
+  margin-top: 0.6rem;
+}
+
+/* ------------------------------------------------------------------------
+ * Table of contents (right rail, ≥lg via layout grid)
+ * --------------------------------------------------------------------- */
+.toc {
+  position: sticky;
+  top: 2.75rem;
+  max-height: calc(100vh - 5rem);
+  overflow-y: auto;
+  font-family: var(--font-label);
+  padding-bottom: 1rem;
+}
+.toc-title {
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pp-muted);
+  margin-bottom: 0.5rem;
+}
+.toc a {
+  display: block;
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 0.24rem 0 0.24rem 0.8rem;
+  border-left: 1px solid var(--pp-line);
+  color: var(--pp-ink-dim);
+  text-decoration: none;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+.toc a.toc-sub {
+  padding-left: 1.6rem;
+  font-size: 11.5px;
+}
+.toc a:hover {
+  color: var(--pp-ink);
+}
+.toc a.is-active {
+  color: var(--pp-stamp);
+  border-left-color: var(--pp-stamp);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------------
+ * Anatomy figures — the annotated-specimen system shared by figures 1–3.
+ * Category inks ride a --c custom property set by c-* modifier classes.
+ * --------------------------------------------------------------------- */
+.anat {
+  position: relative;
+  margin-top: 1.75rem;
+  border: 1px solid var(--pp-line-strong);
+  background: var(--pp-raised);
+  border-radius: 14px;
+  padding: 1.05rem 1.15rem 1rem;
+}
+.anat p {
+  margin-top: 0;
+}
+.anat .c-disclosed {
+  --c: var(--pp-ok);
+}
+.anat .c-hidden {
+  --c: var(--pp-muted);
+}
+.anat .c-proven {
+  --c: var(--pp-stamp);
+}
+.anat .c-binding {
+  --c: var(--pp-crimson);
+}
+.anat .c-wire {
+  --c: var(--pp-accent);
+}
+
+.anat-eyebrow {
+  font-family: var(--font-label);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pp-stamp);
+}
+.anat .anat-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.08rem;
+  margin-top: 0.2rem;
+  letter-spacing: -0.01em;
+}
+.anat .anat-caption {
+  margin-top: 0.85rem;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--pp-muted);
+  font-style: italic;
+}
+
+.anat-grid {
+  margin-top: 0.9rem;
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+@media (min-width: 48rem) {
+  .anat-grid {
+    grid-template-columns: minmax(0, 1fr) 15rem;
+    gap: 1.4rem;
+  }
+  .anat-grid.is-below {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.anat-pane-col {
+  min-width: 0;
+}
+.anat-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  align-self: start;
+}
+.anat-rail.is-below {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.9rem 1.4rem;
+  border-top: 1px solid var(--pp-line);
+  padding-top: 0.9rem;
+}
+
+/* Specimen JSON pane (outranks .prose pre's navy plate) */
+.anat .anat-pre {
+  margin-top: 0;
+  overflow-x: auto;
+  background: var(--pp-surface);
+  border: 1px solid var(--pp-line);
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.9;
+  color: var(--pp-ink-dim);
+  white-space: pre;
+}
+
+/* Marked tokens */
+.anat-mark {
+  border: 1px solid color-mix(in srgb, var(--c) 50%, transparent);
+  background: color-mix(in srgb, var(--c) 7%, transparent);
+  border-radius: 5px;
+  padding: 0.05em 0.3em;
+  color: var(--pp-ink);
+  cursor: default;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+.anat-mark.is-active {
+  background: color-mix(in srgb, var(--c) 17%, transparent);
+  border-color: var(--c);
+}
+.anat-num {
+  font-family: var(--font-label);
+  font-style: normal;
+  font-size: 8.5px;
+  font-weight: 650;
+  vertical-align: super;
+  margin-left: 0.3em;
+  color: var(--c);
+  letter-spacing: 0;
+}
+
+/* Annotation cards */
+.anat-note {
+  border-left: 2px solid color-mix(in srgb, var(--c) 55%, transparent);
+  padding: 0.15rem 0 0.15rem 0.7rem;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
+  border-radius: 0 6px 6px 0;
+}
+.anat-note.is-active {
+  border-left-color: var(--c);
+  background: color-mix(in srgb, var(--c) 6%, transparent);
+}
+.anat-note-title {
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--pp-ink);
+}
+.anat-note-title .anat-num {
+  font-size: 9px;
+  vertical-align: 0.1em;
+  margin: 0 0.55em 0 0;
+}
+.anat .anat-note-body {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--pp-ink-dim);
+  margin-top: 0.2rem;
+}
+
+/* Connector lines */
+.anat-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.anat-line {
+  fill: none;
+  stroke: var(--c);
+  stroke-width: 1;
+  opacity: 0.28;
+  transition: opacity 120ms ease;
+}
+.anat-dot {
+  fill: var(--c);
+  opacity: 0.4;
+}
+.anat-lines .is-active .anat-line {
+  opacity: 0.9;
+  stroke-width: 1.5;
+}
+.anat-lines .is-active .anat-dot {
+  opacity: 1;
+}
+
+/* Byte strips */
+.anat-strip {
+  margin-top: 1.1rem;
+}
+.anat-strip-title {
+  font-family: var(--font-label);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pp-muted);
+  margin-bottom: 0.45rem;
+}
+.anat-strip-scroll {
+  overflow-x: auto;
+}
+.anat-strip-bar {
+  display: flex;
+  gap: 3px;
+  min-width: 34rem;
+}
+.anat-seg {
+  flex-basis: 0;
+  min-width: 2.1rem;
+  border: 1px solid color-mix(in srgb, var(--c) 55%, transparent);
+  background: color-mix(in srgb, var(--c) 9%, transparent);
+  border-radius: 6px;
+  padding: 0.3rem 0.35rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.anat-seg-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: var(--pp-ink);
+}
+.anat-seg-bytes {
+  font-family: var(--font-label);
+  font-size: 9px;
+  color: var(--pp-ink-dim);
+  margin-top: 1px;
+  white-space: nowrap;
+}
+.anat-strip-legend {
+  margin-top: 0.7rem;
+  display: grid;
+  gap: 0.3rem 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  list-style: none;
+  padding: 0;
+}
+.anat-strip-legend li {
+  display: flex;
+  gap: 0.5em;
+  margin-top: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--pp-ink-dim);
+}
+.anat-strip-legend strong {
+  color: var(--pp-ink);
+  font-weight: 600;
+}
+.anat-legend-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--c) 22%, transparent);
+  border: 1px solid var(--c);
+  flex: none;
+  transform: translateY(0.28em);
+}
+
+/* Side-by-side credential cards (figure 2) */
+.anat-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+  margin-bottom: 0.7rem;
+  font-family: var(--font-label);
+  font-size: 10.5px;
+  color: var(--pp-ink-dim);
+}
+.anat-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+}
+.anat-duo {
+  display: grid;
+  gap: 0.9rem;
+  align-items: center;
+}
+@media (min-width: 48rem) {
+  .anat-duo {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 1.1rem;
+  }
+}
+.anat-card {
+  border: 1px solid var(--pp-line-strong);
+  border-radius: 10px;
+  background: var(--pp-surface);
+  overflow: hidden;
+  align-self: start;
+}
+.anat-card-head {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--pp-line-strong);
+  font-family: var(--font-label);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pp-ink-dim);
+  background: color-mix(in srgb, var(--pp-accent) 5%, transparent);
+}
+.anat-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.6rem;
+  padding: 0.3rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  border-top: 1px solid var(--pp-line);
+  transition: background-color 120ms ease;
+}
+.anat-row:first-of-type {
+  border-top: 0;
+}
+.anat-row.is-active {
+  background: color-mix(in srgb, var(--c) 8%, transparent);
+}
+.anat-row-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c) 30%, transparent);
+  border: 1px solid var(--c);
+  flex: none;
+  align-self: center;
+}
+.anat-row-label {
+  color: var(--pp-ink-dim);
+}
+.anat-row-value {
+  color: var(--pp-ink);
+  margin-left: auto;
+  text-align: right;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5em;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.anat-row.is-hidden .anat-row-value,
+.anat-row.is-hidden .anat-row-label {
+  color: var(--pp-muted);
+}
+.anat-row.is-hidden .anat-row-value {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--pp-muted) 60%, transparent);
+  text-decoration-thickness: 1px;
+}
+.anat-row.is-binding .anat-row-value {
+  color: var(--pp-crimson);
+  font-style: italic;
+}
+.anat-badge {
+  font-family: var(--font-label);
+  font-style: normal;
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c);
+  border: 1px solid color-mix(in srgb, var(--c) 55%, transparent);
+  background: color-mix(in srgb, var(--c) 8%, transparent);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  white-space: nowrap;
+}
+.anat-chip {
+  border: 1.5px dashed color-mix(in srgb, var(--pp-crimson) 60%, transparent);
+  color: var(--pp-crimson);
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  max-width: 12rem;
+  justify-self: center;
+  text-align: center;
+  background: color-mix(in srgb, var(--pp-crimson) 5%, transparent);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+.anat-chip.is-active {
+  border-color: var(--pp-crimson);
+  background: color-mix(in srgb, var(--pp-crimson) 11%, transparent);
+}
+.anat-chip-title {
+  display: block;
+  font-family: var(--font-label);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.anat-chip-body {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--pp-ink-dim);
+}
+
+/* The verifier-verdict box (figure 3 footer) */
+.anat-verdict {
+  margin-top: 1.2rem;
+  display: grid;
+  gap: 1rem 2rem;
+  border-top: 1px solid var(--pp-line-strong);
+  padding-top: 0.9rem;
+}
+@media (min-width: 40rem) {
+  .anat-verdict {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.anat-verdict-title {
+  font-family: var(--font-label);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--c);
+}
+.anat-verdict ul {
+  margin-top: 0.45rem;
+  padding-left: 0;
+  list-style: none;
+}
+.anat-verdict li {
+  margin-top: 0.3rem;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--pp-ink-dim);
+  padding-left: 1.15rem;
+  position: relative;
+}
+.anat-verdict li::before {
+  position: absolute;
+  left: 0;
+  font-family: var(--font-label);
+  font-size: 11px;
+}
+.anat-verdict div:first-child li::before {
+  content: "✓";
+  color: var(--pp-ok);
+}
+.anat-verdict div:last-child li::before {
+  content: "✕";
+  color: var(--pp-crimson);
+}
