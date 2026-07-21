@@ -44,7 +44,9 @@ const TOC_SECTIONS: readonly TocSection[] = [
 
 export function Writeup() {
   return (
-    <div className="mx-auto max-w-6xl px-5 pb-24 lg:grid lg:grid-cols-[minmax(0,1fr)_13rem] lg:items-start lg:gap-12">
+    // No items-start on the grid: the aside must stretch to full row height
+    // so the sticky .toc inside it has room to travel.
+    <div className="mx-auto max-w-6xl px-5 pb-24 lg:grid lg:grid-cols-[minmax(0,1fr)_13rem] lg:gap-12">
       <div className="min-w-0">
         <header className="mx-auto max-w-2xl pt-12">
           <a

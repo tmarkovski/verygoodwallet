@@ -549,6 +549,7 @@ body {
   color: var(--pp-stamp);
   border-left-color: var(--pp-stamp);
   font-weight: 600;
+  background: color-mix(in srgb, var(--pp-stamp) 8%, transparent);
 }
 
 /* ------------------------------------------------------------------------
