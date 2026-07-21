@@ -61,9 +61,9 @@ export function Writeup() {
           <p className="mt-4 text-[16px] leading-relaxed text-ink-dim">
             The story and technology behind a passkey-native identity wallet, an
             issuer, and two verifiers. The setting is fictional, but the protocols
-            and cryptography are real. You do not need a background in
-            zero-knowledge proofs to follow along, but there is enough detail here
-            if you already have one.
+            and cryptography are real. You don&apos;t need a background in
+            zero-knowledge proofs to follow along. If you have one, there&apos;s plenty
+            of technical detail here to dig into.
           </p>
         </header>
 
@@ -83,10 +83,10 @@ export function Writeup() {
             how their identity information was held and used.
           </p>
           <p>
-            The part of that vision that especially captured my imagination was
-            the wallet. I was excited by the possibility that a person could hold
-            trusted credentials, decide when to use them, and prove what was
-            necessary without routinely handing over an entire identity document.
+            The wallet was the part I couldn&apos;t stop thinking about. I loved the
+            idea that someone could hold trusted credentials, decide when to use
+            them, and prove only what was needed instead of handing over an entire
+            identity document.
           </p>
           <p>
             That idea shaped our earliest work at Trinsic and stayed with me
@@ -106,11 +106,9 @@ export function Writeup() {
             user-controlled identity wallet actually feel like?
           </p>
           <p>
-            VeryGoodWallet is my personal return to that question. It is not an
-            attempt to recreate an earlier product or prescribe where identity
-            technology should go. It is an exploration of what the wallet vision
-            that originally excited me looks like with the technologies available
-            now.
+            VeryGoodWallet is my way of returning to that question. It explores
+            what the wallet vision that first excited me can look like with the
+            tools available today.
           </p>
 
           <h2 id="pieces">The pieces have caught up</h2>
@@ -150,12 +148,11 @@ export function Writeup() {
 
           <h3 id="passkey-wallet">Your passkey is the wallet</h3>
           <p>
-            Before a credential can be held, something has to do the holding.
-            Most identity wallets need a long-lived secret, and historically that
-            meant installing a native application, creating a custodial account,
-            backing up keys, or writing down a seed phrase. VeryGoodWallet starts
-            with something you may already have: a synced, phishing-resistant
-            passkey.
+            Of course, a credential needs somewhere safe to live. Identity wallets
+            have traditionally relied on a long-lived secret, which often meant
+            installing an app, opening a custodial account, backing up keys, or
+            writing down a seed phrase. VeryGoodWallet starts with something you
+            may already have: a synced, phishing-resistant passkey.
           </p>
           <p>
             On supported authenticators, WebAuthn&apos;s <code>prf</code> extension
@@ -177,8 +174,8 @@ export function Writeup() {
             locking the wallet clears the key material. Recovery follows the
             passkey&apos;s existing synchronization model, such as iCloud Keychain or
             Google Password Manager. The link secret in the middle of that tree
-            is what binds a credential to its holder — it returns several times
-            in this article.
+            is what binds a credential to its holder. We&apos;ll return to it several
+            times in this article.
           </p>
           <p>
             With a wallet and a signed credential in it, two problems appear
@@ -209,8 +206,8 @@ export function Writeup() {
           <h3 id="credential-anatomy">The anatomy of a credential</h3>
           <p>
             Before the how, it helps to look closely at the what. Below is the
-            license the demo DMV issues — a real signed document produced by the
-            demo&apos;s own stack, with only the long strings shortened. The
+            license the demo DMV issues. It is a real signed document produced by
+            the demo&apos;s own stack, with only the long strings shortened. The
             highlights are the parts the rest of the article keeps returning to.
           </p>
           <CredentialAnatomy />
@@ -229,7 +226,7 @@ export function Writeup() {
           <p>
             First, <strong>BBS signs a list of messages, not one blob</strong>.
             The wallet&apos;s processing turns the license into a list of
-            statements — one per field, roughly — and the DMV signs the list.
+            statements, roughly one per field, and the DMV signs the list.
             Figure 1&apos;s license becomes 32 signed slots: 28 statements from
             the document, two hidden numeric twins, and the blind-committed link
             secret with its blinding factor. The signature is 80 bytes no matter
@@ -266,19 +263,19 @@ export function Writeup() {
               response steps as Schnorr identification, made non-interactive by
               hashing the transcript with Fiat–Shamir. The arithmetic is pairings
               on BLS12-381. There is no circuit compiler, no proving key, and no
-              setup ceremony — which is a large part of why all of it runs in
-              plain TypeScript.
+              setup ceremony. That simplicity is a large part of why all of it
+              runs in plain TypeScript.
             </p>
           </div>
 
           <h3 id="holder-binding">Whose credential is it, then?</h3>
           <p>
-            Unlinkability comes with a discipline: it is only as good as what you
-            disclose. If an issuer writes a holder identifier such as{" "}
+            There is one catch: unlinkability only works if you are careful about
+            what you disclose. If an issuer writes a holder identifier such as{" "}
             <code>credentialSubject.id</code> into the document, that identifier
             surfaces in every presentation and links them all. That is why figure
-            1&apos;s subject has no <code>id</code> — the DMV deliberately issues
-            no DID, public key, or <code>holder</code> property.
+            1&apos;s subject has no <code>id</code>. The DMV deliberately issues no
+            DID, public key, or <code>holder</code> property.
           </p>
           <p>
             But if the credential does not identify its holder, what stops
@@ -287,33 +284,33 @@ export function Writeup() {
             DMV a <em>commitment</em> to its lifelong link secret, along with
             proof that the wallet knows the secret behind it. Following the
             IETF&apos;s blind BBS extension, the DMV signs that committed value
-            into the credential without ever seeing the secret itself — it is one
+            into the credential without ever seeing the secret itself. It is one
             of the 32 slots under figure 1&apos;s signature.
           </p>
           <p>
             From then on, every presentation proves that the presenter knows the
-            same hidden secret, without revealing an identifier — not even a
+            same hidden secret, without revealing an identifier, not even a
             pairwise one. And because the wallet commits the <em>same</em> secret
             into every credential it collects, it can also prove that two
-            credentials belong to the same holder — a choice the presentation
-            section returns to.
+            credentials belong to the same holder. That is a choice the
+            presentation section returns to.
           </p>
 
           <h2 id="presentations">What a presentation can prove</h2>
           <p>
-            Everything so far ends in the same act: the wallet assembles a{" "}
-            <em>presentation</em> for one verifier, for one session. Selective
-            disclosure — revealing some fields and hiding others — is the
-            simplest thing a presentation can do. The demo&apos;s presentations
-            can make three stronger kinds of statement, all about values that
-            stay hidden.
+            Whenever you use a credential, the wallet creates a{" "}
+            <em>presentation</em> for one verifier and one session. Revealing some
+            fields while hiding others is the simplest thing it can do. The demo
+            can also prove three more interesting things about values that stay
+            hidden.
           </p>
           <p>
             <strong>Range proofs</strong> prove an inequality about a hidden
             number. When the DMV issues a license, it encodes the birth date as a
-            number — days since 1900 — and signs that hidden twin alongside the
-            readable date. At presentation time the verifier picks a cutoff, and
-            the wallet proves <code>birth_date ≤ cutoff</code> against the twin.
+            number, measured in days since 1900, and signs that hidden twin
+            alongside the readable date. At presentation time the verifier picks
+            a cutoff, and the wallet proves <code>birth_date ≤ cutoff</code> against
+            the twin.
             Earlier birth dates are smaller numbers, so &quot;at least 18&quot;
             is one comparison. The Nightcap checks an 18-year cutoff; Utopia
             Wheels checks 25 against the very same credential. Contrast that with
@@ -321,7 +318,7 @@ export function Writeup() {
             frozen at issuance: flags can only answer the questions the issuer
             anticipated, while a range proof takes any cutoff, live. For the
             demo&apos;s under-18 persona, the wallet simply cannot construct the
-            proof — there is no way to lie with it.
+            proof. There is no way to lie with it.
           </p>
           <p>
             <strong>Membership proofs</strong> prove that a hidden number belongs
@@ -332,7 +329,7 @@ export function Writeup() {
           </p>
           <p>
             <strong>Equality proofs</strong> prove that two hidden values are the
-            same — the load-bearing case being the link secret shared by every
+            same. The important case here is the link secret shared by every
             credential in the wallet, which is how two credentials are shown to
             have one holder.
           </p>
@@ -345,10 +342,10 @@ export function Writeup() {
           <div className="aside">
             <p className="aside-label">For the cryptographically inclined</p>
             <p>
-              The range and membership proofs are the 2008
-              Camenisch–Chaabouni–Shelat construction — the hidden value is
+              The range and membership proofs use the 2008
+              Camenisch–Chaabouni–Shelat construction. The hidden value is
               decomposed into base-16 digits, each proven to lie in the
-              verifier&apos;s signed alphabet — and they live in the same
+              verifier&apos;s signed alphabet. These proofs live in the same
               sigma-protocol family as the BBS proof. Every predicate shares one
               Fiat–Shamir transcript with the credential proofs, which is what
               ties each claim to the exact signed hidden value it speaks about.
@@ -368,7 +365,7 @@ export function Writeup() {
           <p>
             The wallet combines all three checks in a single presentation. The
             equality proof confirms that both credentials hide the same link
-            secret — possible because the wallet committed the same
+            secret. This works because the wallet committed the same
             passkey-derived secret into each one at issuance. The verifier learns
             the intended results and nothing else, and it cannot discover the
             connection later from presentations made separately: the holder
@@ -378,7 +375,7 @@ export function Writeup() {
           <h3 id="presentation-anatomy">The anatomy of a presentation</h3>
           <p>
             Here is what actually leaves the wallet for that rental-counter
-            check — the entire response body, reduced only where marked. It is
+            check: the entire response body, reduced only where marked. It is
             worth comparing the embedded license against figure 1: the document
             that crosses the wire is mostly absence.
           </p>
@@ -401,10 +398,10 @@ export function Writeup() {
             A private credential still needs a way to stop being valid. Every
             credential the Utopia DMV signs is enrolled in an accumulator-backed
             revocation registry. The credential carries a fresh revocation id as
-            a permanently hidden signed value — figure 1&apos;s{" "}
-            <code>credentialStatus</code> — while the wallet keeps a separate
-            membership witness showing that the id belongs to the issuer&apos;s
-            current unrevoked set.
+            a permanently hidden signed value, shown as figure 1&apos;s{" "}
+            <code>credentialStatus</code>. The wallet keeps a separate membership
+            witness showing that the id belongs to the issuer&apos;s current unrevoked
+            set.
           </p>
           <p>
             When the DMV revokes a credential, the registry publishes a new epoch
@@ -415,11 +412,12 @@ export function Writeup() {
           </p>
           <p>
             During presentation, the verifier requires a non-revocation proof
-            against the registry state it trusts — the two 128-byte segments in
-            figure 3. That proof is bound to the credential proofs and the rest
-            of the presentation under the same challenge. The verifier learns
-            exactly one fact, that the credential is still valid, and never sees
-            the hidden revocation id or which registry entry produced the proof.
+            against the registry state it trusts, represented by the two 128-byte
+            segments in figure 3. That proof is bound to the credential proofs and
+            the rest of the presentation under the same challenge. The verifier
+            learns exactly one fact, that the credential is still valid, and never
+            sees the hidden revocation id or which registry entry produced the
+            proof.
           </p>
 
           <h2 id="browser">The browser is part of the thesis</h2>
@@ -427,20 +425,20 @@ export function Writeup() {
             VeryGoodWallet is partly an identity experiment and partly a
             browser-cryptography experiment. The wallet is a static browser
             application: its keys are derived locally from the passkey, its
-            credentials stay encrypted locally, and every proof in this article —
-            BBS, range, membership, equality, non-revocation — is constructed on
-            the holder&apos;s side, in the browser, in plain TypeScript. No
-            native library, no WASM build, no SNARK runtime, and no wallet
+            credentials stay encrypted locally, and every proof in this article,
+            including BBS, range, membership, equality, and non-revocation, is
+            constructed on the holder&apos;s side, in the browser, in plain TypeScript.
+            No native library, no WASM build, no SNARK runtime, and no wallet
             backend ever receives a private credential.
           </p>
           <p>
             The demo still has issuer and verifier services, because credential
             protocols require counterparties with session state, trust policy,
-            and registries — Cloudflare Workers, here. But the cryptography is
-            not tied to a privileged environment: credkit runs identically in the
-            wallet&apos;s browser tab and in a verifier&apos;s Worker, so where
-            verification happens is an architectural choice rather than a
-            limitation of the proof system.
+            and registries. In this demo, those are Cloudflare Workers. But the
+            cryptography is not tied to a privileged environment: credkit runs
+            identically in the wallet&apos;s browser tab and in a verifier&apos;s Worker,
+            so where verification happens is an architectural choice rather than
+            a limitation of the proof system.
           </p>
 
           <h2 id="standards">How it fits with existing standards</h2>
@@ -464,8 +462,9 @@ export function Writeup() {
               extensions. Requests are passed by reference to keep QR codes
               scannable, responses return through <code>direct_post</code>, and
               each proof is bound to the request&apos;s one-time nonce and the
-              verifier&apos;s identity so it cannot be replayed somewhere else —
-              figure 3&apos;s <code>challenge</code> and <code>domain</code>.
+              verifier&apos;s identity so it cannot be replayed somewhere else. In
+              figure 3, those appear as <code>challenge</code> and{" "}
+              <code>domain</code>.
             </li>
             <li>
               <strong>W3C Verifiable Credentials.</strong> Credentials are VC Data
