@@ -14,29 +14,42 @@ const TOC_SECTIONS: readonly TocSection[] = [
   { id: "pieces", label: "The pieces have caught up" },
   {
     id: "credential-and-wallet",
-    label: "A credential and its wallet",
-    children: [
-      { id: "passkey-wallet", label: "Your passkey is the wallet" },
-      { id: "credential-anatomy", label: "Anatomy of a credential" },
-    ],
+    label: "A credential, up close",
+    children: [{ id: "credential-anatomy", label: "Anatomy of a credential" }],
   },
   {
-    id: "bbs",
-    label: "BBS signatures, explained",
-    children: [{ id: "holder-binding", label: "Whose credential is it?" }],
-  },
-  {
-    id: "presentations",
-    label: "What a presentation can prove",
+    id: "privacy",
+    label: "Privacy properties and proofs",
     children: [
-      { id: "linking", label: "Linking as a choice" },
+      { id: "selective-disclosure", label: "Reveal only what is needed" },
+      { id: "holder-binding", label: "Bind without identifying" },
+      { id: "verifier-unlinkability", label: "Stay unlinkable" },
+      { id: "private-predicates", label: "Prove facts, not values" },
+      { id: "linking", label: "Link only by choice" },
       { id: "presentation-anatomy", label: "Anatomy of a presentation" },
       { id: "verifier-compare", label: "What verifiers can compare" },
+      { id: "private-revocation", label: "Revoke without tracking" },
     ],
   },
-  { id: "revocation", label: "Privacy-preserving revocation" },
-  { id: "browser", label: "The browser is part of the thesis" },
-  { id: "standards", label: "How it fits existing standards" },
+  {
+    id: "standards",
+    label: "Standards and protocols",
+    children: [
+      { id: "issuance-protocol", label: "Issuance with OID4VCI" },
+      { id: "presentation-protocol", label: "Presentation with OID4VP" },
+      { id: "data-integrity", label: "Credentials and Data Integrity" },
+      { id: "experimental-layer", label: "The experimental layer" },
+    ],
+  },
+  {
+    id: "infrastructure",
+    label: "Browser-native infrastructure",
+    children: [
+      { id: "passkey-wallet", label: "Your passkey is the wallet" },
+      { id: "browser-cryptography", label: "Proofs stay in the browser" },
+      { id: "counterparty-services", label: "What still needs a service" },
+    ],
+  },
   { id: "real", label: "Real vs. experimental" },
   { id: "vision", label: "A vision I have carried" },
   { id: "colophon", label: "Colophon" },
@@ -132,10 +145,13 @@ export function Writeup() {
             The individual pieces come from different parts of the identity, web,
             and cryptography communities. What interested me was whether they
             could now be pulled together into one coherent, browser-native
-            experience.
+            experience. The rest of this article looks at that system in three
+            layers: the privacy properties it provides, the standards and
+            protocols that connect its participants, and the browser-native
+            infrastructure that makes the wallet practical.
           </p>
 
-          <h2 id="credential-and-wallet">A credential and the wallet that holds it</h2>
+          <h2 id="credential-and-wallet">A credential, up close</h2>
           <p>
             A verifiable credential is a signed set of claims. An issuer, such as
             a DMV, university, or employer, signs those claims and gives the
@@ -146,37 +162,6 @@ export function Writeup() {
             driver&apos;s license is a W3C Verifiable Credential.
           </p>
 
-          <h3 id="passkey-wallet">Your passkey is the wallet</h3>
-          <p>
-            Of course, a credential needs somewhere safe to live. Identity wallets
-            have traditionally relied on a long-lived secret, which often meant
-            installing an app, opening a custodial account, backing up keys, or
-            writing down a seed phrase. VeryGoodWallet starts with something you
-            may already have: a synced, phishing-resistant passkey.
-          </p>
-          <p>
-            On supported authenticators, WebAuthn&apos;s <code>prf</code> extension
-            gives the wallet the same secret material whenever you authenticate.
-            The wallet passes that through HKDF to derive the keys it needs:
-          </p>
-          <pre>
-            <code>{`passkey PRF output
-  └─ HKDF
-      ├─ vault key      AES-GCM over everything stored at rest
-      ├─ link secret    one secret for life, blind-committed into
-      │                 every credential, no issuer ever sees it
-      └─ issuance keys  one per issuer, for request freshness only`}</code>
-          </pre>
-          <p>
-            The passkey is more than a login mechanism. It is the root of the
-            wallet&apos;s key hierarchy. The derived keys live only in memory while
-            the wallet is unlocked, credentials are encrypted in the browser, and
-            locking the wallet clears the key material. Recovery follows the
-            passkey&apos;s existing synchronization model, such as iCloud Keychain or
-            Google Password Manager. The link secret in the middle of that tree
-            is what binds a credential to its holder. We&apos;ll return to it several
-            times in this article.
-          </p>
           <p>
             With a wallet and a signed credential in it, two problems appear
             immediately, and they shape everything that follows. With a typical
@@ -212,7 +197,19 @@ export function Writeup() {
           </p>
           <CredentialAnatomy />
 
-          <h2 id="bbs">BBS signatures, explained</h2>
+          <h2 id="privacy">Privacy properties and the proofs behind them</h2>
+          <p>
+            The cryptography in VeryGoodWallet is easier to understand as a set
+            of privacy rules. Reveal only what a verifier needs. Do not add a
+            stable holder identifier. Keep separate presentations unlinkable by
+            default. Let the holder prove a connection only when they choose to.
+            Prove conditions without exposing the underlying values, and prove
+            that a credential remains valid without telling the issuer where it
+            was used. Different proof systems work together to enforce those
+            rules.
+          </p>
+
+          <h3 id="selective-disclosure">Reveal only what is needed</h3>
           <p>
             The proof block at the bottom of the license names the signature
             scheme: BBS, after Boneh, Boyen, and Shacham, whose 2004 work on
@@ -220,8 +217,8 @@ export function Writeup() {
             <a href="https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/">
               IETF draft
             </a>
-            . Two properties separate it from the signatures the web already runs
-            on, like ECDSA or Ed25519.
+            . Two properties separate it from signatures the web already uses,
+            such as ECDSA or Ed25519.
           </p>
           <p>
             First, <strong>BBS signs a list of messages, not one blob</strong>.
@@ -236,25 +233,13 @@ export function Writeup() {
             Second, <strong>the signature itself is never shown to anyone</strong>.
             The wallet keeps it. What a verifier receives instead is a{" "}
             <em>proof</em>: a freshly randomized demonstration that the wallet
-            holds a valid DMV signature over the full list, which reveals exactly
-            the messages you choose and nothing about the rest. The verifier
-            learns that the hidden messages were signed, but not what they say.
+            holds a valid DMV signature over the full list. The proof reveals
+            exactly the messages the holder chooses and nothing about the rest.
+            The verifier learns that the hidden messages were signed, but not what
+            they say. That is selective disclosure. The same license can reveal a
+            birth date to one verifier and keep it hidden from another, with the
+            wallet&apos;s consent screen controlling the choice.
           </p>
-          <p>This one change of habit buys two properties:</p>
-          <ul>
-            <li>
-              <strong>Selective disclosure.</strong> Reveal a birth date to one
-              verifier and only an over-18 result to another, all from the same
-              credential. The wallet&apos;s consent screen is where that choice is
-              made.
-            </li>
-            <li>
-              <strong>Unlinkability.</strong> Each proof is built from new
-              randomness, so two presentations of the same credential share no
-              bytes a pair of verifiers could match. The only possible overlap
-              comes from values you choose to disclose in both places.
-            </li>
-          </ul>
           <div className="aside">
             <p className="aside-label">For the cryptographically inclined</p>
             <p>
@@ -268,41 +253,58 @@ export function Writeup() {
             </p>
           </div>
 
-          <h3 id="holder-binding">Whose credential is it, then?</h3>
+          <h3 id="holder-binding">Bind without identifying the holder</h3>
           <p>
-            There is one catch: unlinkability only works if you are careful about
-            what you disclose. If an issuer writes a holder identifier such as{" "}
-            <code>credentialSubject.id</code> into the document, that identifier
-            surfaces in every presentation and links them all. That is why figure
-            1&apos;s subject has no <code>id</code>. The DMV deliberately issues no
-            DID, public key, or <code>holder</code> property.
+            Removing a stable holder identifier creates an obvious question:
+            what stops someone else from presenting a stolen credential? Adding
+            an identifier such as <code>credentialSubject.id</code> would solve
+            that problem, but it would also surface in every presentation and
+            link them all. That is why figure 1&apos;s subject has no <code>id</code>.
+            The DMV deliberately issues no DID, public key, or <code>holder</code>{" "}
+            property.
           </p>
           <p>
-            But if the credential does not identify its holder, what stops
-            someone else from presenting a stolen copy? This is where the link
-            secret from the key tree comes in. At issuance, the wallet sends the
-            DMV a <em>commitment</em> to its lifelong link secret, along with
-            proof that the wallet knows the secret behind it. Following the
-            IETF&apos;s blind BBS extension, the DMV signs that committed value
-            into the credential without ever seeing the secret itself. It is one
-            of the 32 slots under figure 1&apos;s signature.
+            The wallet solves that problem with a lifelong link secret derived
+            from its passkey. At issuance, it sends the DMV a <em>commitment</em>{" "}
+            to that secret, along with proof that it knows the value behind the
+            commitment. Following the IETF&apos;s blind BBS extension, the DMV signs
+            the committed value into the credential without ever seeing it. It
+            is one of the 32 slots under figure 1&apos;s signature.
           </p>
           <p>
             From then on, every presentation proves that the presenter knows the
             same hidden secret, without revealing an identifier, not even a
             pairwise one. And because the wallet commits the <em>same</em> secret
             into every credential it collects, it can also prove that two
-            credentials belong to the same holder. That is a choice the
-            presentation section returns to.
+            credentials belong to the same holder when the holder chooses to
+            prove that connection. The infrastructure section returns to how the
+            passkey creates and protects that secret.
           </p>
 
-          <h2 id="presentations">What a presentation can prove</h2>
+          <h3 id="verifier-unlinkability">Stay unlinkable across verifiers</h3>
+          <p>
+            Selective disclosure controls what a verifier learns, but privacy also
+            depends on whether two verifiers can recognize the same credential.
+            Every BBS-derived proof uses fresh randomness, so presenting the same
+            credential twice does not produce matching proof bytes. Because the
+            credential contains no stable holder identifier, the proofs themselves
+            give verifiers nothing persistent to compare.
+          </p>
+          <p>
+            Unlinkability is the default, not a promise that all correlation is
+            impossible. Values deliberately disclosed in two places can still
+            overlap. For range and membership proofs, the wallet also checks
+            published proof parameters before using them. That prevents a
+            verifier from handing each visitor slightly different parameters as a
+            hidden tag.
+          </p>
+
+          <h3 id="private-predicates">Prove facts, not values</h3>
           <p>
             Whenever you use a credential, the wallet creates a{" "}
-            <em>presentation</em> for one verifier and one session. Revealing some
-            fields while hiding others is the simplest thing it can do. The demo
-            can also prove three more interesting things about values that stay
-            hidden.
+            <em>presentation</em> for one verifier and one session. It can reveal
+            selected fields, but it can also prove useful facts about values that
+            remain hidden.
           </p>
           <p>
             <strong>Range proofs</strong> prove an inequality about a hidden
@@ -327,18 +329,6 @@ export function Writeup() {
             show the code is one of the coastal districts without revealing which
             one.
           </p>
-          <p>
-            <strong>Equality proofs</strong> prove that two hidden values are the
-            same. The important case here is the link secret shared by every
-            credential in the wallet, which is how two credentials are shown to
-            have one holder.
-          </p>
-          <p>
-            One safeguard applies to all of these: each verifier publishes its
-            proof parameters at a well-known URL, and the wallet checks their
-            hash before proving. Otherwise a verifier could hand slightly
-            different parameters to each visitor and use them as tags.
-          </p>
           <div className="aside">
             <p className="aside-label">For the cryptographically inclined</p>
             <p>
@@ -352,7 +342,16 @@ export function Writeup() {
             </p>
           </div>
 
-          <h3 id="linking">Linking as a choice</h3>
+          <h3 id="linking">Link credentials only by choice</h3>
+          <p>
+            <strong>Equality proofs</strong> show that two hidden values are the
+            same. The important case here is the link secret shared by every
+            credential in the wallet. A composite proof can combine that equality
+            statement with BBS credential proofs and private predicates under one
+            challenge. The shared transcript ties each predicate to the signed
+            value it describes, while the equality proof establishes that the
+            credentials carry the same hidden link secret.
+          </p>
           <p>
             Presentations are unlinkable by default, but sometimes the holder{" "}
             <em>wants</em> to prove a connection. Utopia Wheels&apos;
@@ -363,12 +362,12 @@ export function Writeup() {
           </p>
           <PresentationCards />
           <p>
-            The wallet combines all three checks in a single presentation. The
-            equality proof confirms that both credentials hide the same link
+            The wallet combines all three checks in one composite presentation.
+            The equality proof confirms that both credentials hide the same link
             secret. This works because the wallet committed the same
             passkey-derived secret into each one at issuance. The verifier learns
             the intended results and nothing else, and it cannot discover the
-            connection later from presentations made separately: the holder
+            connection later from presentations made separately. The holder
             chooses when the link is provable.
           </p>
 
@@ -393,7 +392,7 @@ export function Writeup() {
             common value that connects the records.
           </p>
 
-          <h2 id="revocation">Privacy-preserving revocation</h2>
+          <h3 id="private-revocation">Revoke without tracking the holder</h3>
           <p>
             A private credential still needs a way to stop being valid. Every
             credential the Utopia DMV signs is enrolled in an accumulator-backed
@@ -420,70 +419,57 @@ export function Writeup() {
             proof.
           </p>
 
-          <h2 id="browser">The browser is part of the thesis</h2>
+          <h2 id="standards">Standards and protocols</h2>
           <p>
-            VeryGoodWallet is partly an identity experiment and partly a
-            browser-cryptography experiment. The wallet is a static browser
-            application: its keys are derived locally from the passkey, its
-            credentials stay encrypted locally, and every proof in this article,
-            including BBS, range, membership, equality, and non-revocation, is
-            constructed on the holder&apos;s side, in the browser, in plain TypeScript.
-            No native library, no WASM build, no SNARK runtime, and no wallet
-            backend ever receives a private credential.
-          </p>
-          <p>
-            The demo still has issuer and verifier services, because credential
-            protocols require counterparties with session state, trust policy,
-            and registries. In this demo, those are Cloudflare Workers. But the
-            cryptography is not tied to a privileged environment: credkit runs
-            identically in the wallet&apos;s browser tab and in a verifier&apos;s Worker,
-            so where verification happens is an architectural choice rather than
-            a limitation of the proof system.
+            The privacy layer describes what the wallet can prove and what it
+            keeps hidden. Standards and protocols give issuers, wallets, and
+            verifiers a shared way to request, carry, and check those proofs.
           </p>
 
-          <h2 id="standards">How it fits with existing standards</h2>
+          <h3 id="issuance-protocol">Issuance with OID4VCI</h3>
           <p>
-            The demo brings these privacy features to protocols and formats that
-            are already used for verifiable credentials:
+            OpenID for Verifiable Credential Issuance handles the exchange between
+            the DMV and the wallet. The demo uses its pre-authorized code flow.
+            The wallet&apos;s holder-binding commitment travels as a documented
+            extension in the credential request, alongside the standard
+            proof-of-possession JWT. OID4VCI provides the flow; blind BBS issuance
+            gives that extension its privacy properties.
           </p>
-          <ul>
-            <li>
-              <strong>OpenID for Verifiable Credential Issuance (OID4VCI).</strong>{" "}
-              The DMV uses the pre-authorized code flow. The holder-binding
-              commitment is an extension field in the credential request,
-              alongside the standard proof-of-possession JWT.
-            </li>
-            <li>
-              <strong>
-                OpenID for Verifiable Presentations (OID4VP) with DCQL.
-              </strong>{" "}
-              Verifiers make requests in the standard query language. Predicate,
-              linkage, and non-revocation requirements are small, documented
-              extensions. Requests are passed by reference to keep QR codes
-              scannable, responses return through <code>direct_post</code>, and
-              each proof is bound to the request&apos;s one-time nonce and the
-              verifier&apos;s identity so it cannot be replayed somewhere else. In
-              figure 3, those appear as <code>challenge</code> and{" "}
-              <code>domain</code>.
-            </li>
-            <li>
-              <strong>W3C Verifiable Credentials.</strong> Credentials are VC Data
-              Model 2.0 documents with Data Integrity proofs, using standard
-              JSON-LD processing and envelopes.
-            </li>
-            <li>
-              <strong>IETF BBS.</strong> The signature core implements the CFRG BBS
-              draft and its blind-issuance companion. The implementation is
-              checked against the drafts&apos; published test fixtures.
-            </li>
-          </ul>
+
+          <h3 id="presentation-protocol">Presentation with OID4VP</h3>
           <p>
-            There is one important exception: the cryptosuite itself is
-            experimental. The W3C&apos;s candidate BBS suite, <code>bbs-2023</code>,
-            supports selective disclosure, but not predicates, multi-credential
-            presentations, or a link secret. This demo uses{" "}
-            <code>credkit-bbs-sha-2026</code>, an experimental Data Integrity suite
-            from <a href="https://github.com/tmarkovski/credkit">credkit</a>, a
+            OpenID for Verifiable Presentations carries requests and responses,
+            while DCQL describes what the verifier wants. Predicate, linkage, and
+            non-revocation requirements are small, documented extensions to that
+            query. Requests are passed by reference to keep QR codes scannable,
+            and responses return through <code>direct_post</code>.
+          </p>
+          <p>
+            Every proof is bound to the request&apos;s one-time nonce and the
+            verifier&apos;s identity, so a response cannot be replayed somewhere
+            else. In figure 3, those values appear as <code>challenge</code> and{" "}
+            <code>domain</code>.
+          </p>
+
+          <h3 id="data-integrity">Credentials and Data Integrity</h3>
+          <p>
+            The credentials themselves are W3C Verifiable Credential Data Model
+            2.0 documents. Data Integrity supplies the proof envelope, while
+            standard JSON-LD processing turns the document into the statements
+            signed by BBS. Underneath that envelope, the signature core implements
+            the CFRG BBS draft and its blind-issuance companion. The implementation
+            is checked against the drafts&apos; published test fixtures.
+          </p>
+
+          <h3 id="experimental-layer">Where the experimental layer begins</h3>
+          <p>
+            The standards provide the surrounding flows and document model, but
+            the complete proof layer in this demo is experimental. The W3C&apos;s
+            candidate BBS suite, <code>bbs-2023</code>, supports selective
+            disclosure, but not predicates, multi-credential presentations, or a
+            link secret. This demo uses <code>credkit-bbs-sha-2026</code>, an
+            experimental Data Integrity suite from{" "}
+            <a href="https://github.com/tmarkovski/credkit">credkit</a>, a
             companion project of mine.
           </p>
           <p>
@@ -531,6 +517,75 @@ export function Writeup() {
             </a>
             . Thanks as well to the wider CFRG community that helped move both
             forward.
+          </p>
+
+          <h2 id="infrastructure">Browser-native infrastructure</h2>
+          <p>
+            The privacy properties and protocols only become useful if the holder
+            can manage keys and construct proofs without handing their credentials
+            to a backend. This is where passkeys and the modern browser fit into
+            the design.
+          </p>
+
+          <h3 id="passkey-wallet">Your passkey is the wallet</h3>
+          <p>
+            Identity wallets have traditionally relied on a long-lived secret,
+            which often meant installing an app, opening a custodial account,
+            backing up keys, or writing down a seed phrase. VeryGoodWallet starts
+            with something you may already have: a synced, phishing-resistant
+            passkey.
+          </p>
+          <p>
+            On supported authenticators, WebAuthn&apos;s <code>prf</code> extension
+            gives the wallet the same secret material whenever you authenticate.
+            The wallet passes that through HKDF to derive the keys it needs:
+          </p>
+          <pre>
+            <code>{`passkey PRF output
+  └─ HKDF
+      ├─ vault key      AES-GCM over everything stored at rest
+      ├─ link secret    one secret for life, blind-committed into
+      │                 every credential, no issuer ever sees it
+      └─ issuance keys  one per issuer, for request freshness only`}</code>
+          </pre>
+          <p>
+            The passkey is more than a login mechanism. It is the root of the
+            wallet&apos;s key hierarchy. The derived keys live only in memory while
+            the wallet is unlocked, credentials are encrypted in the browser, and
+            locking the wallet clears the key material. Recovery follows the
+            passkey&apos;s existing synchronization model, such as iCloud Keychain or
+            Google Password Manager. The link secret in the middle of that tree
+            is the hidden value used for holder binding and holder-chosen
+            credential linking.
+          </p>
+
+          <h3 id="browser-cryptography">Proofs stay in the browser</h3>
+          <p>
+            VeryGoodWallet is partly an identity experiment and partly a
+            browser-cryptography experiment. The wallet is a static browser
+            application: its keys are derived locally from the passkey, its
+            credentials stay encrypted locally, and every proof in this article,
+            including BBS, range, membership, equality, and non-revocation, is
+            constructed on the holder&apos;s side, in the browser, in plain TypeScript.
+            No native library, no WASM build, no SNARK runtime, and no wallet
+            backend ever receives a private credential.
+          </p>
+
+          <h3 id="counterparty-services">What still needs a service</h3>
+          <p>
+            The demo still has issuer and verifier services, because credential
+            protocols require counterparties with session state, trust policy,
+            and registries. In this demo, those services are Cloudflare Workers.
+            The verifier checks a presentation itself, without calling the issuer,
+            so the issuer does not learn where a credential is used.
+          </p>
+          <p>
+            The cryptography is not tied to a privileged environment. Credkit runs
+            identically in the wallet&apos;s browser tab and in a verifier&apos;s Worker,
+            so where verification happens is an architectural choice rather than
+            a limitation of the proof system. Registry state is public data that
+            wallets can download and cache as a whole, allowing witness updates
+            without asking about one credential at a time.
           </p>
 
           <h2 id="real">What is real and what remains experimental</h2>
