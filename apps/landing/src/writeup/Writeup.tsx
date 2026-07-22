@@ -504,21 +504,6 @@ export function Writeup() {
             statements under one challenge, is the gap the credkit draft
             documents.
           </p>
-          <p className="spec-credit">
-            None of this would exist without the people behind the drafts it
-            builds on: Tobias Looker, Vasilis Kalos, Andrew Whitehead, and Mike
-            Lodder on the{" "}
-            <a href="https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/">
-              core BBS specification
-            </a>
-            , and Vasilis Kalos and Greg M. Bernstein on the{" "}
-            <a href="https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-blind-signatures/">
-              blind BBS specification
-            </a>
-            . Thanks as well to the wider CFRG community that helped move both
-            forward.
-          </p>
-
           <h2 id="infrastructure">Browser-native infrastructure</h2>
           <p>
             The privacy properties and protocols only become useful if the holder

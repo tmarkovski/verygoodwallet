@@ -404,14 +404,6 @@ body {
 .prose p {
   margin-top: 1rem;
 }
-.prose .spec-credit,
-.prose .spec-credit a {
-  color: var(--pp-muted);
-}
-.prose .spec-credit {
-  font-size: 13px;
-  line-height: 1.6;
-}
 .prose ul {
   margin-top: 1rem;
   padding-left: 1.4rem;
