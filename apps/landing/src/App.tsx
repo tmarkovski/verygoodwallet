@@ -1,7 +1,7 @@
 /**
  * The cover of the demo: states the thesis, introduces the cast, and opens
  * the guided tour. With ?tour=stamped (the tour's final hop) it renders the
- * stamped visa page instead — the only place the whole journey exists.
+ * stamped visa page instead, the only place the whole journey exists.
  */
 
 import {
@@ -43,7 +43,7 @@ function Crest({ size = 88 }: { size?: number }) {
         );
       })}
       <circle cx="48" cy="41" r="10.5" stroke="currentColor" strokeWidth="2.4" />
-      {/* Key shaft with two wards — teeth to one side so it reads as a key. */}
+      {/* Key shaft with two wards. Teeth sit to one side so it reads as a key. */}
       <path
         d="M48 51.5v16M48 61h7M48 66.5h5"
         stroke="currentColor"
@@ -184,7 +184,7 @@ const CAST: {
   },
   {
     name: "The Nightcap",
-    role: "Verifier — wants one bit",
+    role: "Verifier · wants one bit",
     line: "A bottle shop that asks one question: are you 18 or over? It gets a zero-knowledge proof instead of your birthday.",
     href: SITE_ORIGINS.shop,
     band: "#171310",
@@ -192,7 +192,7 @@ const CAST: {
   },
   {
     name: "Utopia Wheels",
-    role: "Verifier — wants a name",
+    role: "Verifier · wants a name",
     line: "A rental counter that needs your name, license number, and proof that you're over 25. The birth date still stays hidden.",
     href: SITE_ORIGINS.rentals,
     band: "#00694f",
@@ -215,7 +215,7 @@ const STAMPS: { name: string; line: string; ink: string; tilt: string }[] = [
   },
   {
     name: "The Nightcap",
-    line: "Learned: over 18 — nothing else",
+    line: "Learned: over 18, nothing else",
     ink: "var(--pp-crimson)",
     tilt: "-2deg",
   },
@@ -232,7 +232,7 @@ function StampedPage() {
   const page = useRef<HTMLDivElement>(null);
 
   // Each stamp-slam's end is the moment of impact (the settle animation takes
-  // over from there) — shudder the whole page under it, iMessage-slam style.
+  // over from there). Shudder the whole page under it, iMessage-slam style.
   // Animation events bubble, so one listener on the card hears all four.
   const shudder = (event: AnimationEvent<HTMLDivElement>) => {
     if (event.animationName !== "stamp-slam" || page.current === null) return;
@@ -347,7 +347,7 @@ export default function App() {
 
   return (
     <div className="passport-scroll">
-      {/* ——— The cover ——— */}
+      {/* The cover. */}
       <header className="passport-page passport-cover foil-frame relative flex flex-col items-center justify-center bg-accent px-6 py-20 text-center text-accent-contrast">
         <RepositoryMark className="absolute right-6 top-6" />
         <p className="font-label text-[11px] font-semibold uppercase tracking-[0.3em] text-foil">
@@ -393,7 +393,7 @@ export default function App() {
       </header>
 
       <main className="mx-auto w-full max-w-3xl px-5">
-        {/* ——— Page 01 · the idea ——— */}
+        {/* Page 01: the idea. */}
         <section className="passport-page passport-content-page relative">
           <div
             aria-hidden="true"
@@ -431,7 +431,7 @@ export default function App() {
           </p>
         </section>
 
-        {/* ——— Page 02 · the cast ——— */}
+        {/* Page 02: the cast. */}
         <section className="passport-page passport-content-page">
           <SectionTitle no="02">The cast</SectionTitle>
           <div className="mt-7 grid gap-5 sm:grid-cols-2">
@@ -468,7 +468,7 @@ export default function App() {
           </p>
         </section>
 
-        {/* ——— Page 03 · the tour ——— */}
+        {/* Page 03: the tour. */}
         <section className="passport-page passport-content-page">
           <SectionTitle no="03">The tour</SectionTitle>
           <div className="mt-7 rounded-3xl border border-line bg-surface p-7">
@@ -498,50 +498,40 @@ export default function App() {
               </p>
             </div>
           </div>
-          <div className="mt-5 rounded-3xl border border-dashed border-line-strong p-7">
-            <p className="font-label text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">
-              Prefer to watch
-            </p>
-            <p className="mt-2 text-[13.5px] leading-relaxed text-ink-dim">
-              A recorded walkthrough will go here when the demo moves to its
-              custom domains. For now, you can try the live tour above.
-            </p>
-          </div>
         </section>
 
-        {/* ——— Page 04 · the writeup ——— */}
+        {/* Page 04: the article. */}
         <section className="passport-page passport-content-page">
-          <SectionTitle no="04">The writeup</SectionTitle>
+          <SectionTitle no="04">The article</SectionTitle>
           <a
             href="/writeup/"
             className="mt-7 block rounded-3xl border border-line bg-raised p-7 transition-transform duration-150 hover:-translate-y-0.5 hover:border-line-strong"
           >
             <h3 className="font-display text-xl font-bold tracking-tight">
-              Verifiable credentials, BBS, and zero-knowledge proofs
+              VeryGoodWallet: the identity wallet I wanted to build years ago
             </h3>
             <p className="mt-2 text-[12px] leading-relaxed text-muted">
-              The longer explanation behind the demo. It starts with
-              verifiable credentials, then works through BBS, range proofs,
-              and holder binding. No zero-knowledge background needed. The
-              implementation uses OID4VCI, OID4VP, and IETF BBS with an
-              experimental Data Integrity cryptosuite.
+              The story and technology behind this passkey-native,
+              pure-TypeScript identity wallet. It follows the idea from its
+              origins through the privacy properties, protocols, and
+              browser-native infrastructure that make the demo work. No
+              zero-knowledge background needed.
             </p>
             <ul className="mt-4 space-y-2 text-[13.5px] leading-relaxed text-ink-dim">
               <li>
-                · Why ordinary signatures make you share too much and allow
-                presentations to be linked — and how BBS fixes both
+                · Why passkeys change the wallet key-management problem
               </li>
               <li>
-                · How a range proof checks any age cutoff without revealing
-                your birth date
+                · How selective disclosure, private age proofs, holder binding,
+                and revocation work together
               </li>
               <li>
-                · How a blind link secret binds credentials to you while
-                keeping separate presentations unlinkable
+                · How the holder-side proof stack runs directly in the browser
+                and verifies with the same TypeScript implementation
               </li>
             </ul>
             <p className="mt-4 font-label text-[10px] uppercase tracking-[0.2em] text-stamp">
-              Read the full writeup →
+              Read the article →
             </p>
           </a>
         </section>
