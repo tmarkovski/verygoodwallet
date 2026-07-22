@@ -16,8 +16,11 @@ The cryptographic engine behind VeryGoodWallet lives in the separate
 **[credkit repository](https://github.com/tmarkovski/credkit)**. It provides the
 TypeScript implementations of BBS signatures, blind issuance, selective
 disclosure, composite zero-knowledge proofs, hidden-value predicates, and
-privacy-preserving revocation used throughout this demo. This repository adds
-the wallet, issuer, verifier, and protocol integration around that core.
+privacy-preserving revocation used throughout this demo; the composite proof
+construction is documented in the
+[credkit draft specification](https://tmarkovski.github.io/credkit/). This
+repository adds the wallet, issuer, verifier, and protocol integration around
+that core.
 
 credkit is experimental research software and has not been independently
 audited.
