@@ -9,6 +9,10 @@ import { CredentialAnatomy } from "./CredentialAnatomy";
 import { PresentationCards, PresentationWire } from "./PresentationAnatomy";
 import { Toc, type TocSection } from "./Toc";
 
+const VERYGOODWALLET_REPO_URL = "https://github.com/tmarkovski/verygoodwallet";
+const CREDKIT_REPO_URL = "https://github.com/tmarkovski/credkit";
+const CREDKIT_SPEC_URL = "https://tmarkovski.github.io/credkit/";
+
 const TOC_SECTIONS: readonly TocSection[] = [
   { id: "origins", label: "Where the idea came from" },
   { id: "pieces", label: "The pieces have caught up" },
@@ -77,6 +81,36 @@ export function Writeup() {
             in zero-knowledge proofs to follow along. If you have one, there&apos;s plenty
             of technical detail here to dig into.
           </p>
+          <nav
+            aria-label="Project links"
+            className="mt-5 flex flex-wrap items-center gap-x-2 gap-y-1 font-label text-[11px] uppercase tracking-[0.12em] text-ink-dim"
+          >
+            <span className="text-muted">Project links:</span>
+            <a
+              href={VERYGOODWALLET_REPO_URL}
+              className="text-stamp underline decoration-stamp/40 underline-offset-2 hover:decoration-stamp"
+            >
+              VeryGoodWallet repo
+            </a>
+            <span aria-hidden="true" className="text-foil">
+              ·
+            </span>
+            <a
+              href={CREDKIT_REPO_URL}
+              className="text-stamp underline decoration-stamp/40 underline-offset-2 hover:decoration-stamp"
+            >
+              credkit repo
+            </a>
+            <span aria-hidden="true" className="text-foil">
+              ·
+            </span>
+            <a
+              href={CREDKIT_SPEC_URL}
+              className="text-stamp underline decoration-stamp/40 underline-offset-2 hover:decoration-stamp"
+            >
+              Draft specification
+            </a>
+          </nav>
         </header>
 
         <article className="prose prose-shell mt-4">
@@ -632,19 +666,15 @@ export function Writeup() {
             </p>
             <ul>
               <li>
-                <a href="https://github.com/tmarkovski/verygoodwallet">
-                  VeryGoodWallet
-                </a>
+                <a href={VERYGOODWALLET_REPO_URL}>VeryGoodWallet</a>
                 : the complete demo
               </li>
               <li>
-                <a href="https://github.com/tmarkovski/credkit">credkit</a>: the
-                cryptography implementation
+                <a href={CREDKIT_REPO_URL}>credkit</a>: the cryptography
+                implementation
               </li>
               <li>
-                <a href="https://tmarkovski.github.io/credkit/">
-                  Credkit draft specification
-                </a>
+                <a href={CREDKIT_SPEC_URL}>Credkit draft specification</a>
                 : the design and construction details
               </li>
             </ul>
