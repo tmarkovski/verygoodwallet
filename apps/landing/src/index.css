@@ -500,6 +500,21 @@ body {
   margin-top: 0.6rem;
 }
 
+/* Source links sit outside the article's narrative ending. */
+.prose .source-note {
+  margin-top: 3rem;
+  border-top: 1px solid var(--pp-line-strong);
+  padding-top: 1rem;
+  color: var(--pp-ink-dim);
+  font-size: 14.5px;
+}
+.prose .source-note p {
+  margin-top: 0;
+}
+.prose .source-note ul {
+  margin-top: 0.75rem;
+}
+
 /* ------------------------------------------------------------------------
  * Table of contents (right rail, ≥lg via layout grid)
  * --------------------------------------------------------------------- */

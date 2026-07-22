@@ -52,7 +52,6 @@ const TOC_SECTIONS: readonly TocSection[] = [
   },
   { id: "real", label: "Real vs. experimental" },
   { id: "vision", label: "A vision I have carried" },
-  { id: "colophon", label: "Colophon" },
 ];
 
 export function Writeup() {
@@ -641,24 +640,31 @@ export function Writeup() {
             excited me about this space with tools that can now do it justice.
           </p>
 
-          <h2 id="colophon">Colophon</h2>
-          <p>
-            The project is a pnpm monorepo built with React, Vite, and Tailwind on
-            Cloudflare Workers&apos; free tier. The Worker APIs use Hono, and
-            verification sessions live in SQLite-backed Durable Objects. Credkit
-            handles the BBS core, range and membership proofs, accumulator
-            revocation, composite presentations, and the JSON-LD cryptosuite in
-            pure TypeScript over BLS12-381. WebAuthn PRF and HKDF provide the key
-            hierarchy, with no WASM anywhere. Every major flow has unit,
-            integration, and live end-to-end tests. Source:{" "}
-            <a href="https://github.com/tmarkovski/verygoodwallet">
-              github.com/tmarkovski/verygoodwallet
-            </a>{" "}
-            and <a href="https://github.com/tmarkovski/credkit">
-              github.com/tmarkovski/credkit
-            </a>
-            .
-          </p>
+          <footer className="source-note">
+            <p>
+              Everything described here is open source. The complete demo is in
+              VeryGoodWallet, and the cryptography and draft specification are in
+              credkit.
+            </p>
+            <ul>
+              <li>
+                <a href="https://github.com/tmarkovski/verygoodwallet">
+                  VeryGoodWallet
+                </a>
+                : the complete demo
+              </li>
+              <li>
+                <a href="https://github.com/tmarkovski/credkit">credkit</a>: the
+                cryptography implementation
+              </li>
+              <li>
+                <a href="https://tmarkovski.github.io/credkit/">
+                  Credkit draft specification
+                </a>
+                : the design and construction details
+              </li>
+            </ul>
+          </footer>
         </article>
       </div>
 
