@@ -71,10 +71,10 @@ export function Writeup() {
             VeryGoodWallet: the identity wallet I wanted to build years ago
           </h1>
           <p className="mt-4 text-[16px] leading-relaxed text-ink-dim">
-            The story and technology behind a passkey-native identity wallet, an
-            issuer, and two verifiers. The setting is fictional, but the protocols
-            and cryptography are real. You don&apos;t need a background in
-            zero-knowledge proofs to follow along. If you have one, there&apos;s plenty
+            The story and technology behind a passkey-native, pure-TypeScript
+            identity wallet, an issuer, and two verifiers. The setting is fictional,
+            but the protocols and cryptography are real. You don&apos;t need a background
+            in zero-knowledge proofs to follow along. If you have one, there&apos;s plenty
             of technical detail here to dig into.
           </p>
         </header>
@@ -134,11 +134,12 @@ export function Writeup() {
             randomized presentations.
           </p>
           <p>
-            Modern browsers have also become capable cryptographic runtimes. All
-            of the cryptography on this site, including BBS signatures, range and
-            membership proofs, cross-credential equality, and non-revocation
-            proofs, runs in plain TypeScript on ordinary web infrastructure. There
-            is no WASM, circuit compiler, proving key, or trusted setup.
+            VeryGoodWallet is a passkey-native system implemented end to end in
+            pure TypeScript. The wallet derives its keys from a passkey and
+            constructs every holder-side proof directly in the browser. The same
+            cryptographic implementation verifies those proofs in Cloudflare
+            Workers. There is no WASM, native cryptographic library, circuit
+            compiler, or wallet backend involved in the holder&apos;s cryptography.
           </p>
           <p>
             The individual pieces come from different parts of the identity, web,
@@ -207,6 +208,13 @@ export function Writeup() {
             was used. Different proof systems work together to enforce those
             rules.
           </p>
+          <p>
+            When a presentation needs more than one statement, the wallet combines
+            its BBS, predicate, equality, and non-revocation proofs under one
+            Fiat–Shamir challenge. The shared transcript binds the components to
+            one another and to one verifier request. The sections below explain
+            what each component proves within that composite construction.
+          </p>
 
           <h3 id="selective-disclosure">Reveal only what is needed</h3>
           <p>
@@ -247,8 +255,7 @@ export function Writeup() {
               response steps as Schnorr identification, made non-interactive by
               hashing the transcript with Fiat–Shamir. The arithmetic is pairings
               on BLS12-381. There is no circuit compiler, no proving key, and no
-              setup ceremony. That simplicity is a large part of why all of it
-              runs in plain TypeScript.
+              setup ceremony.
             </p>
           </div>
 
@@ -335,9 +342,8 @@ export function Writeup() {
               Camenisch–Chaabouni–Shelat construction. The hidden value is
               decomposed into base-16 digits, each proven to lie in the
               verifier&apos;s signed alphabet. These proofs live in the same
-              sigma-protocol family as the BBS proof. Every predicate shares one
-              Fiat–Shamir transcript with the credential proofs, which is what
-              ties each claim to the exact signed hidden value it speaks about.
+              sigma-protocol family as the BBS proof, which allows them to
+              participate in the composite construction described above.
             </p>
           </div>
 
@@ -345,10 +351,8 @@ export function Writeup() {
           <p>
             <strong>Equality proofs</strong> show that two hidden values are the
             same. The important case here is the link secret shared by every
-            credential in the wallet. A composite proof can combine that equality
-            statement with BBS credential proofs and private predicates under one
-            challenge. The shared transcript ties each predicate to the signed
-            value it describes, while the equality proof establishes that the
+            credential in the wallet. The equality proof joins the credential and
+            predicate proofs in a composite presentation to establish that the
             credentials carry the same hidden link secret.
           </p>
           <p>
@@ -363,11 +367,9 @@ export function Writeup() {
           <p>
             The wallet combines all three checks in one composite presentation.
             The equality proof confirms that both credentials hide the same link
-            secret. This works because the wallet committed the same
-            passkey-derived secret into each one at issuance. The verifier learns
-            the intended results and nothing else, and it cannot discover the
-            connection later from presentations made separately. The holder
-            chooses when the link is provable.
+            secret. The verifier learns the intended results and nothing else, and
+            it cannot discover the connection later from presentations made
+            separately. The holder chooses when the link is provable.
           </p>
 
           <h3 id="presentation-anatomy">The anatomy of a presentation</h3>
@@ -411,11 +413,10 @@ export function Writeup() {
           <p>
             During presentation, the verifier requires a non-revocation proof
             against the registry state it trusts, represented by the two 128-byte
-            segments in figure 3. That proof is bound to the credential proofs and
-            the rest of the presentation under the same challenge. The verifier
-            learns exactly one fact, that the credential is still valid, and never
-            sees the hidden revocation id or which registry entry produced the
-            proof.
+            segments in figure 3. That proof joins the composite presentation
+            described above. The verifier learns exactly one fact, that the
+            credential is still valid, and never sees the hidden revocation id or
+            which registry entry produced the proof.
           </p>
 
           <h2 id="standards">Standards and protocols</h2>
@@ -481,17 +482,16 @@ export function Writeup() {
           <p>
             Credkit keeps <code>bbs-2023</code>&apos;s document pipeline, including
             canonicalization, selection, and mandatory pointers, and replaces the
-            proof layer with the composite construction described above. Its
-            identifiers are deliberately distinct, and a{" "}
+            proof layer with the composite construction described above.
+          </p>
+          <p>
+            It is research work, not a standard. Its identifiers are deliberately
+            distinct, and a{" "}
             <a href="https://tmarkovski.github.io/credkit/">
               draft specification
             </a>{" "}
-            documents the construction.
-          </p>
-          <p>
-            It is research work, not a standard. The proofs use the same commit,
-            challenge, and response phases and the same disciplined transcript
-            that the CFRG&apos;s emerging{" "}
+            documents the composite construction, an area not covered by the
+            CFRG&apos;s emerging{" "}
             <a href="https://datatracker.ietf.org/doc/draft-irtf-cfrg-sigma-protocols/">
               sigma-protocols
             </a>{" "}
@@ -499,9 +499,7 @@ export function Writeup() {
             <a href="https://datatracker.ietf.org/doc/draft-irtf-cfrg-fiat-shamir/">
               Fiat-Shamir
             </a>{" "}
-            drafts describe. What those drafts do not yet cover, composing several
-            statements under one challenge, is the gap the credkit draft
-            documents.
+            drafts.
           </p>
           <h2 id="infrastructure">Browser-native infrastructure</h2>
           <p>
@@ -559,9 +557,9 @@ export function Writeup() {
           <p>
             The demo still has issuer and verifier services, because credential
             protocols require counterparties with session state, trust policy,
-            and registries. In this demo, those services are Cloudflare Workers.
-            The verifier checks a presentation itself, without calling the issuer,
-            so the issuer does not learn where a credential is used.
+            and registries. In this demo, those services are Cloudflare Workers,
+            but they do not perform holder-side key management or proof
+            construction.
           </p>
           <p>
             The cryptography is not tied to a privileged environment. Credkit runs
@@ -606,11 +604,6 @@ export function Writeup() {
               <strong>Losing every copy of the passkey means losing the wallet.</strong>{" "}
               Passkey sync is the recovery mechanism, so the wallet depends on it.
             </li>
-            <li>
-              <strong>The cast is fictional.</strong> The State of Utopia issues no
-              real licenses, the shop sells nothing, and the rental fleet is six
-              SVGs. The cryptography and protocols are real.
-            </li>
           </ul>
 
           <h2 id="vision">A vision I have carried with me</h2>
@@ -618,26 +611,17 @@ export function Writeup() {
             I built VeryGoodWallet and much of credkit over a couple of weekends,
             with modern coding models helping me explore, implement, test, and
             document the system at a pace that would have been hard to imagine
-            when I first entered this space.
+            when I first entered this space. The mathematics and privacy goals are
+            not new, but the pieces have become far more accessible.
           </p>
           <p>
-            The mathematics behind many of these ideas is not new. The privacy
-            goals are not new. What has changed is how accessible the pieces have
-            become, and how quickly one person can now turn a long-held
-            architecture into running software.
-          </p>
-          <p>
-            I do not see VeryGoodWallet as the finished answer to digital identity.
-            It is research software, and there is plenty here that deserves
-            scrutiny. But it is the first time I have been able to put this
-            particular idea together in the form I originally imagined: a wallet
-            managed by something people already use, credentials exchanged through
-            recognizable protocols, and privacy-preserving proofs running directly
-            in an ordinary web environment.
-          </p>
-          <p>
-            For me, it feels like finally exploring the wallet vision that first
-            excited me about this space with tools that can now do it justice.
+            VeryGoodWallet is not the finished answer to digital identity, but it
+            is the first time I have been able to put this particular idea together
+            in the form I originally imagined: a wallet managed by something people
+            already use, credentials exchanged through recognizable protocols, and
+            privacy-preserving proofs running directly in an ordinary web
+            environment. It is the closest I have come to the wallet I wanted to
+            build years ago.
           </p>
 
           <footer className="source-note">

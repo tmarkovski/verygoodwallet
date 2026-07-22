@@ -11,31 +11,31 @@ const NOTES: readonly AnatomyNote[] = [
     id: "issuer",
     color: "wire",
     title: "Who signed it",
-    body: "The issuer is a did:key — the DMV's public key spelled as an identifier. Checking the signature needs only this document and this key; the DMV is never contacted and never learns where the license is used.",
+    body: "The issuer is a did:key, which spells the DMV's public key as an identifier. Checking the signature needs only this document and this key; the DMV is never contacted and never learns where the license is used.",
   },
   {
     id: "validity",
     color: "disclosed",
     title: "Always disclosed",
-    body: "The issuer and validity window are the credential's only mandatory fields — every presentation reveals them. They are kept date-granular on purpose: a millisecond timestamp would be a unique value that follows the credential around.",
+    body: "The issuer and validity window are the credential's only mandatory fields. Every presentation reveals them. They are kept date-granular on purpose: a millisecond timestamp would be a unique value that follows the credential around.",
   },
   {
     id: "subject",
     color: "binding",
     title: "What's missing: you",
-    body: "There is no id here — no DID, no holder key, nothing. An identifier in the subject would surface in every presentation and link them all. What ties the license to Jamie instead is a hidden link secret, explained below.",
+    body: "There is no id here: no DID, no holder key, nothing. An identifier in the subject would surface in every presentation and link them all. What ties the license to Jamie instead is a hidden link secret, explained below.",
   },
   {
     id: "birth",
     color: "proven",
     title: "One date, signed twice",
-    body: "Signed as readable text, and again as a hidden numeric twin — day 35,136 counted from 1900. The twin never appears in the document; it is what age proofs compute against later, at any cutoff a verifier picks.",
+    body: "Signed once as readable text and again as a hidden numeric twin: day 35,136 counted from 1900. The twin never appears in the document; it is what age proofs compute against later, at any cutoff a verifier picks.",
   },
   {
     id: "flags",
     color: "hidden",
     title: "Frozen booleans",
-    body: "Age flags computed once, on issuance day, and never again. They can only answer the questions the DMV anticipated — the demo keeps them to contrast with the live range proof over the hidden twin.",
+    body: "Age flags are computed once, on issuance day, and never again. They can only answer the questions the DMV anticipated. The demo keeps them to contrast with the live range proof over the hidden twin.",
   },
   {
     id: "status",
@@ -47,7 +47,7 @@ const NOTES: readonly AnatomyNote[] = [
     id: "proof",
     color: "wire",
     title: "The engraving",
-    body: "A W3C Data Integrity proof under credkit's experimental BBS suite. Everything cryptographic lives in the 447-byte proofValue — decoded in the strip below.",
+    body: "A W3C Data Integrity proof under credkit's experimental BBS suite. Everything cryptographic lives in the 447-byte proofValue. The strip below decodes it.",
   },
 ];
 
@@ -138,7 +138,7 @@ export function CredentialAnatomy() {
       footer={
         <>
           <ByteStrip
-            title="Inside proofValue — 447 bytes, decoded"
+            title="Inside proofValue: 447 bytes, decoded"
             segments={[
               { label: "tag", bytes: "3 B", color: "hidden", grow: 1.4 },
               { label: "BBS signature", bytes: "80 B", color: "proven", grow: 5.2 },
@@ -152,14 +152,14 @@ export function CredentialAnatomy() {
           <ByteStrip
             title="The 80-byte signature itself"
             segments={[
-              { label: "A — a point on BLS12-381", bytes: "48 B", color: "proven", grow: 6 },
-              { label: "e — a scalar", bytes: "32 B", color: "proven", grow: 4 },
+              { label: "A: a point on BLS12-381", bytes: "48 B", color: "proven", grow: 6 },
+              { label: "e: a scalar", bytes: "32 B", color: "proven", grow: 4 },
             ]}
             legend={[
               {
                 color: "hidden",
                 label: "envelope tag",
-                text: "a multibase u plus three tag bytes (d9 63 04) naming a credkit holder-bound base proof — a value that can never be mistaken for another suite's.",
+                text: "a multibase u plus three tag bytes (d9 63 04) naming a credkit holder-bound base proof. This value can never be mistaken for another suite's.",
               },
               {
                 color: "proven",
@@ -184,7 +184,7 @@ export function CredentialAnatomy() {
               {
                 color: "disclosed",
                 label: "mandatory pointers",
-                text: "/issuer, /validFrom, /validUntil — the fields every future presentation must disclose.",
+                text: "/issuer, /validFrom, and /validUntil are the fields every future presentation must disclose.",
               },
               {
                 color: "proven",

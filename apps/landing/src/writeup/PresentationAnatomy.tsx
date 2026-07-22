@@ -1,8 +1,8 @@
 /**
  * Figures 2 and 3: the anatomy of a presentation, using the demo's
  * resident-rate rental check. Figure 2 shows the two source credentials
- * side by side — what stays hidden, what is proven about hidden values, and
- * the link-secret equality connecting them. Figure 3 shows the Verifiable
+ * side by side, showing what stays hidden, what is proven about hidden values,
+ * and the link-secret equality connecting them. Figure 3 shows the Verifiable
  * Presentation that actually crosses the wire, with its proof bytes
  * decoded. All values come from running the real stack; the generated
  * presentation verifies against restated verifier policy.
@@ -19,7 +19,7 @@ import {
 } from "./anatomy";
 
 // ---------------------------------------------------------------------------
-// Figure 2 — the two credentials, side by side
+// Figure 2: the two credentials, side by side
 // ---------------------------------------------------------------------------
 
 const CARD_NOTES: readonly AnatomyNote[] = [
@@ -27,25 +27,25 @@ const CARD_NOTES: readonly AnatomyNote[] = [
     id: "mandatory",
     color: "disclosed",
     title: "The only disclosures",
-    body: "Issuer and validity window, from each credential — the mandatory set. In this particular presentation, no other field is revealed at all.",
+    body: "The issuer and validity window from each credential form the mandatory set. In this particular presentation, no other field is revealed at all.",
   },
   {
     id: "range",
     color: "proven",
     title: "Over 25, proven live",
-    body: "Utopia Wheels computes today's cutoff — born on or before 2001-07-21, day 37,091 — and the wallet proves hidden birth date ≤ cutoff. Same hidden twin, any cutoff: the bottle shop asked for 18 with a different bound.",
+    body: "Utopia Wheels computes today's cutoff: born on or before 2001-07-21 (day 37,091). The wallet then proves hidden birth date ≤ cutoff. Same hidden twin, any cutoff: the bottle shop asked for 18 with a different bound.",
   },
   {
     id: "membership",
     color: "proven",
     title: "Somewhere coastal",
-    body: "The registration's hidden district code is proven to belong to the verifier's published set {11, 12, 13} — Port Azure, Meridian Shores, Coral Landing — without revealing which one.",
+    body: "The registration's hidden district code is proven to belong to the verifier's published set {11, 12, 13} (Port Azure, Meridian Shores, and Coral Landing) without revealing which one.",
   },
   {
     id: "revocation",
     color: "proven",
     title: "Still valid, both of them",
-    body: "Each credential proves its hidden revocation id still belongs to the DMV registry's current accumulator. The ids themselves never appear — the registry section below explains the machinery.",
+    body: "Each credential proves its hidden revocation id still belongs to the DMV registry's current accumulator. The ids themselves never appear. The registry section below explains the machinery.",
   },
   {
     id: "link",
@@ -121,7 +121,7 @@ export function PresentationCards() {
         <InlineNote note="link">
           <span className="anat-chip-title">equality proof</span>
           <span className="anat-chip-body">
-            both signatures hide the <em>same</em> link secret — one holder, no name
+            both signatures hide the <em>same</em> link secret: one holder, no name
           </span>
         </InlineNote>
         <CredentialCard title="Utopia Resident Registration" rows={RESIDENT_ROWS} />
@@ -131,7 +131,7 @@ export function PresentationCards() {
 }
 
 // ---------------------------------------------------------------------------
-// Figure 3 — the presentation on the wire
+// Figure 3: the presentation on the wire
 // ---------------------------------------------------------------------------
 
 const WIRE_NOTES: readonly AnatomyNote[] = [
@@ -139,19 +139,19 @@ const WIRE_NOTES: readonly AnatomyNote[] = [
     id: "nobody",
     color: "binding",
     title: "Still nobody named",
-    body: "No holder property, no DID, no key — anywhere. Control of both credentials is proven inside the proof, never asserted beside it.",
+    body: "No holder property, DID, or key appears anywhere. Control of both credentials is proven inside the proof, never asserted beside it.",
   },
   {
     id: "survived",
     color: "hidden",
     title: "Stripped to the mandatory",
-    body: "Of the license's thirty-odd signed statements, three fields survive: issuer, validFrom, validUntil. Compare this embedded document with figure 1 — everything else is simply gone.",
+    body: "Of the license's thirty-odd signed statements, three fields survive: issuer, validFrom, and validUntil. Compare this embedded document with figure 1. Everything else is simply gone.",
   },
   {
     id: "descriptor",
     color: "wire",
     title: "A map, not a signature",
-    body: "155 characters telling the verifier how the revealed statements line up with signed message slots, and which hidden twins exist — birth_date and date1900 are readable in the base64. The 80-byte signature itself never leaves the wallet.",
+    body: "155 characters telling the verifier how the revealed statements line up with signed message slots and which hidden twins exist. birth_date and date1900 are readable in the base64. The 80-byte signature itself never leaves the wallet.",
   },
   {
     id: "challenge",
@@ -163,13 +163,13 @@ const WIRE_NOTES: readonly AnatomyNote[] = [
     id: "domain",
     color: "wire",
     title: "Locked to one counter",
-    body: "The audience of the proof — this verifier's response endpoint. A presentation minted for Utopia Wheels convinces nobody else.",
+    body: "The proof's audience is this verifier's response endpoint. A presentation minted for Utopia Wheels convinces nobody else.",
   },
   {
     id: "proofvalue",
     color: "proven",
     title: "Six proofs, one challenge",
-    body: "3,162 bytes carrying two credential proofs, a range proof, a membership proof, and two non-revocation proofs, all bound under a single merged challenge — decoded in the strip below.",
+    body: "3,162 bytes carrying two credential proofs, a range proof, a membership proof, and two non-revocation proofs, all bound under a single merged challenge. The strip below decodes it.",
   },
 ];
 
@@ -230,7 +230,7 @@ function VerifierVerdict() {
       <div>
         <p className="anat-verdict-title c-disclosed">the verifier learns</p>
         <ul>
-          <li>born on or before 2001-07-21 — over 25</li>
+          <li>born on or before 2001-07-21 (over 25)</li>
           <li>lives in one of the three coastal districts</li>
           <li>both credentials belong to the presenter</li>
           <li>neither credential is revoked</li>
@@ -262,7 +262,7 @@ export function PresentationWire() {
       footer={
         <>
           <ByteStrip
-            title="Inside the presentation proofValue — 3,162 bytes"
+            title="Inside the presentation proofValue: 3,162 bytes"
             segments={[
               { label: "tag", bytes: "3 B", color: "hidden", grow: 1.6 },
               { label: "license proof", bytes: "1,072 B", color: "wire", grow: 8.2 },
@@ -275,7 +275,7 @@ export function PresentationWire() {
             ]}
           />
           <ByteStrip
-            title="One credential proof up close — the license's 1,072 bytes"
+            title="One credential proof up close: the license's 1,072 bytes"
             segments={[
               { label: "Ā", bytes: "48 B", color: "wire", grow: 2.4 },
               { label: "B̄", bytes: "48 B", color: "wire", grow: 2.4 },
@@ -292,7 +292,7 @@ export function PresentationWire() {
               {
                 color: "wire",
                 label: "credential proofs",
-                text: "one per credential: three freshly randomized curve points, then 32-byte response scalars — ê, r̂₁, r̂₃ plus one per hidden message (26 for the license, 19 for the registration). New randomness every presentation, so no two ever share a byte.",
+                text: "one per credential: three freshly randomized curve points, then 32-byte response scalars consisting of ê, r̂₁, r̂₃ plus one per hidden message (26 for the license, 19 for the registration). New randomness every presentation, so no two ever share a byte.",
               },
               {
                 color: "proven",
@@ -302,7 +302,7 @@ export function PresentationWire() {
               {
                 color: "binding",
                 label: "merged challenge",
-                text: "one Fiat–Shamir hash over every commitment above plus the nonce, the domain, and the link-secret equality. Every sub-proof must verify against this same value — the pieces cannot be re-mixed, replayed, or presented separately.",
+                text: "one Fiat–Shamir hash over every commitment above plus the nonce, the domain, and the link-secret equality. Every sub-proof must verify against this same value, so the pieces cannot be re-mixed, replayed, or presented separately.",
               },
               {
                 color: "hidden",

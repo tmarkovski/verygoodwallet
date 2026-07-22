@@ -3,9 +3,9 @@
  * (annotated JSON, credential cards, byte strips) whose marked tokens pair
  * with numbered annotation cards in a side rail. Hover or focus on either
  * half highlights the pair, and on wide screens an SVG overlay draws a fine
- * connector line from each mark to its card — engraving-style line-work,
- * measured client-side after hydration so the prerendered HTML never
- * depends on layout.
+ * connector line from each mark to its card using engraving-style line work.
+ * Measurements happen client-side after hydration so the prerendered HTML
+ * never depends on layout.
  */
 import {
   createContext,
@@ -134,7 +134,7 @@ export function AnatomyFigure({
   caption,
   railPosition = "side",
 }: {
-  /** Unique per page — namespaces the note DOM ids. */
+  /** Unique per page; namespaces the note DOM ids. */
   id: string;
   eyebrow: string;
   title: string;
@@ -146,7 +146,7 @@ export function AnatomyFigure({
   caption?: ReactNode;
   /**
    * "side" pairs marks and cards with connector lines; "below" flows the
-   * cards under a full-width pane (hover pairing only — no long lines).
+   * cards under a full-width pane with hover pairing only and no long lines.
    */
   railPosition?: "side" | "below";
 }) {
@@ -286,7 +286,7 @@ export interface ByteSegment {
   label: string;
   bytes?: string;
   color: NoteColor;
-  /** Relative visual width — use compressed (sqrt-ish) proportions, not raw bytes. */
+  /** Relative visual width; use compressed (sqrt-ish) proportions, not raw bytes. */
   grow: number;
 }
 
@@ -324,7 +324,7 @@ export function ByteStrip({
             <li key={entry.label} className={`c-${entry.color}`}>
               <i className="anat-legend-dot" />
               <span>
-                <strong>{entry.label}</strong> — {entry.text}
+                <strong>{entry.label}:</strong> {entry.text}
               </span>
             </li>
           ))}

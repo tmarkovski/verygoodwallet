@@ -34,8 +34,8 @@ export function Toc({ sections }: { sections: readonly TocSection[] }) {
         if (heading.getBoundingClientRect().top <= 160) current = id;
         else break;
       }
-      // At the very bottom, pin the last entry — the final heading can sit
-      // too low to ever cross the fold line.
+      // At the very bottom, pin the last entry because the final heading can
+      // sit too low to ever cross the fold line.
       const doc = document.documentElement;
       if (window.innerHeight + window.scrollY >= doc.scrollHeight - 2) {
         current = ids[ids.length - 1] ?? current;
